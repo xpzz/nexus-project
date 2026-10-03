@@ -16,7 +16,9 @@ jobs:
       - run: dotnet test AzulNexus.slnx --nologo
       - name: Testes dos scripts de implantação (PowerShell 7)
         shell: pwsh
-        run: ./deploy/tests/Common.Tests.ps1
+        run: |
+          ./deploy/tests/Common.Tests.ps1
+          ./deploy/tests/Syntax.Tests.ps1
 
   windows:
     runs-on: windows-latest
@@ -28,7 +30,9 @@ jobs:
       - run: dotnet test AzulNexus.slnx --nologo
       - name: Testes dos scripts de implantação (Windows PowerShell 5.1)
         shell: powershell
-        run: ./deploy/tests/Common.Tests.ps1
+        run: |
+          ./deploy/tests/Common.Tests.ps1
+          ./deploy/tests/Syntax.Tests.ps1
       - name: Gerar o pacote de implantação
         shell: pwsh
         run: ./deploy/Publish-AzulNexus.ps1

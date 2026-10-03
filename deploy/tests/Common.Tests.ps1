@@ -1,4 +1,4 @@
-# Testes das funções puras de deploy/lib/Common.ps1. Execute: pwsh -File deploy/tests/Common.Tests.ps1
+﻿# Testes das funções puras de deploy/lib/Common.ps1. Execute: pwsh -File deploy/tests/Common.Tests.ps1
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '..\lib\Common.ps1')
 
@@ -103,6 +103,13 @@ $resolved = ConvertTo-ResolvedInstallFile $ctx
 Assert-That 'Arquivo resolvido não tem "auto" e define os modos' { (($resolved | ConvertTo-Json -Depth 6) -notmatch '"auto"') -and $resolved.sccm.mode -eq 'Live' -and $resolved.activeDirectory.mode -eq 'Live' }
 $ctx.Sccm.SqlServer = $null
 Assert-That 'Sem SQL do SCCM o modo é Disabled (não configurado)' { (ConvertTo-ResolvedInstallFile $ctx).sccm.mode -eq 'Disabled' }
+
+# Argumentos do nexusctl (regressão: --account ausente quando a lista era montada com + solto)
+$args1 = New-AccountArguments -Command 'db-grant' -Accounts @('CORP\svc.sccm', 'CORP\svc.sccm')
+Assert-That 'Conta única gera um único --account com valor' { $args1.Count -eq 3 -and $args1[0] -eq 'db-grant' -and $args1[1] -eq '--account' -and $args1[2] -eq 'CORP\svc.sccm' }
+$args2 = New-AccountArguments -Command 'db-grant-script' -Accounts @('IIS APPPOOL\AzulNexus', 'NT SERVICE\AzulNexus.Worker') -Extra @('--output', 'C:\x.sql')
+Assert-That 'Duas contas repetem --account e mantêm os extras' { ($args2 -join '|') -eq 'db-grant-script|--account|IIS APPPOOL\AzulNexus|--account|NT SERVICE\AzulNexus.Worker|--output|C:\x.sql' }
+Assert-That 'Resultado é uma lista de strings (não é desmembrado)' { $args1 -is [string[]] }
 
 # Falhas seguem o padrão do produto
 $caught = $null

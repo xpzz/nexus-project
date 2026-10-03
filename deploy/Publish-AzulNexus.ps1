@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Gera o pacote de implantação do Azul Nexus (dotnet publish) em artifacts\AzulNexus-<versão>.
 
