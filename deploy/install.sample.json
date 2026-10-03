@@ -19,6 +19,7 @@
     "trustServerCertificate": false
   },
   "serviceIdentity": {
+    "account": "svc.sccm",
     "webGmsa": null,
     "workerGmsa": null
   },

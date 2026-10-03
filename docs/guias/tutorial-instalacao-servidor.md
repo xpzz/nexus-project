@@ -15,7 +15,7 @@ Para um servidor que **não tem Git, .NET SDK nem nada instalado**. Você só pr
 | Servidor SQL para o banco do Nexus | DBA | SQL Server (ou PostgreSQL). **Não** use a instância do SCCM. Anote o nome, ex.: `SQL-NEXUS01` |
 | Nome de acesso (DNS) | Rede | Ex.: `nexus.suaempresa.local`, apontando para o servidor |
 | Certificado HTTPS com esse nome | Equipe de PKI | Instalado no servidor em *Computador local › Pessoal*, com chave privada. Se ainda não houver, use `-AllowSelfSigned` **só para teste** |
-| gMSA para o site e para o Worker | AD | **Só se** o SQL do Nexus ou o SQL do SCCM for **outro servidor** (etapa 6) |
+| Conta `svc.sccm` e a senha | Você / AD | Roda o site e o Worker (etapa 6). A senha é pedida no console |
 
 > Não existe um `.exe` instalador: a instalação é o duplo clique em **`Instalar.cmd`**, que roda o script `Install-AzulNexus.ps1` com tudo o que ele precisa.
 
@@ -96,17 +96,18 @@ Get-ChildItem Cert:\LocalMachine\My | Where-Object HasPrivateKey |
 
 ---
 
-## Etapa 6 — gMSA (somente se o SQL for remoto)
+## Etapa 6 — Conta dos serviços (`svc.sccm`)
 
-O Nexus nunca usa a "conta virtual" para falar com um SQL em **outro servidor**, porque ela aparece na rede como a conta do computador (no SCCM, costuma ser administradora do SQL). Nesse caso peça ao AD duas gMSAs (ex.: `CORP\nexus-web$` e `CORP\nexus-worker$`) e instale-as no servidor:
+O site (IIS) e o Worker rodam **sob uma única conta de domínio**, a `svc.sccm`. Nenhuma conta nova é criada e não é preciso gMSA nem conta virtual.
 
-```powershell
-Install-ADServiceAccount nexus-web
-Install-ADServiceAccount nexus-worker
-Test-ADServiceAccount nexus-web; Test-ADServiceAccount nexus-worker   # ambos True
-```
+O que você precisa:
+- A conta existir e estar **ativa**, com a senha em mãos (o instalador a pede no console e a valida no domínio antes de alterar qualquer coisa; ela **não** vai para log nem para arquivo).
+- Ela precisa conseguir **entrar no SQL** do banco do Nexus e **ler as views** do SCCM. Se ela já é a conta de serviço do SCCM, normalmente já tem acesso; o instalador tenta conceder o que faltar e, se a sua conta não puder, gera o T-SQL para o DBA (etapa 8).
+- Se uma GPO controla "Fazer logon como serviço", inclua `svc.sccm` nela (o instalador concede localmente, mas a GPO sobrescreve).
 
-Se o SQL do Nexus **e** o SQL do SCCM estiverem no próprio servidor, **pule esta etapa**.
+> **Atenção:** `svc.sccm` costuma ter privilégios altos. Rodar a interface web com ela amplia a exposição (ADR-0002). O Nexus só lê (`SELECT`). Dá para trocar depois por uma conta com menos privilégio, basta mudar `serviceIdentity.account` e rodar o instalador de novo.
+
+> **Azure (Intune e Entra ID):** quando for ligado, **não usa `svc.sccm`**. O acesso é por um registro de aplicativo do Entra, autenticado por certificado (nenhum usuário ou senha do Windows é enviado ao Azure). Essa etapa ainda não está implementada e aparece como "Pendente" no assistente, o que é esperado.
 
 ---
 
@@ -131,14 +132,14 @@ Ajuste **apenas o que for necessário**. Exemplo mínimo (SQL Server, tudo local
   "dataDir": "auto",
   "iis": { "siteName": "Azul Nexus", "appPoolName": "AzulNexus", "port": 8443, "hostName": "nexus.suaempresa.local", "certificate": "auto", "openFirewall": true },
   "database": { "provider": "SqlServer", "server": "SQL-NEXUS01", "name": "AzulNexus" },
-  "serviceIdentity": { "webGmsa": null, "workerGmsa": null },
+  "serviceIdentity": { "account": "svc.sccm" },
   "sccm": { "site": "auto", "sqlServer": "auto", "database": "auto", "grantViewAccess": "if-permitted" },
   "activeDirectory": { "domain": "auto" },
   "demoMode": false
 }
 ```
 
-- SQL em outro servidor: preencha `serviceIdentity` com as gMSAs da etapa 6 (`"webGmsa": "CORP\\nexus-web$"`, `"workerGmsa": "CORP\\nexus-worker$"`).
+- A conta pode ser `svc.sccm` (o domínio do servidor é assumido) ou `CORP\svc.sccm`. O SQL pode ser local ou remoto: com a conta de domínio não é preciso gMSA.
 - Nexus em servidor que **não** é o do SCCM: preencha `sccm.site`, `sccm.sqlServer` e `sccm.database` (ex.: `"AZ1"`, `"SQL-SCCM01"`, `"CM_AZ1"`).
 - Só quer ver a interface com dados de exemplo: `"demoMode": true`.
 

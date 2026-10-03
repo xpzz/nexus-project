@@ -77,6 +77,13 @@ Assert-That 'SCCM remoto exige gMSA só no Worker' { $sccmRemoteOnly.Problems.Co
 $pg = Resolve-ServiceAccounts -PoolName 'AzulNexus' -Provider 'PostgreSql' -NexusDbServer 'pg01' -SccmSqlServer $null -SccmLive $false
 Assert-That 'PostgreSQL remoto (senha) não exige gMSA' { $pg.Problems.Count -eq 0 }
 
+$shared = Resolve-ServiceAccounts -Account 'CORP\svc.sccm' -PoolName 'AzulNexus' -Provider 'SqlServer' -NexusDbServer 'SQL02' -SccmSqlServer 'SQL03' -SccmLive $true
+Assert-That 'Conta única: site e Worker usam a mesma conta, sem exigir gMSA (SQL remoto)' { $shared.Problems.Count -eq 0 -and $shared.WebAccount -eq 'CORP\svc.sccm' -and $shared.WorkerAccount -eq 'CORP\svc.sccm' -and $shared.Mode -eq 'SharedAccount' }
+Assert-That 'Sem conta única o padrão continua valendo' { $local.Mode -eq 'Default' }
+Assert-That 'Conta sem domínio recebe o domínio padrão' { (Resolve-AccountName 'svc.sccm' 'CORP') -eq 'CORP\svc.sccm' }
+Assert-That 'DOMINIO\conta e UPN são mantidos' { (Resolve-AccountName 'AZUL\svc.sccm' 'CORP') -eq 'AZUL\svc.sccm' -and (Resolve-AccountName 'svc.sccm@azul.local' 'CORP') -eq 'svc.sccm@azul.local' }
+Assert-That 'Conta vazia vira nulo' { $null -eq (Resolve-AccountName '  ' 'CORP') }
+
 # Portas e strings de conexão
 Assert-That 'Portas do SCCM/WSUS são reservadas' { (Test-PortReserved 443) -and (Test-PortReserved 8530) -and (Test-PortReserved 8531) -and -not (Test-PortReserved 8443) }
 $db = [pscustomobject]@{ server = 'SQL02'; name = 'AzulNexus'; port = 5432; username = 'nx' }

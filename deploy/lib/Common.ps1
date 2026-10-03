@@ -173,10 +173,23 @@ function New-NexusConnectionString {
     return "Host=$pgHost;Port=$port;Database=$name;Username=$user;SSL Mode=Require"
 }
 
-# Contas dos serviços. Conta virtual aparece na rede como a conta de computador, que no SCCM
-# costuma ser sysadmin no SQL do site; por isso todo acesso a SQL remoto exige gMSA (SPEC §5.2).
+# DOMINIO\conta a partir de "conta" (sem domínio) ou "DOMINIO\conta"; UPN (conta@dominio) é mantido e
+# convertido para DOMINIO\conta pelo instalador no servidor (precisa do AD).
+function Resolve-AccountName {
+    param([string]$Account, [string]$DefaultDomain = $env:USERDOMAIN)
+    if ([string]::IsNullOrWhiteSpace($Account)) { return $null }
+    $name = $Account.Trim()
+    if ($name.Contains('\') -or $name.Contains('@')) { return $name }
+    if ([string]::IsNullOrWhiteSpace($DefaultDomain)) { return $name }
+    return "$DefaultDomain\$name"
+}
+
+# Contas dos serviços. Com -Account, o site (pool do IIS) e o Worker rodam sob UMA conta de domínio
+# (ex.: svc.sccm), sem contas virtuais nem gMSA. Sem -Account vale o padrão da SPEC §5.2: conta virtual
+# quando o SQL é local e gMSA quando é remoto (a conta virtual aparece na rede como a conta de computador).
 function Resolve-ServiceAccounts {
     param(
+        [string]$Account,
         [string]$WebGmsa,
         [string]$WorkerGmsa,
         [Parameter(Mandatory)][string]$PoolName,
@@ -185,19 +198,33 @@ function Resolve-ServiceAccounts {
         [string]$SccmSqlServer,
         [bool]$SccmLive
     )
+    if ($Account) {
+        return [pscustomobject]@{
+            Mode          = 'SharedAccount'
+            Account       = $Account
+            WebGmsa       = $null
+            WorkerGmsa    = $null
+            WebAccount    = $Account
+            WorkerAccount = $Account
+            Problems      = @()
+        }
+    }
+
     $problems = @()
     $nexusDbRemote = ($Provider -eq 'SqlServer') -and -not (Test-LocalSqlServer $NexusDbServer)
     $sccmRemote = $SccmLive -and -not (Test-LocalSqlServer $SccmSqlServer)
 
     if (($nexusDbRemote) -and -not $WebGmsa) {
-        $problems += "O site (pool '$PoolName') acessa o banco do Nexus em '$NexusDbServer', que é remoto. Informe serviceIdentity.webGmsa."
+        $problems += "O site (pool '$PoolName') acessa o banco do Nexus em '$NexusDbServer', que é remoto. Informe serviceIdentity.account (ex.: svc.sccm) ou serviceIdentity.webGmsa."
     }
     if (($nexusDbRemote -or $sccmRemote) -and -not $WorkerGmsa) {
         $remoteTarget = if ($sccmRemote) { "o SQL do site SCCM '$SccmSqlServer'" } else { "o banco do Nexus '$NexusDbServer'" }
-        $problems += "O Worker acessa $remoteTarget, que é remoto. Informe serviceIdentity.workerGmsa."
+        $problems += "O Worker acessa $remoteTarget, que é remoto. Informe serviceIdentity.account (ex.: svc.sccm) ou serviceIdentity.workerGmsa."
     }
 
     return [pscustomobject]@{
+        Mode          = 'Default'
+        Account       = $null
         WebGmsa       = $WebGmsa
         WorkerGmsa    = $WorkerGmsa
         WebAccount    = if ($WebGmsa) { $WebGmsa } else { "IIS APPPOOL\$PoolName" }
