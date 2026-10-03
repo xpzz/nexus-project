@@ -133,7 +133,8 @@ function Get-SccmDetection {
             }
         }
     } catch { Write-Log "SMS Provider indisponível para detecção: $($_.Exception.Message)" 'WARN' }
-    if ($result.SiteCode -and -not $result.Database) { $result.Database = "CM_$($result.SiteCode)" }
+    $result['DatabaseGuessed'] = $false
+    if ($result.SiteCode -and -not $result.Database) { $result.Database = "CM_$($result.SiteCode)"; $result['DatabaseGuessed'] = $true }
     return [pscustomobject]$result
 }
 
@@ -177,6 +178,7 @@ function Resolve-Context {
     $siteCode = Get-Setting $Raw 'sccm.site' 'auto'
     $sqlServer = Get-Setting $Raw 'sccm.sqlServer' 'auto'
     $sccmDatabase = Get-Setting $Raw 'sccm.database' 'auto'
+    $ctx.SccmDatabaseGuessed = (Test-IsAuto $sccmDatabase) -and [bool]$detected.DatabaseGuessed
     $ctx.Sccm = [pscustomobject]@{
         SiteCode               = if (Test-IsAuto $siteCode) { $detected.SiteCode } else { $siteCode }
         SqlServer              = if (Test-IsAuto $sqlServer) { $detected.SqlServer } else { $sqlServer }
@@ -291,7 +293,11 @@ function Test-Environment {
     }
 
     if ($Ctx.Sccm.SqlServer) {
-        $checks.Add((New-Check 'SCCM' 'OK' "Site $($Ctx.Sccm.SiteCode), SQL $($Ctx.Sccm.SqlServer), banco $($Ctx.Sccm.Database) (origem: $($Ctx.SccmDetected.Source))."))
+        if ($Ctx.SccmDatabaseGuessed) {
+            $checks.Add((New-Check 'SCCM' 'Atenção' "Site $($Ctx.Sccm.SiteCode), SQL $($Ctx.Sccm.SqlServer). O nome do banco ($($Ctx.Sccm.Database)) é uma SUPOSIÇÃO a partir do código do site: o SMS Provider não informou o nome real." 'Confirme o nome do banco do site no SSMS (ex.: CM_XXX ou outro nome) e informe em sccm.database no install.json.'))
+        } else {
+            $checks.Add((New-Check 'SCCM' 'OK' "Site $($Ctx.Sccm.SiteCode), SQL $($Ctx.Sccm.SqlServer), banco $($Ctx.Sccm.Database) (origem: $($Ctx.SccmDetected.Source))."))
+        }
     } elseif ($Ctx.DemoMode) {
         $checks.Add((New-Check 'SCCM' 'OK' 'Modo demonstração: dados sintéticos.'))
     } else {
@@ -749,7 +755,7 @@ function Write-SiteDiagnostics {
         Write-Log "Últimas linhas de $($webLog.Name):" 'WARN'
         Get-Content $webLog.FullName -Tail 8 -ErrorAction SilentlyContinue | ForEach-Object { Write-Log ('  ' + $_.Substring(0, [math]::Min(500, $_.Length))) 'WARN' }
     } else {
-        Write-Log "Nenhum web-*.json em $logs: o aplicativo nem chegou a iniciar (veja o Log de Eventos abaixo)." 'WARN'
+        Write-Log "Nenhum web-*.json em ${logs}: o aplicativo nem chegou a iniciar (veja o Log de Eventos abaixo)." 'WARN'
     }
 
     try {
