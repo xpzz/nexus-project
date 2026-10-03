@@ -80,6 +80,17 @@ O Nexus precisa de **um banco só dele**. Opções:
 
 Anote o nome do servidor SQL (ex.: `SQL-NEXUS01` ou `SQL-NEXUS01\INSTANCIA`).
 
+### Usar a própria instância SQL do SCCM
+
+O instalador **bloqueia** por padrão o banco do Nexus na instância do SCCM, porque o SQL Server que acompanha o Configuration Manager costuma ter licença restrita aos bancos do SCCM. Se o licenciamento da sua instância permite (confirme com quem cuida das licenças), libere no `install.json`:
+
+```json
+"database": { "provider": "SqlServer", "server": "<servidor SQL do SCCM>", "name": "AzulNexus", "allowSccmInstance": true }
+```
+
+- O banco do Nexus é **sempre um banco novo** (`AzulNexus`). O instalador **nunca** aceita o banco do site (`CM_xxx`), mesmo com a liberação.
+- A verificação passa a mostrar uma **Atenção** (licença e carga). As gravações do Nexus não passam pelos limites de proteção do SCCM (concorrência, janelas de pausa, recuo por CPU), que valem só para a leitura das views.
+
 ---
 
 ## Etapa 5 — Certificado HTTPS
