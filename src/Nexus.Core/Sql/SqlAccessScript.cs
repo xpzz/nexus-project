@@ -42,9 +42,12 @@ public static partial class SqlAccessScript
         sb.AppendLine("DECLARE @login sysname = (SELECT TOP (1) name FROM sys.server_principals WHERE sid = @sid);");
         sb.AppendLine($"USE [{database}];");
         sb.AppendLine("DECLARE @user sysname = (SELECT TOP (1) name FROM sys.database_principals WHERE sid = @sid);");
+        // EXEC não aceita chamada de função na expressão: o texto do comando é montado em @sql antes.
+        sb.AppendLine("DECLARE @sql nvarchar(max);");
         sb.AppendLine("IF @user IS NULL");
         sb.AppendLine("BEGIN");
-        sb.AppendLine($"    EXEC (N'CREATE USER ' + QUOTENAME(N'{account}') + N' FOR LOGIN ' + QUOTENAME(@login));");
+        sb.AppendLine($"    SET @sql = N'CREATE USER ' + QUOTENAME(N'{account}') + N' FOR LOGIN ' + QUOTENAME(@login);");
+        sb.AppendLine("    EXEC (@sql);");
         sb.AppendLine($"    SET @user = N'{account}';");
         sb.AppendLine("END;");
     }
@@ -52,7 +55,11 @@ public static partial class SqlAccessScript
     /// <summary>Adds the mapped user to a role. <c>dbo</c> (database owner) already has full access and is skipped.</summary>
     public static void AddToRole(StringBuilder sb, string role)
     {
-        sb.AppendLine($"IF @user <> N'dbo' EXEC (N'ALTER ROLE [{role}] ADD MEMBER ' + QUOTENAME(@user));");
+        sb.AppendLine("IF @user <> N'dbo'");
+        sb.AppendLine("BEGIN");
+        sb.AppendLine($"    SET @sql = N'ALTER ROLE [{role}] ADD MEMBER ' + QUOTENAME(@user);");
+        sb.AppendLine("    EXEC (@sql);");
+        sb.AppendLine("END;");
     }
 
     [GeneratedRegex(@"^[A-Za-z0-9_]{1,128}$")]
