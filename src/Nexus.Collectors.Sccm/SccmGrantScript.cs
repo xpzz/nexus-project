@@ -39,7 +39,12 @@ public static class SccmGrantScript
         sb.AppendLine($"DECLARE @sid varbinary(85) = SUSER_SID(N'{account}');");
         sb.AppendLine($"USE [{database}];");
         sb.AppendLine("DECLARE @user sysname = (SELECT TOP (1) name FROM sys.database_principals WHERE sid = @sid);");
-        sb.AppendLine($"IF @user IS NOT NULL AND @user <> N'dbo' AND DATABASE_PRINCIPAL_ID(N'{role}') IS NOT NULL EXEC (N'ALTER ROLE [{role}] DROP MEMBER ' + QUOTENAME(@user));");
+        sb.AppendLine("DECLARE @sql nvarchar(max);");
+        sb.AppendLine($"IF @user IS NOT NULL AND @user <> N'dbo' AND DATABASE_PRINCIPAL_ID(N'{role}') IS NOT NULL");
+        sb.AppendLine("BEGIN");
+        sb.AppendLine($"    SET @sql = N'ALTER ROLE [{role}] DROP MEMBER ' + QUOTENAME(@user);");
+        sb.AppendLine("    EXEC (@sql);");
+        sb.AppendLine("END;");
         sb.AppendLine($"IF DATABASE_PRINCIPAL_ID(N'{role}') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.database_role_members WHERE role_principal_id = DATABASE_PRINCIPAL_ID(N'{role}')) DROP ROLE [{role}];");
         return sb.ToString();
     }

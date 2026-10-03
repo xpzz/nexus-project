@@ -31,7 +31,7 @@ public class SccmGrantScriptTests
         Assert.Contains("SUSER_SID(N'AZUL_CORP\\svc.sccm')", script);
         Assert.Contains("FROM sys.database_principals WHERE sid = @sid", script);
         Assert.Contains("IF @user IS NULL", script);
-        Assert.Contains("IF @user <> N'dbo' EXEC (N'ALTER ROLE [azul_nexus_reader] ADD MEMBER '", script);
+        Assert.Contains("SET @sql = N'ALTER ROLE [azul_nexus_reader] ADD MEMBER ' + QUOTENAME(@user);", script);
         Assert.DoesNotContain("IF USER_ID(", script);
         Assert.DoesNotContain("IF SUSER_ID(", script);
     }
@@ -72,8 +72,8 @@ public class DatabaseScriptTests
     {
         var script = DatabaseScripts.SqlServerGrants("AzulNexus", [@"AZUL_CORP\svc.sccm", @"AZUL_CORP\svc.sccm"]);
         Assert.Single(System.Text.RegularExpressions.Regex.Matches(script, "DECLARE @sid")); // duplicate accounts collapse
-        Assert.Contains("IF @user <> N'dbo' EXEC (N'ALTER ROLE [db_datareader] ADD MEMBER '", script);
-        Assert.Contains("IF @user <> N'dbo' EXEC (N'ALTER ROLE [db_datawriter] ADD MEMBER '", script);
+        Assert.Contains("SET @sql = N'ALTER ROLE [db_datareader] ADD MEMBER ' + QUOTENAME(@user);", script);
+        Assert.Contains("SET @sql = N'ALTER ROLE [db_datawriter] ADD MEMBER ' + QUOTENAME(@user);", script);
         Assert.DoesNotContain("IF USER_ID(", script);
     }
 }
