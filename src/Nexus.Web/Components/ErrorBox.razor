@@ -1,0 +1,20 @@
+@if (Error is not null)
+{
+    <div class="error-box">
+        <div><strong>O que aconteceu:</strong> @Error.WhatHappened</div>
+        <div><strong>Impacto:</strong> @Error.Impact</div>
+        <div><strong>Como resolver:</strong> @Error.HowToFix</div>
+        @if (!string.IsNullOrEmpty(Error.Script))
+        {
+            <details>
+                <summary>Script pronto</summary>
+                <pre>@Error.Script</pre>
+            </details>
+        }
+        <div class="code">@Error.Code</div>
+    </div>
+}
+
+@code {
+    [Parameter] public NexusError? Error { get; set; }
+}

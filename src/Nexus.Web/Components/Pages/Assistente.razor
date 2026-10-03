@@ -1,0 +1,103 @@
+@page "/assistente"
+@rendermode InteractiveServer
+@inject INexusDbFactory DbFactory
+@inject SettingsProvider Settings
+
+<PageTitle>Assistente de configuração</PageTitle>
+<h1>Assistente de configuração</h1>
+<p class="lead">Cada etapa pode ser refeita depois em Configurações. Os testes de acesso rodam no serviço Worker, com a conta do serviço.</p>
+
+@if (_steps is null)
+{
+    <p>Carregando…</p>
+}
+else
+{
+    <ol class="checklist">
+        @foreach (var step in _steps)
+        {
+            <li class="step @step.Css">
+                <div class="step-head">
+                    <span class="step-title">@step.Title</span>
+                    <span class="pill @step.Css">@step.State</span>
+                </div>
+                <div class="step-body">@step.Detail</div>
+                <ErrorBox Error="step.Error" />
+            </li>
+        }
+    </ol>
+
+    <section class="card">
+        <h2>Primeiros números por fonte</h2>
+        <table>
+            <thead><tr><th>Fonte</th><th>Registros</th><th>Última coleta com sucesso</th></tr></thead>
+            <tbody>
+                <tr><td>SCCM (v_R_System)</td><td>@Count(_sccm)</td><td>@When("sccm.devices")</td></tr>
+                <tr><td>Active Directory (computadores)</td><td>@Count(_ad)</td><td>@When("ad.computers")</td></tr>
+                <tr><td>Intune / Entra ID</td><td colspan="2">Não configurado</td></tr>
+            </tbody>
+        </table>
+        <p class="hint">A correlação entre fontes (deviceId, serial, UUID) e a sobreposição entram na Fase 1.
+           Nome do equipamento nunca une registros sozinho.</p>
+    </section>
+}
+
+@code {
+    private List<Step>? _steps;
+    private int? _sccm;
+    private int? _ad;
+    private Dictionary<string, JobState> _jobs = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var settings = Settings.Current;
+        await using var db = DbFactory.Create();
+        var lastRun = await db.HealthResults.OrderByDescending(h => h.Id).Select(h => (Guid?)h.RunId).FirstOrDefaultAsync();
+        var health = lastRun is null ? [] : await db.HealthResults.Where(h => h.RunId == lastRun).ToListAsync();
+        _jobs = await db.Jobs.AsNoTracking().ToDictionaryAsync(j => j.Name);
+        _sccm = settings.Sccm.Mode == SourceMode.Disabled ? null : await db.SccmDevices.CountAsync();
+        _ad = settings.ActiveDirectory.Mode == SourceMode.Disabled ? null : await db.AdComputers.CountAsync();
+
+        _steps =
+        [
+            FromHealth("1. SCCM", health, "SCCM: leitura das views",
+                settings.Sccm.Mode == SourceMode.Disabled ? "Não configurado." : $"Site {settings.Sccm.SiteCode} · SQL {settings.Sccm.SqlServer} · banco {settings.Sccm.Database}"),
+            FromHealth("2. Active Directory", health, "Active Directory: leitura de computadores",
+                settings.ActiveDirectory.Mode == SourceMode.Disabled ? "Não configurado." : $"Domínio {settings.ActiveDirectory.Domain}"),
+            new("3. Azure: Entra ID e Intune", "Pendente", "muted", "Registros de aplicativo, permissões, consentimento e validação (caminhos A, B e C) — incremento 0.6."),
+            new("4. Acesso e perfis", "Pendente", "muted", "SSO do Entra ID e as funções Nexus.Admin, Nexus.Gestao, Nexus.Operacao e Nexus.Seguranca. Até lá, o acesso é pelo modo de configuração."),
+            new("5. Gerenciamento esperado", "Modelos padrão aplicados", "ok", "Windows corporativo: SCCM + Intune; Windows Server: SCCM + EDR; pessoais: MDM ou MAM (SPEC 8.1)."),
+            new("6. Coleta", settings.Collection.Paused ? "Pausada" : "Padrões aplicados", settings.Collection.Paused ? "warn" : "ok",
+                $"SCCM a cada {settings.Collection.SccmIntervalMinutes} min · AD a cada {settings.Collection.ActiveDirectoryIntervalMinutes} min · CPU do Worker até {settings.Collection.MaxCpuPercent}% · {settings.Collection.PauseWindows.Count} janela(s) de pausa"),
+            new("7. Fontes opcionais", "Opcional", "muted", "CMDB, Cortex/XDR, Defender e Log Analytics: não configurado."),
+            new("8. Revisão", health.Count == 0 ? "Pendente" : health.Any(h => h.Status == "Error") ? "Com erro" : "Concluída",
+                health.Count == 0 ? "muted" : health.Any(h => h.Status == "Error") ? "error" : "ok",
+                health.Count == 0 ? "Nenhuma verificação executada ainda. Use Saúde › Verificar agora." : $"Última verificação em {health[0].CheckedAt.ToLocalTime():g}, como {health[0].ExecutedAs}."),
+        ];
+    }
+
+    private static Step FromHealth(string title, List<HealthResultRecord> health, string checkName, string detail)
+    {
+        var result = health.FirstOrDefault(h => h.Name == checkName);
+        if (result is null)
+        {
+            return new(title, "Pendente", "muted", detail + " Aguardando a primeira verificação do Worker.");
+        }
+
+        var state = result.Status switch
+        {
+            "Ok" => "Concluída",
+            "Warning" => "Concluída com avisos",
+            "NotConfigured" => "Pendente",
+            _ => "Com erro",
+        };
+        return new(title, state, HealthView.Css(result.Status), $"{detail} — {result.Message}", HealthView.ToError(result));
+    }
+
+    private static string Count(int? value) => value?.ToString("N0") ?? "Não configurado";
+
+    private string When(string job) =>
+        _jobs.TryGetValue(job, out var state) && state.LastSuccessAt is { } at ? at.ToLocalTime().ToString("g") : "—";
+
+    private sealed record Step(string Title, string State, string Css, string Detail, NexusError? Error = null);
+}
