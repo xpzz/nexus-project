@@ -21,6 +21,11 @@
 .PARAMETER AllowSelfSigned
     Se não houver certificado adequado, gera um autoassinado (somente piloto).
 
+.PARAMETER ServiceAccountPassword
+    Senha da conta única dos serviços (serviceIdentity.account, ex.: svc.sccm). Alternativa: variável NEXUS_SERVICE_PASSWORD;
+    sem nenhuma das duas, a senha é pedida no console. Nunca vai para log nem para arquivo; o Windows a guarda
+    protegida (LSA para o serviço, applicationHost.config criptografado para o pool).
+
 .PARAMETER DatabasePassword
     Senha do usuário do banco (somente provedor PostgreSql). Alternativa: variável de ambiente NEXUS_DB_PASSWORD.
 #>
@@ -34,7 +39,8 @@ param(
     [switch]$SkipBackup,
     [switch]$NoOpenBrowser,
     [string]$LogPath,
-    [securestring]$DatabasePassword
+    [securestring]$DatabasePassword,
+    [securestring]$ServiceAccountPassword
 )
 
 $ErrorActionPreference = 'Stop'
@@ -45,6 +51,7 @@ $script:Undo = New-Object System.Collections.Stack
 $script:Pending = New-Object System.Collections.Generic.List[string]
 $script:Nexusctl = $null
 $script:RebootRequired = $false
+$script:ServicePassword = $null
 
 #region Utilitários do servidor
 
@@ -210,7 +217,9 @@ function Resolve-Context {
         ConnectionString  = New-NexusConnectionString -Provider $provider -Database $dbRaw -TrustServerCertificate ([bool](Get-Setting $Raw 'database.trustServerCertificate' $false))
     }
 
+    $account = Get-Setting $Raw 'serviceIdentity.account' $null
     $ctx.Accounts = Resolve-ServiceAccounts `
+        -Account (Resolve-AccountName $account) `
         -WebGmsa (Get-Setting $Raw 'serviceIdentity.webGmsa' $null) `
         -WorkerGmsa (Get-Setting $Raw 'serviceIdentity.workerGmsa' $null) `
         -PoolName $ctx.Iis.AppPoolName -Provider $provider -NexusDbServer $ctx.Database.Server `
@@ -318,6 +327,17 @@ function Test-Environment {
 
     foreach ($problem in $Ctx.Accounts.Problems) {
         $checks.Add((New-Check 'Identidade dos serviços' 'Bloqueio' $problem 'Crie e instale a gMSA (New-ADServiceAccount / Install-ADServiceAccount) e informe-a em serviceIdentity. Conta virtual aparece na rede como a conta de computador do servidor.'))
+    }
+    if ($Ctx.Accounts.Mode -eq 'SharedAccount') {
+        $account = $Ctx.Accounts.Account
+        $sid = $null
+        try { $sid = (New-Object System.Security.Principal.NTAccount($account)).Translate([System.Security.Principal.SecurityIdentifier]) } catch { }
+        if ($sid) {
+            $checks.Add((New-Check 'Conta dos serviços' 'OK' "Site (pool do IIS) e Worker rodarão sob $account (conta única, sem contas virtuais). Senha pedida na instalação."))
+            $checks.Add((New-Check 'Conta dos serviços: privilégio' 'Atenção' "A conta $account provavelmente tem privilégios altos no SCCM e no SQL. O site (interface web) passará a rodar com ela, o que contraria a separação da SPEC §5.2 (o site não deveria alcançar SCCM/AD). O Nexus só executa SELECT, mas a exposição da interface é maior." 'Aceito por decisão do responsável (ADR-0002). Se possível, use uma conta própria com SELECT apenas nas views do SCCM.'))
+        } else {
+            $checks.Add((New-Check 'Conta dos serviços' 'Bloqueio' "A conta '$account' não foi encontrada neste servidor/domínio." 'Informe serviceIdentity.account como DOMINIO\conta (ex.: CORP\svc.sccm) e confirme que o servidor está no domínio.'))
+        }
     }
     foreach ($gmsa in @($Ctx.Accounts.WebGmsa, $Ctx.Accounts.WorkerGmsa) | Where-Object { $_ }) {
         if (-not $gmsa.EndsWith('$')) {
@@ -452,10 +472,52 @@ function Set-WorkerService {
     }
     Invoke-Native -FilePath 'sc.exe' -Arguments @('description', $name, 'Azul Nexus: coletas, verificações e agendador. Somente leitura nas fontes.') | Out-Null
     Invoke-Native -FilePath 'sc.exe' -Arguments @('failure', $name, 'reset=', '86400', 'actions=', 'restart/60000/restart/60000/restart/60000') | Out-Null
-    if ($Ctx.Accounts.WorkerGmsa) {
+    if ($Ctx.Accounts.Mode -eq 'SharedAccount') {
+        # Método Change do serviço (CIM): a senha não aparece em linha de comando.
+        $service = Get-CimInstance Win32_Service -Filter "Name='$name'"
+        $result = Invoke-CimMethod -InputObject $service -MethodName Change -Arguments @{ StartName = $Ctx.Accounts.Account; StartPassword = (ConvertTo-PlainText $script:ServicePassword) }
+        if ($result.ReturnValue -ne 0) {
+            Stop-Install -ExitCode $script:ExitCodes.FailedRolledBack -WhatHappened "O Windows recusou configurar o serviço para a conta $($Ctx.Accounts.Account) (código $($result.ReturnValue))." -Impact 'O Worker não consegue iniciar.' -HowToFix 'Confira a senha e se a conta tem o direito "Fazer logon como serviço" (se vier de GPO, inclua a conta na GPO).'
+        }
+    } elseif ($Ctx.Accounts.WorkerGmsa) {
         Invoke-Native -FilePath 'sc.exe' -Arguments @('config', $name, 'obj=', $Ctx.Accounts.WorkerGmsa, 'password=', '""') | Out-Null
     } else {
         Invoke-Native -FilePath 'sc.exe' -Arguments @('config', $name, 'obj=', 'NT SERVICE\AzulNexus.Worker') | Out-Null
+    }
+}
+
+# Conta única: direito de logon como serviço (local; GPO pode sobrescrever) e membro de IIS_IUSRS.
+function Set-ServiceAccountRights {
+    param($Ctx)
+    if ($Ctx.Accounts.Mode -ne 'SharedAccount') { return }
+    $account = $Ctx.Accounts.Account
+    $sid = (New-Object System.Security.Principal.NTAccount($account)).Translate([System.Security.Principal.SecurityIdentifier]).Value
+
+    $work = Join-Path $env:TEMP ("nexus-secedit-{0}" -f [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $work | Out-Null
+    try {
+        $inf = Join-Path $work 'current.inf'
+        $db = Join-Path $work 'secedit.sdb'
+        Invoke-Native -FilePath 'secedit.exe' -Arguments @('/export', '/cfg', $inf, '/areas', 'USER_RIGHTS', '/quiet') | Out-Null
+        $text = Get-Content $inf -Raw -Encoding Unicode
+        if ($text -notmatch "SeServiceLogonRight[^\r\n]*\*$sid") {
+            $line = [regex]::Match($text, 'SeServiceLogonRight\s*=\s*(.*)')
+            $entries = if ($line.Success -and $line.Groups[1].Value.Trim()) { $line.Groups[1].Value.Trim() + ',' } else { '' }
+            $newInf = "[Unicode]`r`nUnicode=yes`r`n[Version]`r`nsignature=`"`$CHICAGO`$`"`r`nRevision=1`r`n[Privilege Rights]`r`nSeServiceLogonRight = $entries*$sid`r`n"
+            $newPath = Join-Path $work 'grant.inf'
+            Set-Content -Path $newPath -Value $newInf -Encoding Unicode
+            Invoke-Native -FilePath 'secedit.exe' -Arguments @('/configure', '/db', $db, '/cfg', $newPath, '/areas', 'USER_RIGHTS', '/quiet') | Out-Null
+            Write-Log "Direito 'Fazer logon como serviço' concedido localmente a $account."
+        } else {
+            Write-Log "A conta $account já tem o direito 'Fazer logon como serviço'."
+        }
+    } finally {
+        Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    $member = & net.exe localgroup IIS_IUSRS 2>&1 | Out-String
+    if ($member -notmatch [regex]::Escape(($account -split '\\')[-1])) {
+        Invoke-Native -FilePath 'net.exe' -Arguments @('localgroup', 'IIS_IUSRS', $account, '/add') -AllowFailure | Out-Null
     }
 }
 
@@ -476,7 +538,9 @@ function Set-IisSite {
     Set-ItemProperty "IIS:\AppPools\$pool" -Name startMode -Value 'AlwaysRunning'
     Set-ItemProperty "IIS:\AppPools\$pool" -Name processModel.idleTimeout -Value ([TimeSpan]::Zero)
     Set-ItemProperty "IIS:\AppPools\$pool" -Name recycling.periodicRestart.time -Value ([TimeSpan]::Zero)
-    if ($Ctx.Accounts.WebGmsa) {
+    if ($Ctx.Accounts.Mode -eq 'SharedAccount') {
+        Set-ItemProperty "IIS:\AppPools\$pool" -Name processModel -Value @{ identityType = 'SpecificUser'; userName = $Ctx.Accounts.Account; password = (ConvertTo-PlainText $script:ServicePassword) }
+    } elseif ($Ctx.Accounts.WebGmsa) {
         Set-ItemProperty "IIS:\AppPools\$pool" -Name processModel -Value @{ identityType = 'SpecificUser'; userName = $Ctx.Accounts.WebGmsa; password = '' }
     } else {
         Set-ItemProperty "IIS:\AppPools\$pool" -Name processModel.identityType -Value 'ApplicationPoolIdentity'
@@ -591,10 +655,10 @@ function Initialize-Database {
     }
 
     if ($Ctx.Database.Provider -eq 'SqlServer') {
-        $grant = Invoke-Nexusctl -Arguments @('db-grant', '--account', $Ctx.Accounts.WebAccount, $Ctx.Accounts.WorkerAccount) -AllowFailure
+        $grant = Invoke-Nexusctl -Arguments @('db-grant', '--account') + @($Ctx.Accounts.WebAccount, $Ctx.Accounts.WorkerAccount | Select-Object -Unique) -AllowFailure
         if ($grant.ExitCode -ne 0) {
             $file = Join-Path $Ctx.DataDir 'scripts\nexus-db-grant.sql'
-            Invoke-Nexusctl -Arguments @('db-grant-script', '--account', $Ctx.Accounts.WebAccount, $Ctx.Accounts.WorkerAccount, '--output', $file) -AllowFailure | Out-Null
+            Invoke-Nexusctl -Arguments @('db-grant-script', '--account') + @($Ctx.Accounts.WebAccount, $Ctx.Accounts.WorkerAccount | Select-Object -Unique) + @('--output', $file) -AllowFailure | Out-Null
             $script:Pending.Add("DBA: executar $file (cria o banco '$($Ctx.Database.Name)' e dá acesso às contas dos serviços) e depois 'nexusctl migrate'.")
             return
         }
@@ -676,6 +740,36 @@ public static class NexusLocalProbe
 
 #endregion
 
+# Pede a senha da conta única (parâmetro, NEXUS_SERVICE_PASSWORD ou console) e a valida no domínio
+# antes de qualquer alteração. A senha fica só em memória (SecureString).
+function Get-ServicePassword {
+    param([string]$Account)
+    $secure = $ServiceAccountPassword
+    if (-not $secure -and $env:NEXUS_SERVICE_PASSWORD) {
+        $secure = ConvertTo-SecureString $env:NEXUS_SERVICE_PASSWORD -AsPlainText -Force
+        Remove-Item Env:\NEXUS_SERVICE_PASSWORD -ErrorAction SilentlyContinue
+    }
+    if (-not $secure -and [Environment]::UserInteractive) {
+        $secure = Read-Host -Prompt "Senha da conta $Account" -AsSecureString
+    }
+    if (-not $secure) {
+        Stop-Install -ExitCode $script:ExitCodes.PrerequisiteBlocked -WhatHappened "A senha da conta $Account não foi informada." -Impact 'Nada foi alterado.' -HowToFix 'Rode no console para digitar a senha, ou use -ServiceAccountPassword (SecureString) ou a variável NEXUS_SERVICE_PASSWORD.'
+    }
+    $domain, $user = if ($Account.Contains('\')) { $Account.Split('\', 2) } else { $null, $Account }
+    if ($domain) {
+        try {
+            Add-Type -AssemblyName System.DirectoryServices.AccountManagement
+            $context = New-Object System.DirectoryServices.AccountManagement.PrincipalContext([System.DirectoryServices.AccountManagement.ContextType]::Domain, $domain)
+            if (-not $context.ValidateCredentials($user, (ConvertTo-PlainText $secure))) {
+                Stop-Install -ExitCode $script:ExitCodes.PrerequisiteBlocked -WhatHappened "A senha da conta $Account foi recusada pelo domínio (senha incorreta, conta bloqueada ou desabilitada)." -Impact 'Nada foi alterado.' -HowToFix 'Confira a senha e o estado da conta no AD e rode de novo.'
+            }
+        } catch [System.Management.Automation.RuntimeException] { throw } catch {
+            Write-Log "Não foi possível validar a senha no domínio ($($_.Exception.Message)). Seguindo; o Windows validará ao configurar o serviço." 'WARN'
+        }
+    }
+    return $secure
+}
+
 function Invoke-Install {
     if (-not $HostingBundleInstaller) {
         $bundled = Get-ChildItem (Join-Path $script:PackageRoot 'prereq') -Filter 'dotnet-hosting*.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -701,6 +795,8 @@ function Invoke-Install {
         return
     }
 
+    if ($ctx.Accounts.Mode -eq 'SharedAccount') { $script:ServicePassword = Get-ServicePassword -Account $ctx.Accounts.Account }
+
     $previous = Get-CurrentInstall
     if ($previous) { Write-Log "Instalação existente: versão $($previous.Version). Será $(if ($previous.Version -eq $ctx.Version) { 'reparada' } else { 'atualizada' })." }
 
@@ -708,6 +804,7 @@ function Invoke-Install {
     Initialize-DataFolders -Ctx $ctx
     Publish-Files -Ctx $ctx -Previous $previous
     Set-RegistryInfo -Ctx $ctx
+    Set-ServiceAccountRights -Ctx $ctx
     Set-WorkerService -Ctx $ctx
     $thumbprint = Set-HttpsCertificate -Ctx $ctx
     Set-IisSite -Ctx $ctx -Thumbprint $thumbprint

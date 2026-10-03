@@ -61,7 +61,7 @@ Parâmetros úteis: `-Answers <arquivo>`, `-HostingBundleInstaller <exe> -AllowI
 | `iis.certificate` | `auto` | `auto` escolhe o melhor certificado; ou informe o thumbprint; `self-signed` só em piloto |
 | `database.provider` | `SqlServer` | Ou `PostgreSql` |
 | `database.server`, `database.name` | (obrigatório), `AzulNexus` | |
-| `serviceIdentity.webGmsa`, `workerGmsa` | `null` | Conta virtual quando o SQL acessado é local; **gMSA obrigatória** quando é remoto |
+| `serviceIdentity.account` | `svc.sccm` | **Conta única de domínio** para o site (pool) e o Worker (ADR-0002); a senha é pedida no console (`-ServiceAccountPassword` ou `NEXUS_SERVICE_PASSWORD`). Sem ela vale o padrão: conta virtual com SQL local, e gMSA (`webGmsa`/`workerGmsa`) com SQL remoto. **Intune/Entra nunca usam esta conta** (identidade de aplicativo com certificado) |
 | `sccm.*` | `auto` | Site, SQL e banco detectados (registro e SMS Provider); informe à mão se o Nexus estiver fora do servidor do SCCM |
 | `sccm.grantViewAccess` | `if-permitted` | Tenta conceder `SELECT` nas views; se não puder, gera o script para o DBA. `never` só gera o script |
 | `activeDirectory.*` | `auto` | Domínio do servidor |
