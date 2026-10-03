@@ -150,6 +150,11 @@ function Resolve-Context {
     param($Raw)
     $ctx = [ordered]@{}
     $ctx.Version = Get-PackageVersion
+    # "service": o site roda como serviço do Windows (Kestrel), só exige "logon como serviço", sem IIS.
+    # "iis": o site roda em pool do IIS (a identidade do pool exige "logon como trabalho em lote").
+    $hosting = ([string](Get-Setting $Raw 'hosting' 'service')).ToLowerInvariant()
+    if ($hosting -notin @('service', 'iis')) { $hosting = 'service' }
+    $ctx.Hosting = $hosting
 
     $installDir = Get-Setting $Raw 'installDir' 'auto'
     $ctx.InstallDir = if (Test-IsAuto $installDir) { Join-Path $env:ProgramFiles 'Azul Nexus' } else { $installDir }
@@ -166,6 +171,7 @@ function Resolve-Context {
         AppPoolName  = Get-Setting $Raw 'iis.appPoolName' 'AzulNexus'
         Port         = [int](Get-Setting $Raw 'iis.port' 8443)
         HostName     = $null
+        Thumbprint   = $null
         Certificate  = Get-Setting $Raw 'iis.certificate' 'auto'
         OpenFirewall = [bool](Get-Setting $Raw 'iis.openFirewall' $true)
     }
@@ -211,7 +217,7 @@ function Resolve-Context {
         -Account (Resolve-AccountName $account) `
         -WebGmsa (Get-Setting $Raw 'serviceIdentity.webGmsa' $null) `
         -WorkerGmsa (Get-Setting $Raw 'serviceIdentity.workerGmsa' $null) `
-        -PoolName $ctx.Iis.AppPoolName -Provider $provider -NexusDbServer $ctx.Database.Server `
+        -WebHosting $hosting -PoolName $ctx.Iis.AppPoolName -Provider $provider -NexusDbServer $ctx.Database.Server `
         -SccmSqlServer $ctx.Sccm.SqlServer -SccmLive ([bool]$ctx.Sccm.SqlServer)
 
     $ctx.Collection = Get-Setting $Raw 'collection' $null
@@ -251,25 +257,31 @@ function Test-Environment {
         $checks.Add((New-Check 'Disco' $(if ($freeGb -ge 5) { 'OK' } else { 'Bloqueio' }) "$freeGb GB livres em $drive (pasta de dados)." 'Libere ao menos 5 GB ou escolha outro dataDir.'))
     }
 
-    $iisInstalled = Test-Path 'HKLM:\SOFTWARE\Microsoft\InetStp'
-    $checks.Add((New-Check 'IIS' $(if ($iisInstalled) { 'OK' } else { 'Bloqueio' }) $(if ($iisInstalled) { 'IIS instalado.' } else { 'IIS não instalado.' }) 'Install-WindowsFeature Web-Server, Web-WebSockets, Web-Scripting-Tools -IncludeManagementTools'))
-    $webSockets = Test-Path (Join-Path $env:windir 'System32\inetsrv\iiswsock.dll')
-    $checks.Add((New-Check 'IIS: WebSockets' $(if ($webSockets) { 'OK' } else { 'Bloqueio' }) $(if ($webSockets) { 'Recurso WebSockets presente (exigido pelo Blazor).' } else { 'Recurso WebSockets ausente.' }) 'Install-WindowsFeature Web-WebSockets'))
-    $webAdmin = [bool](Get-Module -ListAvailable -Name WebAdministration)
-    $checks.Add((New-Check 'IIS: ferramentas de script' $(if ($webAdmin) { 'OK' } else { 'Bloqueio' }) $(if ($webAdmin) { 'Módulo WebAdministration disponível.' } else { 'Módulo WebAdministration ausente.' }) 'Install-WindowsFeature Web-Scripting-Tools'))
+    $iisInstalled = $false; $webAdmin = $false
+    if ($Ctx.Hosting -eq 'iis') {
+        $iisInstalled = Test-Path 'HKLM:\SOFTWARE\Microsoft\InetStp'
+        $checks.Add((New-Check 'IIS' $(if ($iisInstalled) { 'OK' } else { 'Bloqueio' }) $(if ($iisInstalled) { 'IIS instalado.' } else { 'IIS não instalado.' }) 'Install-WindowsFeature Web-Server, Web-WebSockets, Web-Scripting-Tools -IncludeManagementTools'))
+        $webSockets = Test-Path (Join-Path $env:windir 'System32\inetsrv\iiswsock.dll')
+        $checks.Add((New-Check 'IIS: WebSockets' $(if ($webSockets) { 'OK' } else { 'Bloqueio' }) $(if ($webSockets) { 'Recurso WebSockets presente (exigido pelo Blazor).' } else { 'Recurso WebSockets ausente.' }) 'Install-WindowsFeature Web-WebSockets'))
+        $webAdmin = [bool](Get-Module -ListAvailable -Name WebAdministration)
+        $checks.Add((New-Check 'IIS: ferramentas de script' $(if ($webAdmin) { 'OK' } else { 'Bloqueio' }) $(if ($webAdmin) { 'Módulo WebAdministration disponível.' } else { 'Módulo WebAdministration ausente.' }) 'Install-WindowsFeature Web-Scripting-Tools'))
 
-    $moduleDll = Join-Path $env:ProgramFiles 'IIS\Asp.Net Core Module\V2\aspnetcorev2.dll'
-    $runtimeDir = Join-Path $env:ProgramFiles 'dotnet\shared\Microsoft.AspNetCore.App'
-    $runtime = if (Test-Path $runtimeDir) { Get-ChildItem $runtimeDir -Directory | Where-Object { $_.Name -like '10.*' } | Select-Object -First 1 } else { $null }
-    $bundleOk = (Test-Path $moduleDll) -and $runtime
-    if ($bundleOk) {
-        $checks.Add((New-Check 'ASP.NET Core Hosting Bundle' 'OK' "Módulo do IIS e runtime $($runtime.Name) presentes."))
-    } elseif ($HostingBundleInstaller -and $AllowIisRestart) {
-        $checks.Add((New-Check 'ASP.NET Core Hosting Bundle' 'Atenção' 'Ausente; será instalado de forma silenciosa e o IIS será reiniciado (autorizado por -AllowIisRestart).'))
-    } elseif ($HostingBundleInstaller) {
-        $checks.Add((New-Check 'ASP.NET Core Hosting Bundle' 'Bloqueio' 'Hosting Bundle ausente. Há um instalador no pacote, mas instalá-lo reinicia o IIS e, em servidor de site do SCCM, interrompe por instantes o management point e o distribution point.' 'Em janela de manutenção, rode com -AllowIisRestart (o instalador do pacote será usado), ou use o Instalar.cmd e responda S.'))
+        $moduleDll = Join-Path $env:ProgramFiles 'IIS\Asp.Net Core Module\V2\aspnetcorev2.dll'
+        $runtimeDir = Join-Path $env:ProgramFiles 'dotnet\shared\Microsoft.AspNetCore.App'
+        $runtime = if (Test-Path $runtimeDir) { Get-ChildItem $runtimeDir -Directory | Where-Object { $_.Name -like '10.*' } | Select-Object -First 1 } else { $null }
+        $bundleOk = (Test-Path $moduleDll) -and $runtime
+        if ($bundleOk) {
+            $checks.Add((New-Check 'ASP.NET Core Hosting Bundle' 'OK' "Módulo do IIS e runtime $($runtime.Name) presentes."))
+        } elseif ($HostingBundleInstaller -and $AllowIisRestart) {
+            $checks.Add((New-Check 'ASP.NET Core Hosting Bundle' 'Atenção' 'Ausente; será instalado de forma silenciosa e o IIS será reiniciado (autorizado por -AllowIisRestart).'))
+        } elseif ($HostingBundleInstaller) {
+            $checks.Add((New-Check 'ASP.NET Core Hosting Bundle' 'Bloqueio' 'Hosting Bundle ausente. Há um instalador no pacote, mas instalá-lo reinicia o IIS e, em servidor de site do SCCM, interrompe por instantes o management point e o distribution point.' 'Em janela de manutenção, rode com -AllowIisRestart (o instalador do pacote será usado), ou use o Instalar.cmd e responda S.'))
+        } else {
+            $checks.Add((New-Check 'ASP.NET Core Hosting Bundle' 'Bloqueio' 'ASP.NET Core 10 Hosting Bundle ausente. A instalação reinicia o IIS e, em servidor de site do SCCM, interrompe por instantes o management point e o distribution point.' 'Instale o Hosting Bundle 10.x em janela de manutenção, ou rode este script com -HostingBundleInstaller <caminho do dotnet-hosting-10.x-win.exe> -AllowIisRestart.'))
+        }
+
     } else {
-        $checks.Add((New-Check 'ASP.NET Core Hosting Bundle' 'Bloqueio' 'ASP.NET Core 10 Hosting Bundle ausente. A instalação reinicia o IIS e, em servidor de site do SCCM, interrompe por instantes o management point e o distribution point.' 'Instale o Hosting Bundle 10.x em janela de manutenção, ou rode este script com -HostingBundleInstaller <caminho do dotnet-hosting-10.x-win.exe> -AllowIisRestart.'))
+        $checks.Add((New-Check 'Hospedagem do site' 'OK' 'Serviço do Windows (Kestrel): não exige IIS, Hosting Bundle nem o direito de logon em lote; só "Fazer logon como serviço".'))
     }
 
     $port = $Ctx.Iis.Port
@@ -279,6 +291,15 @@ function Test-Environment {
         $inUse = $false
         try { $inUse = [bool](Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue) } catch { }
         $ownSite = $false
+        $webService = Get-Service -Name 'AzulNexus.Web' -ErrorAction SilentlyContinue
+        if ($Ctx.Hosting -eq 'service' -and $webService -and $webService.Status -eq 'Running') { $ownSite = $true }
+        # Site do IIS de uma instalação anterior no modo iis: é do Nexus e será removido ao trocar para o modo serviço.
+        if ($Ctx.Hosting -eq 'service' -and (Test-Path 'HKLM:\SOFTWARE\Microsoft\InetStp') -and (Get-Module -ListAvailable -Name WebAdministration)) {
+            try {
+                Import-Module WebAdministration -ErrorAction Stop
+                if (Get-WebBinding -Name $Ctx.Iis.SiteName -ErrorAction SilentlyContinue | Where-Object { $_.bindingInformation -like "*:${port}:*" }) { $ownSite = $true }
+            } catch { }
+        }
         if ($webAdmin -and $iisInstalled) {
             try {
                 Import-Module WebAdministration -ErrorAction Stop
@@ -406,13 +427,15 @@ function Publish-Files {
     }
 
     # Libera os arquivos do site antes de substituí-los (app_offline.htm descarrega o app sem derrubar o IIS).
-    if (Test-Path $webTarget) {
+    if ((Test-Path $webTarget) -and $Ctx.Hosting -eq 'iis') {
         Set-Content -Path (Join-Path $webTarget 'app_offline.htm') -Value '<html><body><h1>Azul Nexus em atualização</h1><p>Volte em alguns instantes.</p></body></html>' -Encoding UTF8
         Start-Sleep -Seconds 3
     }
-    if (Get-Service -Name 'AzulNexus.Worker' -ErrorAction SilentlyContinue) {
-        Stop-Service -Name 'AzulNexus.Worker' -Force -ErrorAction SilentlyContinue
-        Wait-ServiceStatus -Name 'AzulNexus.Worker' -Status 'Stopped'
+    foreach ($serviceName in 'AzulNexus.Web', 'AzulNexus.Worker') {
+        if (Get-Service -Name $serviceName -ErrorAction SilentlyContinue) {
+            Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
+            Wait-ServiceStatus -Name $serviceName -Status 'Stopped'
+        }
     }
 
     $robocopyWeb = Invoke-Native -FilePath 'robocopy.exe' -Arguments @((Join-Path $script:PackageRoot 'web'), $webTarget, '/MIR', '/XF', 'app_offline.htm', '/NFL', '/NDL', '/NJH', '/NJS', '/NP') -AllowFailure
@@ -445,33 +468,90 @@ function Set-RegistryInfo {
     Set-ItemProperty -Path $path -Name 'SiteName' -Value $Ctx.Iis.SiteName
     Set-ItemProperty -Path $path -Name 'AppPoolName' -Value $Ctx.Iis.AppPoolName
     Set-ItemProperty -Path $path -Name 'Url' -Value $Ctx.PublicUrl
+    Set-ItemProperty -Path $path -Name 'Hosting' -Value $Ctx.Hosting
+}
+
+# Cria ou atualiza um serviço do Windows do Nexus (Worker ou site) e o configura para a conta dos serviços.
+function Set-ManagedService {
+    param($Ctx, [string]$Name, [string]$Exe, [string]$DisplayName, [string]$Description, [string]$Gmsa, [string]$VirtualAccount)
+    Write-Log "Configurando o serviço $Name..." 'STEP'
+    $existed = [bool](Get-Service -Name $Name -ErrorAction SilentlyContinue)
+    if (-not $existed) {
+        Invoke-Native -FilePath 'sc.exe' -Arguments @('create', $Name, 'binPath=', "`"$Exe`"", 'start=', 'delayed-auto', 'DisplayName=', $DisplayName) | Out-Null
+        $script:Undo.Push({ Stop-Service -Name $Name -Force -ErrorAction SilentlyContinue; & sc.exe delete $Name | Out-Null }.GetNewClosure())
+    } else {
+        Invoke-Native -FilePath 'sc.exe' -Arguments @('config', $Name, 'binPath=', "`"$Exe`"", 'start=', 'delayed-auto') | Out-Null
+    }
+    Invoke-Native -FilePath 'sc.exe' -Arguments @('description', $Name, $Description) | Out-Null
+    Invoke-Native -FilePath 'sc.exe' -Arguments @('failure', $Name, 'reset=', '86400', 'actions=', 'restart/60000/restart/60000/restart/60000') | Out-Null
+    if ($Ctx.Accounts.Mode -eq 'SharedAccount') {
+        # Método Change do serviço (CIM): a senha não aparece em linha de comando.
+        $service = Get-CimInstance Win32_Service -Filter "Name='$Name'"
+        $result = Invoke-CimMethod -InputObject $service -MethodName Change -Arguments @{ StartName = $Ctx.Accounts.Account; StartPassword = (ConvertTo-PlainText $script:ServicePassword) }
+        if ($result.ReturnValue -ne 0) {
+            Stop-Install -ExitCode $script:ExitCodes.FailedRolledBack -WhatHappened "O Windows recusou configurar o serviço $Name para a conta $($Ctx.Accounts.Account) (código $($result.ReturnValue))." -Impact 'O serviço não consegue iniciar.' -HowToFix 'Confira a senha e se a conta tem o direito "Fazer logon como serviço" (se vier de GPO, inclua a conta na GPO).'
+        }
+    } elseif ($Gmsa) {
+        Invoke-Native -FilePath 'sc.exe' -Arguments @('config', $Name, 'obj=', $Gmsa, 'password=', '""') | Out-Null
+    } else {
+        Invoke-Native -FilePath 'sc.exe' -Arguments @('config', $Name, 'obj=', $VirtualAccount) | Out-Null
+    }
 }
 
 function Set-WorkerService {
     param($Ctx)
-    Write-Log 'Configurando o serviço AzulNexus.Worker...' 'STEP'
-    $name = 'AzulNexus.Worker'
-    $exe = Join-Path $Ctx.InstallDir 'app\AzulNexus.Worker.exe'
-    $existed = [bool](Get-Service -Name $name -ErrorAction SilentlyContinue)
-    if (-not $existed) {
-        Invoke-Native -FilePath 'sc.exe' -Arguments @('create', $name, 'binPath=', "`"$exe`"", 'start=', 'delayed-auto', 'DisplayName=', 'Azul Nexus Worker') | Out-Null
-        $script:Undo.Push({ Stop-Service -Name 'AzulNexus.Worker' -Force -ErrorAction SilentlyContinue; & sc.exe delete 'AzulNexus.Worker' | Out-Null })
-    } else {
-        Invoke-Native -FilePath 'sc.exe' -Arguments @('config', $name, 'binPath=', "`"$exe`"", 'start=', 'delayed-auto') | Out-Null
-    }
-    Invoke-Native -FilePath 'sc.exe' -Arguments @('description', $name, 'Azul Nexus: coletas, verificações e agendador. Somente leitura nas fontes.') | Out-Null
-    Invoke-Native -FilePath 'sc.exe' -Arguments @('failure', $name, 'reset=', '86400', 'actions=', 'restart/60000/restart/60000/restart/60000') | Out-Null
-    if ($Ctx.Accounts.Mode -eq 'SharedAccount') {
-        # Método Change do serviço (CIM): a senha não aparece em linha de comando.
-        $service = Get-CimInstance Win32_Service -Filter "Name='$name'"
-        $result = Invoke-CimMethod -InputObject $service -MethodName Change -Arguments @{ StartName = $Ctx.Accounts.Account; StartPassword = (ConvertTo-PlainText $script:ServicePassword) }
-        if ($result.ReturnValue -ne 0) {
-            Stop-Install -ExitCode $script:ExitCodes.FailedRolledBack -WhatHappened "O Windows recusou configurar o serviço para a conta $($Ctx.Accounts.Account) (código $($result.ReturnValue))." -Impact 'O Worker não consegue iniciar.' -HowToFix 'Confira a senha e se a conta tem o direito "Fazer logon como serviço" (se vier de GPO, inclua a conta na GPO).'
+    Set-ManagedService -Ctx $Ctx -Name 'AzulNexus.Worker' -Exe (Join-Path $Ctx.InstallDir 'app\AzulNexus.Worker.exe') `
+        -DisplayName 'Azul Nexus Worker' -Description 'Azul Nexus: coletas, verificações e agendador. Somente leitura nas fontes.' `
+        -Gmsa $Ctx.Accounts.WorkerGmsa -VirtualAccount 'NT SERVICE\AzulNexus.Worker'
+}
+
+# Modo "service": o site roda como serviço do Windows com Kestrel (HTTPS direto, sem IIS).
+function Set-WebService {
+    param($Ctx)
+    Remove-LegacyIisSite -Ctx $Ctx
+    Set-ManagedService -Ctx $Ctx -Name 'AzulNexus.Web' -Exe (Join-Path $Ctx.InstallDir 'web\AzulNexus.Web.exe') `
+        -DisplayName 'Azul Nexus Web' -Description 'Azul Nexus: interface web (HTTPS), assistente e saúde.' `
+        -Gmsa $Ctx.Accounts.WebGmsa -VirtualAccount 'NT SERVICE\AzulNexus.Web'
+}
+
+# Site e pool do IIS criados por uma instalação anterior no modo "iis": liberam a porta ao trocar para o modo serviço.
+function Remove-LegacyIisSite {
+    param($Ctx)
+    if (-not ((Test-Path 'HKLM:\SOFTWARE\Microsoft\InetStp') -and (Get-Module -ListAvailable -Name WebAdministration))) { return }
+    try {
+        Import-Module WebAdministration -ErrorAction Stop
+        $site = $Ctx.Iis.SiteName; $pool = $Ctx.Iis.AppPoolName
+        if (Test-Path "IIS:\Sites\$site") {
+            Write-Log "Removendo o site '$site' do IIS (instalação anterior no modo IIS)."
+            Stop-Website -Name $site -ErrorAction SilentlyContinue
+            Remove-Website -Name $site
+            if (Test-Path "IIS:\SslBindings\0.0.0.0!$($Ctx.Iis.Port)") { Remove-Item "IIS:\SslBindings\0.0.0.0!$($Ctx.Iis.Port)" -Force }
         }
-    } elseif ($Ctx.Accounts.WorkerGmsa) {
-        Invoke-Native -FilePath 'sc.exe' -Arguments @('config', $name, 'obj=', $Ctx.Accounts.WorkerGmsa, 'password=', '""') | Out-Null
+        if (Test-Path "IIS:\AppPools\$pool") { Remove-WebAppPool -Name $pool }
+    } catch { Write-Log "Não foi possível remover o site antigo do IIS: $($_.Exception.Message)" 'WARN' }
+}
+
+# A conta do serviço precisa ler a chave privada do certificado do Kestrel (o IIS/HTTP.sys usava o SYSTEM).
+function Grant-CertificateKeyAccess {
+    param($Ctx, [string]$Thumbprint)
+    $certificate = Get-ChildItem Cert:\LocalMachine\My | Where-Object { $_.Thumbprint -eq $Thumbprint } | Select-Object -First 1
+    if (-not $certificate) { return }
+    $keyFile = $null
+    try {
+        $rsa = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($certificate)
+        if ($rsa -is [System.Security.Cryptography.RSACng]) {
+            $name = $rsa.Key.UniqueName
+            $keyFile = Get-ChildItem (Join-Path $env:ProgramData 'Microsoft\Crypto\Keys') -Filter $name -ErrorAction SilentlyContinue | Select-Object -First 1
+        } elseif ($rsa -and $rsa.CspKeyContainerInfo) {
+            $name = $rsa.CspKeyContainerInfo.UniqueKeyContainerName
+            $keyFile = Get-ChildItem (Join-Path $env:ProgramData 'Microsoft\Crypto\RSA\MachineKeys') -Filter $name -ErrorAction SilentlyContinue | Select-Object -First 1
+        }
+    } catch { Write-Log "Não foi possível localizar a chave privada do certificado: $($_.Exception.Message)" 'WARN' }
+    if ($keyFile) {
+        Grant-Acl -Path $keyFile.FullName -Grants @("$($Ctx.Accounts.WebAccount):R")
+        Write-Log "Leitura da chave privada do certificado concedida a $($Ctx.Accounts.WebAccount)."
     } else {
-        Invoke-Native -FilePath 'sc.exe' -Arguments @('config', $name, 'obj=', 'NT SERVICE\AzulNexus.Worker') | Out-Null
+        Write-Log 'Não foi possível localizar o arquivo da chave privada (certificado de HSM/cartão ou chave de usuário). Se o serviço não abrir o HTTPS, conceda leitura da chave à conta do serviço em certlm.msc › Gerenciar Chaves Privadas.' 'WARN'
     }
 }
 
@@ -484,9 +564,8 @@ function Set-ServiceAccountRights {
 
     # Serviço (Worker) e trabalho em lote (pool do IIS). Em domínio, a GPO costuma sobrescrever a concessão local:
     # por isso o logon é TESTADO depois (Test-AccountLogons) e a falha é explicada.
-    $rights = @(
-        @{ Name = 'SeServiceLogonRight'; Label = "Fazer logon como serviço" },
-        @{ Name = 'SeBatchLogonRight'; Label = "Fazer logon como trabalho em lote" })
+    $rights = @(@{ Name = 'SeServiceLogonRight'; Label = "Fazer logon como serviço" })
+    if ($Ctx.Hosting -eq 'iis') { $rights += @{ Name = 'SeBatchLogonRight'; Label = "Fazer logon como trabalho em lote" } }
     $work = Join-Path $env:TEMP ("nexus-secedit-{0}" -f [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $work | Out-Null
     try {
@@ -515,9 +594,11 @@ function Set-ServiceAccountRights {
         Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
     }
 
-    $member = (Invoke-Native -FilePath 'net.exe' -Arguments @('localgroup', 'IIS_IUSRS') -AllowFailure).Output -join "`n"
-    if ($member -notmatch [regex]::Escape(($account -split '\\')[-1])) {
-        Invoke-Native -FilePath 'net.exe' -Arguments @('localgroup', 'IIS_IUSRS', $account, '/add') -AllowFailure | Out-Null
+    if ($Ctx.Hosting -eq 'iis') {
+        $member = (Invoke-Native -FilePath 'net.exe' -Arguments @('localgroup', 'IIS_IUSRS') -AllowFailure).Output -join "`n"
+        if ($member -notmatch [regex]::Escape(($account -split '\\')[-1])) {
+            Invoke-Native -FilePath 'net.exe' -Arguments @('localgroup', 'IIS_IUSRS', $account, '/add') -AllowFailure | Out-Null
+        }
     }
 }
 
@@ -548,7 +629,9 @@ public static class NexusLogon
     $domain, $user = if ($account.Contains('\')) { $account.Split('\', 2) } else { $null, $account }
     $plain = ConvertTo-PlainText $script:ServicePassword
     $problems = @()
-    foreach ($test in @(@{ Type = 'Service'; Value = 5 }, @{ Type = 'Batch'; Value = 4 })) {
+    $logonTests = @(@{ Type = 'Service'; Value = 5 })
+    if ($Ctx.Hosting -eq 'iis') { $logonTests += @{ Type = 'Batch'; Value = 4 } }
+    foreach ($test in $logonTests) {
         $code = [NexusLogon]::Try($user, $domain, $plain, $test.Value)
         if ($code -eq 0) { Write-Log "Logon de teste de $account (tipo $($test.Type)): OK."; continue }
         $verdict = Resolve-LogonFailure -Code $code -LogonType $test.Type -Account $account
@@ -794,12 +877,16 @@ public static class NexusLocalProbe
 function Write-SiteDiagnostics {
     param($Ctx)
     Write-Log '--- Diagnóstico do site ---' 'WARN'
-    try {
+    if ($Ctx.Hosting -eq 'service') {
+        $webService = Get-Service -Name 'AzulNexus.Web' -ErrorAction SilentlyContinue
+        $startName = (Get-CimInstance Win32_Service -Filter "Name='AzulNexus.Web'" -ErrorAction SilentlyContinue).StartName
+        Write-Log ("Serviço AzulNexus.Web: {0}; conta: {1}; porta {2}" -f $(if ($webService) { $webService.Status } else { 'não existe' }), $startName, $Ctx.Iis.Port) 'WARN'
+    } else { try {
         Import-Module WebAdministration -ErrorAction Stop
         $pool = $Ctx.Iis.AppPoolName; $site = $Ctx.Iis.SiteName
         Write-Log ("Pool '{0}': {1}; identidade: {2}" -f $pool, (Get-WebAppPoolState -Name $pool).Value, (Get-ItemProperty "IIS:\AppPools\$pool" -Name processModel.userName).Value)
         Write-Log ("Site '{0}': {1}; bindings: {2}" -f $site, (Get-WebsiteState -Name $site).Value, ((Get-WebBinding -Name $site | ForEach-Object { "$($_.protocol) $($_.bindingInformation)" }) -join '; '))
-    } catch { Write-Log "Não foi possível ler o estado do IIS: $($_.Exception.Message)" 'WARN' }
+    } catch { Write-Log "Não foi possível ler o estado do IIS: $($_.Exception.Message)" 'WARN' } }
 
     $logs = Join-Path $Ctx.DataDir 'logs'
     $webLog = Get-ChildItem $logs -Filter 'web-*.json' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -810,13 +897,13 @@ function Write-SiteDiagnostics {
         Write-Log "Nenhum web-*.json em ${logs}: o aplicativo nem chegou a iniciar (veja o Log de Eventos abaixo)." 'WARN'
     }
 
-    try {
+    if ($Ctx.Hosting -eq 'iis') { try {
         $rapid = (Get-ItemProperty "IIS:\AppPools\$($Ctx.Iis.AppPoolName)" -Name failure.rapidFailProtection).Value
         Write-Log "Rapid-Fail Protection do pool: $rapid (ligado: o pool para sozinho depois de falhas repetidas do processo)." 'WARN'
-    } catch { }
+    } catch { } }
     # Pool parado por logon/identidade grava em System (origem WAS); falha do aplicativo grava em Application.
     foreach ($source in @(
-            @{ Log = 'System'; Pattern = 'WAS|W3SVC|IIS' },
+            @{ Log = 'System'; Pattern = 'WAS|W3SVC|IIS|Service Control Manager' },
             @{ Log = 'Application'; Pattern = 'AspNetCore|\.NET Runtime|Application Error|Azul Nexus|IIS' })) {
         try {
             $events = Get-WinEvent -FilterHashtable @{ LogName = $source.Log; Level = 1, 2, 3; StartTime = (Get-Date).AddMinutes(-20) } -MaxEvents 60 -ErrorAction Stop |
@@ -894,7 +981,7 @@ function Invoke-Install {
     $previous = Get-CurrentInstall
     if ($previous) { Write-Log "Instalação existente: versão $($previous.Version). Será $(if ($previous.Version -eq $ctx.Version) { 'reparada' } else { 'atualizada' })." }
 
-    Install-HostingBundle
+    if ($ctx.Hosting -eq 'iis') { Install-HostingBundle }
     Initialize-DataFolders -Ctx $ctx
     Publish-Files -Ctx $ctx -Previous $previous
     Set-RegistryInfo -Ctx $ctx
@@ -902,8 +989,14 @@ function Invoke-Install {
     Test-AccountLogons -Ctx $ctx
     Set-WorkerService -Ctx $ctx
     $thumbprint = Set-HttpsCertificate -Ctx $ctx
-    Set-IisSite -Ctx $ctx -Thumbprint $thumbprint
+    $ctx.Iis.Thumbprint = $thumbprint
+    if ($ctx.Hosting -eq 'iis') {
+        Set-IisSite -Ctx $ctx -Thumbprint $thumbprint
+    } else {
+        Set-WebService -Ctx $ctx
+    }
     Set-FolderPermissions -Ctx $ctx
+    if ($ctx.Hosting -eq 'service') { Grant-CertificateKeyAccess -Ctx $ctx -Thumbprint $thumbprint }
     Set-Firewall -Ctx $ctx
 
     $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
@@ -919,9 +1012,13 @@ function Invoke-Install {
     $siteDir = Join-Path $ctx.InstallDir 'web'
     Remove-Item (Join-Path $siteDir 'app_offline.htm') -Force -ErrorAction SilentlyContinue
     Start-Service -Name 'AzulNexus.Worker'
-    Import-Module WebAdministration
-    if ((Get-WebAppPoolState -Name $ctx.Iis.AppPoolName).Value -ne 'Started') { Start-WebAppPool -Name $ctx.Iis.AppPoolName }
-    if ((Get-WebsiteState -Name $ctx.Iis.SiteName).Value -ne 'Started') { Start-Website -Name $ctx.Iis.SiteName }
+    if ($ctx.Hosting -eq 'iis') {
+        Import-Module WebAdministration
+        if ((Get-WebAppPoolState -Name $ctx.Iis.AppPoolName).Value -ne 'Started') { Start-WebAppPool -Name $ctx.Iis.AppPoolName }
+        if ((Get-WebsiteState -Name $ctx.Iis.SiteName).Value -ne 'Started') { Start-Website -Name $ctx.Iis.SiteName }
+    } else {
+        try { Start-Service -Name 'AzulNexus.Web' } catch { Write-Log "O serviço AzulNexus.Web não iniciou: $($_.Exception.Message)" 'WARN' }
+    }
 
     $probe = Wait-Healthy -Ctx $ctx
     if (-not $probe.Verdict.Ok) {

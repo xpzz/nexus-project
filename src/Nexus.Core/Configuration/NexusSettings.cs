@@ -83,4 +83,16 @@ public sealed class WebSettings
 {
     /// <summary>Public base URL, e.g. https://nexus.azul.local:8443.</summary>
     public string PublicUrl { get; set; } = "";
+
+    /// <summary>
+    /// "service": the site runs as a Windows service with Kestrel (needs only "log on as a service"; no IIS).
+    /// "iis": the site runs in an IIS application pool (the pool identity needs "log on as a batch job").
+    /// </summary>
+    public string Hosting { get; set; } = "service";
+
+    /// <summary>HTTPS port used in "service" hosting (in "iis" hosting the binding comes from IIS).</summary>
+    public int HttpsPort { get; set; } = 8443;
+
+    /// <summary>Thumbprint of the server certificate in LocalMachine\My, used in "service" hosting.</summary>
+    public string? CertificateThumbprint { get; set; }
 }

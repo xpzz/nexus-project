@@ -283,6 +283,7 @@ function Resolve-ServiceAccounts {
         [string]$WebGmsa,
         [string]$WorkerGmsa,
         [Parameter(Mandatory)][string]$PoolName,
+        [ValidateSet('service', 'iis')][string]$WebHosting = 'service',
         [string]$Provider,
         [string]$NexusDbServer,
         [string]$SccmSqlServer,
@@ -317,7 +318,7 @@ function Resolve-ServiceAccounts {
         Account       = $null
         WebGmsa       = $WebGmsa
         WorkerGmsa    = $WorkerGmsa
-        WebAccount    = if ($WebGmsa) { $WebGmsa } else { "IIS APPPOOL\$PoolName" }
+        WebAccount    = if ($WebGmsa) { $WebGmsa } elseif ($WebHosting -eq 'iis') { "IIS APPPOOL\$PoolName" } else { 'NT SERVICE\AzulNexus.Web' }
         WorkerAccount = if ($WorkerGmsa) { $WorkerGmsa } else { 'NT SERVICE\AzulNexus.Worker' }
         Problems      = $problems
     }
@@ -356,6 +357,9 @@ function ConvertTo-ResolvedInstallFile {
             useLdaps    = [bool]$Context.ActiveDirectory.UseLdaps
         }
         publicUrl       = $Context.PublicUrl
+        hosting         = $Context.Hosting
+        httpsPort       = [int]$Context.Iis.Port
+        certificateThumbprint = $Context.Iis.Thumbprint
         demoMode        = [bool]$Context.DemoMode
     }
     if ($Context.Collection) { $resolved['collection'] = $Context.Collection }

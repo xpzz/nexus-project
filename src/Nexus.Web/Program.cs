@@ -25,7 +25,34 @@ if (OperatingSystem.IsWindows())
 
 Log.Logger = logger.CreateLogger();
 
-var builder = WebApplication.CreateBuilder(args);
+// Hosting: "service" = Windows service with Kestrel (needs only "log on as a service"); "iis" = IIS in-process.
+var settingsStore = new Nexus.Core.Configuration.SettingsStore(paths);
+var configuredSettings = settingsStore.Load();
+var serviceHosting = Microsoft.Extensions.Hosting.WindowsServices.WindowsServiceHelpers.IsWindowsService()
+    || string.Equals(Environment.GetEnvironmentVariable("NEXUS_HOSTING"), "service", StringComparison.OrdinalIgnoreCase);
+
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = args, ContentRootPath = AppContext.BaseDirectory });
+if (serviceHosting)
+{
+    builder.Host.UseWindowsService(o => o.ServiceName = "AzulNexus.Web");
+    builder.WebHost.ConfigureKestrel(kestrel =>
+    {
+        System.Security.Cryptography.X509Certificates.X509Certificate2 certificate;
+        try
+        {
+            certificate = Nexus.Web.Hosting.HttpsCertificateLoader.Load(configuredSettings.Web.CertificateThumbprint);
+        }
+        catch (Exception ex)
+        {
+            Log.Fatal(ex, "{Message}", ex.Message);
+            Log.CloseAndFlush();
+            throw;
+        }
+
+        kestrel.ListenAnyIP(configuredSettings.Web.HttpsPort, listen => listen.UseHttps(certificate));
+    });
+}
+
 builder.Services.AddSerilog();
 builder.Services.AddSingleton(paths);
 builder.Services.AddSingleton(new SettingsProvider(paths));

@@ -67,7 +67,7 @@ Assert-That 'Curinga não cobre dois níveis' { $null -eq (Select-BestCertificat
 
 # Identidades
 $local = Resolve-ServiceAccounts -PoolName 'AzulNexus' -Provider 'SqlServer' -NexusDbServer 'localhost' -SccmSqlServer 'localhost' -SccmLive $true
-Assert-That 'SQL local usa conta virtual' { $local.Problems.Count -eq 0 -and $local.WebAccount -eq 'IIS APPPOOL\AzulNexus' -and $local.WorkerAccount -eq 'NT SERVICE\AzulNexus.Worker' }
+Assert-That 'SQL local usa conta virtual' { $local.Problems.Count -eq 0 -and $local.WebAccount -eq 'NT SERVICE\AzulNexus.Web' -and $local.WorkerAccount -eq 'NT SERVICE\AzulNexus.Worker' }
 $remote = Resolve-ServiceAccounts -PoolName 'AzulNexus' -Provider 'SqlServer' -NexusDbServer 'SQL02' -SccmSqlServer 'SQL03' -SccmLive $true
 Assert-That 'SQL remoto sem gMSA bloqueia web e worker' { $remote.Problems.Count -eq 2 }
 $remoteOk = Resolve-ServiceAccounts -WebGmsa 'AZUL\nexus-web$' -WorkerGmsa 'AZUL\nexus-wrk$' -PoolName 'AzulNexus' -Provider 'SqlServer' -NexusDbServer 'SQL02' -SccmSqlServer 'SQL03' -SccmLive $true
@@ -84,6 +84,14 @@ Assert-That 'Conta sem domínio recebe o domínio padrão' { (Resolve-AccountNam
 Assert-That 'DOMINIO\conta e UPN são mantidos' { (Resolve-AccountName 'AZUL\svc.sccm' 'CORP') -eq 'AZUL\svc.sccm' -and (Resolve-AccountName 'svc.sccm@azul.local' 'CORP') -eq 'svc.sccm@azul.local' }
 Assert-That 'Conta vazia vira nulo' { $null -eq (Resolve-AccountName '  ' 'CORP') }
 
+# Hospedagem do site: serviço (padrão) x IIS
+$svcDefault = Resolve-ServiceAccounts -PoolName 'AzulNexus' -Provider 'SqlServer' -NexusDbServer 'localhost' -SccmSqlServer 'localhost' -SccmLive $true
+Assert-That 'Padrão é serviço: conta do site é NT SERVICE\AzulNexus.Web (sem IIS APPPOOL)' { $svcDefault.WebAccount -eq 'NT SERVICE\AzulNexus.Web' }
+$iisDefault = Resolve-ServiceAccounts -WebHosting 'iis' -PoolName 'AzulNexus' -Provider 'SqlServer' -NexusDbServer 'localhost' -SccmSqlServer 'localhost' -SccmLive $true
+Assert-That 'Modo iis mantém IIS APPPOOL\AzulNexus' { $iisDefault.WebAccount -eq 'IIS APPPOOL\AzulNexus' }
+$sharedSvc = Resolve-ServiceAccounts -Account 'AZUL_CORP\svc.sccm' -WebHosting 'service' -PoolName 'AzulNexus' -Provider 'SqlServer' -NexusDbServer 'SQL02' -SccmSqlServer 'SQL03' -SccmLive $true
+Assert-That 'Conta única no modo serviço: site e Worker na mesma conta' { $sharedSvc.WebAccount -eq 'AZUL_CORP\svc.sccm' -and $sharedSvc.WorkerAccount -eq 'AZUL_CORP\svc.sccm' }
+
 # Portas e strings de conexão
 Assert-That 'Portas do SCCM/WSUS são reservadas' { (Test-PortReserved 443) -and (Test-PortReserved 8530) -and (Test-PortReserved 8531) -and -not (Test-PortReserved 8443) }
 $db = [pscustomobject]@{ server = 'SQL02'; name = 'AzulNexus'; port = 5432; username = 'nx' }
@@ -94,12 +102,13 @@ Assert-That 'String PostgreSQL nunca carrega senha' { $pgcs -like '*Host=SQL02*'
 
 # Arquivo resolvido
 $ctx = [pscustomobject]@{
-    InstallDir = 'C:\Program Files\Azul Nexus'; DataDir = 'D:\AzulNexus'; PublicUrl = 'https://nexus.azul.local:8443'; DemoMode = $false; Collection = $null
+    InstallDir = 'C:\Program Files\Azul Nexus'; DataDir = 'D:\AzulNexus'; PublicUrl = 'https://nexus.azul.local:8443'; DemoMode = $false; Collection = $null; Hosting = 'service'; Iis = [pscustomobject]@{ Port = 8443; Thumbprint = 'AABBCC' }
     Database = [pscustomobject]@{ Provider = 'SqlServer'; ConnectionString = $cs }
     Sccm = [pscustomobject]@{ SiteCode = 'AZ1'; SqlServer = 'SQL03'; Database = 'CM_AZ1'; TrustServerCertificate = $false }
     ActiveDirectory = [pscustomobject]@{ Domain = 'azul.local'; Server = $null; SearchBases = @(); UseLdaps = $false }
 }
 $resolved = ConvertTo-ResolvedInstallFile $ctx
+Assert-That 'Arquivo resolvido leva hospedagem, porta e certificado do site' { $resolved.hosting -eq 'service' -and $resolved.httpsPort -eq 8443 -and $resolved.certificateThumbprint -eq 'AABBCC' }
 Assert-That 'Arquivo resolvido não tem "auto" e define os modos' { (($resolved | ConvertTo-Json -Depth 6) -notmatch '"auto"') -and $resolved.sccm.mode -eq 'Live' -and $resolved.activeDirectory.mode -eq 'Live' }
 $ctx.Sccm.SqlServer = $null
 Assert-That 'Sem SQL do SCCM o modo é Disabled (não configurado)' { (ConvertTo-ResolvedInstallFile $ctx).sccm.mode -eq 'Disabled' }

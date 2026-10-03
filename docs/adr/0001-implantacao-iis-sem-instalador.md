@@ -23,3 +23,9 @@
 - O IIS passa a ser compartilhado com funções do SCCM; o isolamento é por pool, porta e identidade próprios.
 - Os critérios de aceite da Fase 0 que citam “Avançar” e MSI passam a valer para o script: instalação silenciosa, reparo por reexecução,
   atualização com backup antes da migração e desinstalação preservando dados.
+
+## Atualização (ADR-0003)
+
+O site também pode rodar como **serviço do Windows com Kestrel** (`hosting: "service"`, agora o padrão), porque o pool do IIS exige o direito
+"Fazer logon como trabalho em lote", que GPO de domínio costuma restringir para contas de serviço. Nesse modo não há IIS nem Hosting Bundle.
+O modo IIS continua disponível (`hosting: "iis"`).

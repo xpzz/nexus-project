@@ -21,9 +21,11 @@ if not exist "deploy\install.json" (
 )
 
 set "EXTRA=%*"
-if exist "prereq\dotnet-hosting*.exe" if not exist "%ProgramFiles%\IIS\Asp.Net Core Module\V2\aspnetcorev2.dll" (
+set "HOSTING=service"
+for /f "usebackq delims=" %%H in (`powershell -NoProfile -Command "try { $h = (ConvertFrom-Json (Get-Content 'deploy\install.json' -Raw)).hosting; if ($h) { $h } else { 'service' } } catch { 'service' }"`) do set "HOSTING=%%H"
+if /i "%HOSTING%"=="iis" if exist "prereq\dotnet-hosting*.exe" if not exist "%ProgramFiles%\IIS\Asp.Net Core Module\V2\aspnetcorev2.dll" (
   echo.
-  echo O ASP.NET Core Hosting Bundle ainda nao esta instalado. O instalador incluido no pacote
+  echo No modo IIS, o ASP.NET Core Hosting Bundle ainda nao esta instalado. O instalador incluido no pacote
   echo reinicia o IIS: em servidor de site do SCCM isso interrompe por instantes o management point
   echo e o distribution point. Faca isso em janela de manutencao.
   choice /c SN /m "Instalar o Hosting Bundle agora e reiniciar o IIS"

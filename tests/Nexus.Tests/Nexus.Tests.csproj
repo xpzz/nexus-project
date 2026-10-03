@@ -29,6 +29,7 @@
     <ProjectReference Include="..\..\src\Nexus.Worker\Nexus.Worker.csproj" />
     <ProjectReference Include="..\..\src\Nexus.Simulation\Nexus.Simulation.csproj" />
     <ProjectReference Include="..\..\src\Nexus.Cli\Nexus.Cli.csproj" />
+    <ProjectReference Include="..\..\src\Nexus.Web\Nexus.Web.csproj" />
   </ItemGroup>
 
 </Project>
