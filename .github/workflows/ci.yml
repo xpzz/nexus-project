@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet test AzulNexus.slnx --nologo
+      - name: Testes dos scripts de implantação (PowerShell 7)
+        shell: pwsh
+        run: ./deploy/tests/Common.Tests.ps1
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet test AzulNexus.slnx --nologo
+      - name: Testes dos scripts de implantação (Windows PowerShell 5.1)
+        shell: powershell
+        run: ./deploy/tests/Common.Tests.ps1
+      - name: Gerar o pacote de implantação
+        shell: pwsh
+        run: ./deploy/Publish-AzulNexus.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AzulNexus-pacote
+          path: artifacts/AzulNexus-*.zip
