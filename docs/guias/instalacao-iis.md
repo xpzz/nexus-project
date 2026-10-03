@@ -17,7 +17,11 @@ Implantação por `dotnet publish`, sem instalador (ADR-0001). O site roda no II
 
 O Worker e o `nexusctl` são *self-contained*: não dependem de runtime instalado.
 
-## 2. Gerar o pacote (máquina de build)
+## 2. Obter o pacote
+
+**Pronto para usar:** página de Releases do repositório (https://github.com/xpzz/nexus-project/releases), arquivo `AzulNexus-<versão>.zip`, gerado pelo workflow *Release* a cada push na `main` (e manualmente em *Actions › Release › Run workflow*). Traz o Hosting Bundle oficial da Microsoft em `prereq\`. Não há `.exe` instalador (ADR-0001): use `Instalar.cmd` (duplo clique) ou o script PowerShell.
+
+**Gerar você mesmo (máquina de build com o .NET 10 SDK):**
 
 ```powershell
 pwsh deploy/Publish-AzulNexus.ps1                       # gera artifacts\AzulNexus-<versão>\ e .zip

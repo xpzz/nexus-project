@@ -11,6 +11,9 @@
 
     Roda em qualquer máquina com o .NET 10 SDK (inclusive Linux): o destino é sempre win-x64.
 
+.PARAMETER HostingBundlePath
+    Instalador oficial do ASP.NET Core Hosting Bundle (dotnet-hosting-*-win.exe) a incluir em prereq\ do pacote.
+
 .PARAMETER CodeSigningThumbprint
     Se informado (Windows), assina .dll, .exe e .ps1 com o certificado de code signing do repositório da máquina.
 #>
@@ -20,7 +23,8 @@ param(
     [string]$OutputRoot,
     [switch]$NoZip,
     [string]$CodeSigningThumbprint,
-    [string]$TimestampServer
+    [string]$TimestampServer,
+    [string]$HostingBundlePath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -57,12 +61,20 @@ foreach ($file in 'Install-AzulNexus.ps1', 'Uninstall-AzulNexus.ps1', 'install.s
     Copy-Item (Join-Path $PSScriptRoot $file) $deploy
 }
 Copy-Item (Join-Path $PSScriptRoot 'lib\Common.ps1') (Join-Path $deploy 'lib')
+# Atalhos de duplo clique na raiz do pacote (o "instalador" sem .exe, ADR-0001).
+foreach ($file in 'Instalar.cmd', 'Verificar-Ambiente.cmd') { Copy-Item (Join-Path $PSScriptRoot $file) $package }
+if ($HostingBundlePath) {
+    if (-not (Test-Path $HostingBundlePath)) { throw "Hosting Bundle não encontrado em $HostingBundlePath." }
+    $prereq = Join-Path $package 'prereq'
+    New-Item -ItemType Directory -Path $prereq | Out-Null
+    Copy-Item $HostingBundlePath (Join-Path $prereq ([IO.Path]::GetFileName($HostingBundlePath)))
+}
 $guides = Join-Path $root 'docs\guias'
 if (Test-Path $guides) { Copy-Item $guides (Join-Path $package 'docs') -Recurse }
 Set-Content -Path (Join-Path $package 'VERSION.txt') -Value $version -Encoding ASCII
 
 # Verificações do pacote: o que o instalador exige tem de estar lá.
-$required = @('web\AzulNexus.Web.dll', 'web\web.config', 'app\AzulNexus.Worker.exe', 'app\nexusctl.exe', 'deploy\Install-AzulNexus.ps1')
+$required = @('web\AzulNexus.Web.dll', 'web\web.config', 'app\AzulNexus.Worker.exe', 'app\nexusctl.exe', 'deploy\Install-AzulNexus.ps1', 'Instalar.cmd')
 foreach ($item in $required) {
     if (-not (Test-Path (Join-Path $package $item))) { throw "Pacote incompleto: falta $item." }
 }
