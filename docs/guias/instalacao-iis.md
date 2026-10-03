@@ -49,6 +49,7 @@ Parâmetros úteis: `-Answers <arquivo>`, `-HostingBundleInstaller <exe> -AllowI
 | 3010 | Reinício necessário |
 | 10 | Bloqueio de pré-requisito (nada foi alterado) |
 | 20 | Falha, com desfazer concluído |
+| 30 | Instalado, mas o site não passou na verificação (`/healthz`): **nada é desfeito**, e o diagnóstico (estado do pool e do site, últimas linhas do log do site, erros do Log de Eventos) é gravado no log da instalação |
 
 ### Arquivo de respostas (`install.json`)
 

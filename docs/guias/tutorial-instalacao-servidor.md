@@ -235,6 +235,7 @@ C:\"Program Files"\"Azul Nexus"\deploy\Uninstall-AzulNexus.ps1 -RemoveData # apa
 | `... is not digitally signed` / aviso de segurança ao abrir | Rode o `Unblock-File` da etapa 2 |
 | Saiu com código **10** | Nenhuma alteração foi feita. Leia as linhas `Bloqueio` e o "Como resolver" |
 | Saiu com código **20** | Houve falha e o script desfez o que fez. O motivo está no console e no log (`<dados>\logs\install-*.log`). Corrija e rode de novo (é seguro repetir) |
+| Saiu com código **30** | A instalação foi **mantida**; o site não passou na verificação. Abra o log (`<dados>\logs\install-*.log`) e veja o bloco **Diagnóstico do site** (estado do pool, últimas linhas do log do site e erros do Log de Eventos). Pool parado costuma ser senha da conta recusada |
 | Site responde **500.19** ou **502** | Hosting Bundle ausente ou o pool sem acesso. Rode `iisreset` e depois o instalador de novo (ele repara) |
 | `/healthz` mostra `database-unreachable` | A conta do site não tem login no banco: aplique `nexus-db-grant.sql` e rode `Restart-WebAppPool AzulNexus` |
 | Aviso de certificado no navegador | Certificado autoassinado, ou o nome acessado é diferente do certificado |

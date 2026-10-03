@@ -32,5 +32,5 @@ if exist "prereq\dotnet-hosting*.exe" if not exist "%ProgramFiles%\IIS\Asp.Net C
 
 powershell -NoProfile -ExecutionPolicy Bypass -File "deploy\Install-AzulNexus.ps1" %EXTRA%
 echo.
-echo Codigo de saida: %errorlevel%  ^(0 = sucesso, 10 = bloqueio de pre-requisito, 20 = falha com desfazer^)
+echo Codigo de saida: %errorlevel%  ^(0 = sucesso, 10 = bloqueio de pre-requisito, 20 = falha com desfazer, 30 = instalado mas o site nao respondeu: nada foi desfeito, veja o diagnostico no log^)
 pause

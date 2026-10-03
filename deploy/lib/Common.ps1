@@ -7,6 +7,7 @@ $script:ExitCodes = @{
     RebootRequired      = 3010
     PrerequisiteBlocked = 10
     FailedRolledBack    = 20
+    InstalledNotHealthy = 30
 }
 
 # Portas que o Nexus nunca deve usar: SCCM (management point / distribution point), WSUS e sites padrão.
@@ -73,6 +74,52 @@ function Invoke-Native {
             -HowToFix 'Corrija a causa indicada e rode o script de novo; ele é idempotente.'
     }
     return [pscustomobject]@{ ExitCode = $code; Output = $output }
+}
+
+# Interpreta a resposta (ou a falta dela) do /healthz do site e diz, em português, o que aconteceu e como resolver.
+function Resolve-HealthProbe {
+    param($StatusCode, [string]$Body, [string]$ErrorText)
+    $status = $null
+    if ($Body -match '"status"\s*:\s*"([^"]+)"') { $status = $Matches[1] }
+
+    if ($StatusCode -eq 200 -and $status -eq 'ok') {
+        return [pscustomobject]@{ Ok = $true; Summary = 'O site respondeu e o banco está na versão atual.'; HowToFix = '' }
+    }
+    if ($status -eq 'database-unreachable') {
+        return [pscustomobject]@{ Ok = $false
+            Summary = 'O site subiu, mas não consegue conectar ao banco do Nexus.'
+            HowToFix = 'Confirme que a conta dos serviços (svc.sccm) tem acesso ao banco do Nexus (db_datareader e db_datawriter) e que o servidor SQL está acessível. Depois: Restart-WebAppPool AzulNexus.' }
+    }
+    if ($status -eq 'migrations-pending') {
+        return [pscustomobject]@{ Ok = $false
+            Summary = 'O site subiu, mas as tabelas do banco do Nexus estão desatualizadas.'
+            HowToFix = 'Rode "nexusctl migrate" como administrador (ou aplique o script de <dados>\scripts\nexus-db-migrations.sql).' }
+    }
+    if ($status -eq 'unconfigured') {
+        return [pscustomobject]@{ Ok = $false
+            Summary = 'O site subiu, mas não encontrou a configuração (nexus.json).'
+            HowToFix = 'Confirme que a conta do pool tem leitura em <dados>\config e rode o instalador de novo.' }
+    }
+    if ($null -ne $StatusCode) {
+        $code = [int]$StatusCode
+        if ($code -eq 404) {
+            return [pscustomobject]@{ Ok = $false
+                Summary = 'O IIS respondeu 404: o endereço não bate com o site do Nexus.'
+                HowToFix = 'Confira o nome em iis.hostName e o binding HTTPS do site no Gerenciador do IIS.' }
+        }
+        if ($code -ge 500) {
+            return [pscustomobject]@{ Ok = $false
+                Summary = "O IIS respondeu HTTP ${code}: o aplicativo do Nexus não iniciou."
+                HowToFix = 'Veja o estado do pool AzulNexus (parado = senha da conta recusada ou conta sem permissão), o Log de Eventos (Application: IIS AspNetCore Module V2 e .NET Runtime) e <dados>\logs\web-*.json.' }
+        }
+        return [pscustomobject]@{ Ok = $false
+            Summary = "O site respondeu HTTP $code, resposta inesperada do /healthz."
+            HowToFix = 'Veja <dados>\logs\web-*.json e o Log de Eventos.' }
+    }
+    $detail = if ($ErrorText) { $ErrorText } else { 'sem resposta' }
+    return [pscustomobject]@{ Ok = $false
+        Summary = "Não foi possível conectar ao site por HTTPS ($detail)."
+        HowToFix = 'Confirme que o site e o pool estão iniciados, que há certificado no binding da porta e que o servidor aceita TLS 1.2. Veja o diagnóstico abaixo.' }
 }
 
 function New-Check {

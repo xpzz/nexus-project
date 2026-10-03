@@ -688,6 +688,8 @@ function Grant-SccmAccess {
 
 function Wait-Healthy {
     param($Ctx, [int]$TimeoutSeconds = 120)
+    # O site só aceita TLS 1.2; o .NET Framework do Windows PowerShell 5.1 pode usar um padrão mais antigo.
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
     # Cliente que aceita o certificado: a chamada é local (127.0.0.1) e o certificado é do nome público.
     # Callback em C# porque um scriptblock não roda em threads sem runspace (Windows PowerShell 5.1).
     Add-Type -AssemblyName System.Net.Http
@@ -708,18 +710,57 @@ public static class NexusLocalProbe
     $client = [NexusLocalProbe]::CreateClient()
     $client.Timeout = [TimeSpan]::FromSeconds(15)
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-    $last = ''
+    $statusCode = $null; $body = ''; $errorText = ''
     while ((Get-Date) -lt $deadline) {
+        $statusCode = $null; $body = ''; $errorText = ''
         try {
             $request = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, "https://127.0.0.1:$($Ctx.Iis.Port)/healthz")
             $request.Headers.Host = "$($Ctx.Iis.HostName):$($Ctx.Iis.Port)"
             $response = $client.SendAsync($request).GetAwaiter().GetResult()
-            $last = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
-            if ($response.IsSuccessStatusCode) { return $last }
-        } catch { $last = $_.Exception.Message }
+            $statusCode = [int]$response.StatusCode
+            $body = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+        } catch {
+            $inner = $_.Exception
+            while ($inner.InnerException) { $inner = $inner.InnerException }
+            $errorText = $inner.Message
+        }
+        $verdict = Resolve-HealthProbe -StatusCode $statusCode -Body $body -ErrorText $errorText
+        # Resposta definitiva (ok, banco, migrações, configuração): não adianta esperar mais.
+        if ($verdict.Ok -or ($body -match '"status"')) { break }
         Start-Sleep -Seconds 3
     }
-    return $null
+    return [pscustomobject]@{ Verdict = $verdict; StatusCode = $statusCode; Body = $body; Error = $errorText }
+}
+
+# Coleta, no log da instalação, o que normalmente explica um site que não sobe (sem segredos).
+function Write-SiteDiagnostics {
+    param($Ctx)
+    Write-Log '--- Diagnóstico do site ---' 'WARN'
+    try {
+        Import-Module WebAdministration -ErrorAction Stop
+        $pool = $Ctx.Iis.AppPoolName; $site = $Ctx.Iis.SiteName
+        Write-Log ("Pool '{0}': {1}; identidade: {2}" -f $pool, (Get-WebAppPoolState -Name $pool).Value, (Get-ItemProperty "IIS:\AppPools\$pool" -Name processModel.userName).Value)
+        Write-Log ("Site '{0}': {1}; bindings: {2}" -f $site, (Get-WebsiteState -Name $site).Value, ((Get-WebBinding -Name $site | ForEach-Object { "$($_.protocol) $($_.bindingInformation)" }) -join '; '))
+    } catch { Write-Log "Não foi possível ler o estado do IIS: $($_.Exception.Message)" 'WARN' }
+
+    $logs = Join-Path $Ctx.DataDir 'logs'
+    $webLog = Get-ChildItem $logs -Filter 'web-*.json' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if ($webLog) {
+        Write-Log "Últimas linhas de $($webLog.Name):" 'WARN'
+        Get-Content $webLog.FullName -Tail 8 -ErrorAction SilentlyContinue | ForEach-Object { Write-Log ('  ' + $_.Substring(0, [math]::Min(500, $_.Length))) 'WARN' }
+    } else {
+        Write-Log "Nenhum web-*.json em $logs: o aplicativo nem chegou a iniciar (veja o Log de Eventos abaixo)." 'WARN'
+    }
+
+    try {
+        $events = Get-WinEvent -FilterHashtable @{ LogName = 'Application'; Level = 2; StartTime = (Get-Date).AddMinutes(-15) } -MaxEvents 40 -ErrorAction Stop |
+            Where-Object { $_.ProviderName -match 'AspNetCore|\.NET Runtime|Application Error|Azul Nexus|WAS|W3SVC' } | Select-Object -First 6
+        if ($events) {
+            Write-Log 'Erros recentes no Log de Eventos (Application):' 'WARN'
+            foreach ($e in $events) { Write-Log ("  [{0}] {1}: {2}" -f $e.TimeCreated.ToString('HH:mm:ss'), $e.ProviderName, ($e.Message -replace '\s+', ' ').Substring(0, [math]::Min(600, $e.Message.Length))) 'WARN' }
+        }
+    } catch { }
+    Write-Log '--- Fim do diagnóstico ---' 'WARN'
 }
 
 #endregion
@@ -812,11 +853,16 @@ function Invoke-Install {
     if ((Get-WebAppPoolState -Name $ctx.Iis.AppPoolName).Value -ne 'Started') { Start-WebAppPool -Name $ctx.Iis.AppPoolName }
     if ((Get-WebsiteState -Name $ctx.Iis.SiteName).Value -ne 'Started') { Start-Website -Name $ctx.Iis.SiteName }
 
-    $health = Wait-Healthy -Ctx $ctx
-    if (-not $health) {
-        Stop-Install -ExitCode $script:ExitCodes.FailedRolledBack -WhatHappened "O site não respondeu em https://$($ctx.Iis.HostName):$($ctx.Iis.Port)/healthz em 2 minutos." -Impact 'A interface não está disponível.' -HowToFix 'Veja <dados>\logs\web-*.json, o Log de Eventos (origem "Azul Nexus") e o stdout do IIS; confirme o Hosting Bundle e as permissões do banco.'
+    $probe = Wait-Healthy -Ctx $ctx
+    if (-not $probe.Verdict.Ok) {
+        Write-SiteDiagnostics -Ctx $ctx
+        $received = if ($null -ne $probe.StatusCode) { "Resposta: HTTP $($probe.StatusCode) $($probe.Body)" } else { "Erro: $($probe.Error)" }
+        Stop-Install -ExitCode $script:ExitCodes.InstalledNotHealthy `
+            -WhatHappened "$($probe.Verdict.Summary) ($received)" `
+            -Impact 'A interface não está disponível. A instalação foi MANTIDA (nada foi desfeito) para você poder investigar.' `
+            -HowToFix $probe.Verdict.HowToFix
     }
-    Write-Log "Health check do site: $health"
+    Write-Log "Health check do site: $($probe.Body)"
 
     Write-Log 'Rodando as verificações no Worker (com a conta do serviço)...' 'STEP'
     $test = Invoke-Nexusctl -Arguments @('test', '--timeout', '120') -AllowFailure

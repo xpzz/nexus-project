@@ -138,6 +138,23 @@ $okNative = if ($isWin) { Invoke-Native -FilePath 'cmd.exe' -Arguments @('/c', '
 Assert-That 'Invoke-Native com sucesso devolve a saída' { $okNative.ExitCode -eq 0 -and ($okNative.Output -join '') -like '*ok*' }
 Assert-That 'ErrorActionPreference é restaurado depois da chamada' { $ErrorActionPreference -eq 'Stop' }
 
+# Interpretação da sondagem do /healthz
+$okProbe = Resolve-HealthProbe -StatusCode 200 -Body '{"status":"ok","version":"0.1.0.0","setupMode":true}' -ErrorText ''
+Assert-That 'healthz 200 ok é sucesso' { $okProbe.Ok }
+$dbProbe = Resolve-HealthProbe -StatusCode 503 -Body '{"status":"database-unreachable","version":"0.1.0.0"}' -ErrorText ''
+Assert-That 'healthz 503 database-unreachable aponta o banco, não "site não respondeu"' { -not $dbProbe.Ok -and $dbProbe.Summary -like '*banco do Nexus*' -and $dbProbe.HowToFix -like '*svc.sccm*' }
+$migProbe = Resolve-HealthProbe -StatusCode 503 -Body '{"status":"migrations-pending"}' -ErrorText ''
+Assert-That 'migrations-pending manda rodar o migrate' { -not $migProbe.Ok -and $migProbe.HowToFix -like '*nexusctl migrate*' }
+$cfgProbe = Resolve-HealthProbe -StatusCode 503 -Body '{"status":"unconfigured"}' -ErrorText ''
+Assert-That 'unconfigured aponta a configuração' { -not $cfgProbe.Ok -and $cfgProbe.Summary -like '*configuração*' }
+$p500 = Resolve-HealthProbe -StatusCode 503 -Body '' -ErrorText ''
+Assert-That 'HTTP 5xx sem JSON diz que o aplicativo não iniciou e manda ver o pool' { -not $p500.Ok -and $p500.Summary -like '*HTTP 503*' -and $p500.HowToFix -like '*pool*' }
+$p404 = Resolve-HealthProbe -StatusCode 404 -Body '' -ErrorText ''
+Assert-That 'HTTP 404 aponta o nome/binding' { -not $p404.Ok -and $p404.Summary -like '*404*' -and $p404.HowToFix -like '*iis.hostName*' }
+$pErr = Resolve-HealthProbe -StatusCode $null -Body '' -ErrorText 'The request was aborted: Could not create SSL/TLS secure channel.'
+Assert-That 'Erro de conexão mostra o erro real e menciona TLS 1.2' { -not $pErr.Ok -and $pErr.Summary -like '*Could not create SSL/TLS*' -and $pErr.HowToFix -like '*TLS 1.2*' }
+Assert-That 'Código de saída 30 existe para instalado sem saúde' { $script:ExitCodes.InstalledNotHealthy -eq 30 }
+
 # Falhas seguem o padrão do produto
 $caught = $null
 try { Stop-Install -ExitCode 10 -WhatHappened 'a' -Impact 'b' -HowToFix 'c' } catch { $caught = $_.Exception }
