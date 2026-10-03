@@ -1,0 +1,128 @@
+@page "/saude"
+@rendermode InteractiveServer
+@implements IDisposable
+@inject INexusDbFactory DbFactory
+@inject SettingsProvider Settings
+@inject Nexus.Core.NexusPaths Paths
+
+<PageTitle>Saúde</PageTitle>
+<h1>Saúde</h1>
+
+<div class="actions">
+    <button class="primary" @onclick="() => EnqueueAsync(CommandTypes.RunHealthChecks, null)">Verificar agora</button>
+    <button @onclick='() => EnqueueAsync(CommandTypes.CollectNow, "all")'>Coletar agora</button>
+    @if (Settings.Current.Collection.Paused)
+    {
+        <button @onclick="() => SetPausedAsync(false)">Retomar coletores</button>
+    }
+    else
+    {
+        <button @onclick="() => SetPausedAsync(true)">Pausar coletores</button>
+    }
+    <a class="button" href="/diagnostico" target="_blank">Gerar pacote de diagnóstico</a>
+</div>
+@if (_message is not null)
+{
+    <p class="hint">@_message</p>
+}
+
+<section class="card">
+    <h2>Coletas</h2>
+    <table>
+        <thead><tr><th>Coleta</th><th>Situação</th><th>Registros</th><th>Duração</th><th>Último sucesso</th><th>Próxima</th><th>Detalhe</th></tr></thead>
+        <tbody>
+            @foreach (var job in _jobs)
+            {
+                <tr>
+                    <td>@job.Name</td>
+                    <td><span class="pill @HealthView.Css(job.LastStatus)">@job.LastStatus</span></td>
+                    <td>@job.LastRecordCount?.ToString("N0")</td>
+                    <td>@(job.LastDurationMs is { } ms ? $"{ms / 1000.0:N1} s" : "")</td>
+                    <td>@job.LastSuccessAt?.ToLocalTime().ToString("g")</td>
+                    <td>@job.NextRunAt?.ToLocalTime().ToString("g")</td>
+                    <td class="detail">@job.LastError</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</section>
+
+<section class="card">
+    <h2>Verificações (executadas pelo Worker)</h2>
+    @if (_health.Count == 0)
+    {
+        <p>Nenhuma verificação registrada. Clique em “Verificar agora”.</p>
+    }
+    @foreach (var h in _health)
+    {
+        <div class="check">
+            <span class="pill @HealthView.Css(h.Status)">@HealthView.Label(h.Status)</span>
+            <strong>@h.Name</strong> — @h.Message
+            <span class="hint">(@h.DurationMs ms, como @h.ExecutedAs, @h.CheckedAt.ToLocalTime().ToString("g"))</span>
+            <ErrorBox Error="HealthView.ToError(h)" />
+        </div>
+    }
+</section>
+
+<section class="card">
+    <h2>Fila de comandos</h2>
+    <table>
+        <thead><tr><th>#</th><th>Comando</th><th>Pedido por</th><th>Quando</th><th>Situação</th></tr></thead>
+        <tbody>
+            @foreach (var c in _commands)
+            {
+                <tr><td>@c.Id</td><td>@c.Type @c.Argument</td><td>@c.RequestedBy</td><td>@c.RequestedAt.ToLocalTime().ToString("g")</td><td>@c.Status</td></tr>
+            }
+        </tbody>
+    </table>
+    <p class="hint">Pasta de dados: @Paths.DataDirectory</p>
+</section>
+
+@code {
+    [CascadingParameter] private Task<Microsoft.AspNetCore.Components.Authorization.AuthenticationState>? AuthState { get; set; }
+    private List<JobState> _jobs = [];
+    private List<HealthResultRecord> _health = [];
+    private List<WorkerCommand> _commands = [];
+    private string? _message;
+    private Timer? _timer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        _timer = new Timer(_ => InvokeAsync(async () => { await LoadAsync(); StateHasChanged(); }), null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+    }
+
+    private async Task LoadAsync()
+    {
+        await using var db = DbFactory.Create();
+        _jobs = await db.Jobs.AsNoTracking().OrderBy(j => j.Name).ToListAsync();
+        var lastRun = await db.HealthResults.OrderByDescending(h => h.Id).Select(h => (Guid?)h.RunId).FirstOrDefaultAsync();
+        _health = lastRun is null ? [] : await db.HealthResults.AsNoTracking().Where(h => h.RunId == lastRun).OrderBy(h => h.Id).ToListAsync();
+        _commands = await db.Commands.AsNoTracking().OrderByDescending(c => c.Id).Take(10).ToListAsync();
+    }
+
+    private async Task<string> ActorAsync()
+    {
+        var state = AuthState is null ? null : await AuthState;
+        return "web:" + (state?.User.Identity?.Name ?? "local");
+    }
+
+    private async Task EnqueueAsync(string type, string? argument)
+    {
+        await using var db = DbFactory.Create();
+        var command = await CommandQueue.EnqueueAsync(db, type, argument, await ActorAsync(), CancellationToken.None);
+        _message = $"Pedido {command.Id} enviado ao Worker. Esta tela se atualiza sozinha.";
+        await LoadAsync();
+    }
+
+    private async Task SetPausedAsync(bool paused)
+    {
+        var store = new SettingsStore(Paths);
+        var settings = store.Load();
+        settings.Collection.Paused = paused;
+        store.Save(settings);
+        await EnqueueAsync(paused ? CommandTypes.PauseCollectors : CommandTypes.ResumeCollectors, null);
+    }
+
+    public void Dispose() => _timer?.Dispose();
+}

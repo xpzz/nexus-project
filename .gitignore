@@ -1,0 +1,7 @@
+bin/
+obj/
+artifacts/
+.nexus-data/
+*.user
+.vs/
+TestResults/
