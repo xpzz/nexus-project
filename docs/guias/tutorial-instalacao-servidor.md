@@ -230,6 +230,14 @@ Você verá o **Assistente de configuração** (SCCM e AD concluídos, os demais
 
 Baixe o novo pacote na página de Releases (etapa 1), descompacte numa pasta nova, copie o seu `deploy\\install.json` antigo para ela e dê duplo clique em `Instalar.cmd` (ou rode `Install-AzulNexus.ps1`). Ele faz backup do banco antes de migrar e restaura os binários anteriores se algo falhar. Nada de configuração ou dados é perdido.
 
+## Etapa 11 — Azure: Entra ID e Intune (com o Administrador Global)
+
+Depois que o Nexus estiver no ar, no **servidor**, dê duplo clique em **`Configurar-Azure.cmd`** (na pasta do pacote) e siga o login por código de dispositivo com a conta de Administrador Global. O script cria os registros "Azul Nexus – Coletor" e "Azul Nexus – Web", gera os certificados, concede o consentimento, cria as funções de acesso, atribui você como `Nexus.Admin` e grava `azure.json` no servidor. Detalhes, conferência e problemas comuns: [azure-entra.md](azure-entra.md).
+
+> Nesta versão o Nexus ainda não lê o Intune nem faz login por SSO; o script deixa tudo pronto e validado para quando esses módulos forem ativados.
+
+---
+
 ## Remover
 
 ```powershell

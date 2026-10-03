@@ -2,6 +2,7 @@
 @rendermode InteractiveServer
 @inject INexusDbFactory DbFactory
 @inject SettingsProvider Settings
+@inject Nexus.Core.NexusPaths Paths
 
 <PageTitle>Assistente de configuração</PageTitle>
 <h1>Assistente de configuração</h1>
@@ -51,6 +52,7 @@ else
     protected override async Task OnInitializedAsync()
     {
         var settings = Settings.Current;
+        var azure = AzureSettingsStore.Load(Paths);
         await using var db = DbFactory.Create();
         var lastRun = await db.HealthResults.OrderByDescending(h => h.Id).Select(h => (Guid?)h.RunId).FirstOrDefaultAsync();
         var health = lastRun is null ? [] : await db.HealthResults.Where(h => h.RunId == lastRun).ToListAsync();
@@ -64,8 +66,8 @@ else
                 settings.Sccm.Mode == SourceMode.Disabled ? "Não configurado." : $"Site {settings.Sccm.SiteCode} · SQL {settings.Sccm.SqlServer} · banco {settings.Sccm.Database}"),
             FromHealth("2. Active Directory", health, "Active Directory: leitura de computadores",
                 settings.ActiveDirectory.Mode == SourceMode.Disabled ? "Não configurado." : $"Domínio {settings.ActiveDirectory.Domain}"),
-            new("3. Azure: Entra ID e Intune", "Pendente", "muted", "Registros de aplicativo, permissões, consentimento e validação (caminhos A, B e C) — incremento 0.6."),
-            new("4. Acesso e perfis", "Pendente", "muted", "SSO do Entra ID e as funções Nexus.Admin, Nexus.Gestao, Nexus.Operacao e Nexus.Seguranca. Até lá, o acesso é pelo modo de configuração."),
+            AzureStep(azure),
+            AccessStep(azure),
             new("5. Gerenciamento esperado", "Modelos padrão aplicados", "ok", "Windows corporativo: SCCM + Intune; Windows Server: SCCM + EDR; pessoais: MDM ou MAM (SPEC 8.1)."),
             new("6. Coleta", settings.Collection.Paused ? "Pausada" : "Padrões aplicados", settings.Collection.Paused ? "warn" : "ok",
                 $"SCCM a cada {settings.Collection.SccmIntervalMinutes} min · AD a cada {settings.Collection.ActiveDirectoryIntervalMinutes} min · CPU do Worker até {settings.Collection.MaxCpuPercent}% · {settings.Collection.PauseWindows.Count} janela(s) de pausa"),
@@ -75,6 +77,20 @@ else
                 health.Count == 0 ? "Nenhuma verificação executada ainda. Use Saúde › Verificar agora." : $"Última verificação em {health[0].CheckedAt.ToLocalTime():g}, como {health[0].ExecutedAs}."),
         ];
     }
+
+    private static Step AzureStep(AzureSettings? azure) => azure is null
+        ? new("3. Azure: Entra ID e Intune", "Pendente", "muted",
+            "Registros de aplicativo, certificados, permissões e consentimento. No servidor, rode Configurar-Azure.cmd (Administrador Global).")
+        : new("3. Azure: Entra ID e Intune", "Registros criados", "ok",
+            $"Locatário {azure.TenantName ?? azure.TenantId} · Coletor {azure.Collector.ClientId} (certificado {azure.Collector.CertificateThumbprint}) · Web {azure.Web.ClientId}. " +
+            "A leitura do Intune/Entra ainda não está ativa nesta versão do Nexus; a configuração fica pronta para quando for ativada.");
+
+    private static Step AccessStep(AzureSettings? azure) => azure is null
+        ? new("4. Acesso e perfis", "Pendente", "muted",
+            "SSO do Entra ID e as funções Nexus.Admin, Nexus.Gestao, Nexus.Operacao e Nexus.Seguranca. Até lá, o acesso é pelo modo de configuração.")
+        : new("4. Acesso e perfis", "Funções criadas", "ok",
+            $"Funções {string.Join(", ", azure.Web.Roles)} criadas, atribuição obrigatória ativada e o primeiro administrador atribuído a Nexus.Admin. " +
+            "O login por SSO ainda não está ativo nesta versão: o acesso continua pelo modo de configuração.");
 
     private static Step FromHealth(string title, List<HealthResultRecord> health, string checkName, string detail)
     {
