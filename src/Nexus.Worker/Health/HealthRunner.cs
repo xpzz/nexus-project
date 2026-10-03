@@ -1,9 +1,11 @@
+using Nexus.Core;
 using Nexus.Data.Support;
 using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Nexus.Collectors.ActiveDirectory;
 using Nexus.Collectors.Sccm;
 using Nexus.Core.Configuration;
+using Nexus.Collectors.Graph;
 using Nexus.Core.Errors;
 using Nexus.Core.Health;
 using Nexus.Data;
@@ -17,7 +19,7 @@ namespace Nexus.Worker.Health;
 /// Runs every access check inside the Worker, with the Worker identity, and stores the results
 /// for the Web, nexusctl and the install script (SPEC premise 5).
 /// </summary>
-public sealed class HealthRunner(SettingsProvider settingsProvider, INexusDbFactory dbFactory, ISourceFactory sources, TimeProvider clock)
+public sealed class HealthRunner(SettingsProvider settingsProvider, INexusDbFactory dbFactory, ISourceFactory sources, TimeProvider clock, NexusPaths paths)
 {
     public async Task<IReadOnlyList<HealthCheckResult>> RunAsync(CancellationToken cancellationToken)
     {
@@ -66,8 +68,7 @@ public sealed class HealthRunner(SettingsProvider settingsProvider, INexusDbFact
 
         var directory = sources.CreateDirectoryReader(settings.ActiveDirectory) ?? new FakeDirectoryReader([]);
         yield return new DirectoryHealthCheck(settings.ActiveDirectory, directory);
-        yield return new StaticCheck("Azure: Entra ID e Intune", HealthStatus.NotConfigured,
-            "Registros de aplicativo pendentes. Conclua a etapa Azure no assistente.");
+        yield return new GraphAccessCheck(settings, paths, sources);
     }
 
     private async Task<HealthCheckResult> CheckDatabaseAsync(NexusSettings settings, CancellationToken cancellationToken)

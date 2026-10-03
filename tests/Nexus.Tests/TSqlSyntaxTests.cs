@@ -18,6 +18,8 @@ public class TSqlSyntaxTests
         yield return ["SCCM grant (virtual account)", SccmGrantScript.Grant("CM_AZ1", @"NT SERVICE\AzulNexus.Worker")];
         yield return ["SCCM revoke", SccmGrantScript.Revoke("CM_AZ1", account)];
         yield return ["Nexus DB grants", DatabaseScripts.SqlServerGrants("AzulNexus", [account, @"IIS APPPOOL\AzulNexus"])];
+        yield return ["SCCM read query (base)", SqlSccmReader.BaseQuery];
+        yield return ["SCCM read query (extended)", SqlSccmReader.ExtendedQuery];
         yield return ["SCCM simulator", SccmSimulatorScript.Create(new SyntheticEstate(20))];
     }
 

@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using Nexus.Collectors.ActiveDirectory;
+using Nexus.Collectors.Graph;
 using Nexus.Collectors.Sccm;
 using Nexus.Core;
 using Nexus.Core.Configuration;
@@ -21,6 +22,13 @@ public sealed class FixedLoad(double? cpu) : IServerLoad
 public sealed class SwitchableSources(SyntheticEstate estate) : ISourceFactory
 {
     public bool FailDirectory { get; set; }
+    public bool FailGraph { get; set; }
+    public bool GraphEnabled { get; set; } = true;
+
+    public IGraphReader? CreateGraphReader(NexusSettings settings) =>
+        !GraphEnabled ? null : new FakeGraphReader(estate.IntuneDevices, estate.EntraDevices) { FailWithForbidden = FailGraph };
+
+    public GraphConnection? CreateGraphConnection(NexusSettings settings) => null;
 
     public ISccmReader? CreateSccmReader(SccmSettings settings, SccmQueryGate gate) =>
         settings.Mode == SourceMode.Disabled ? null : estate.CreateSccmReader();
