@@ -1,5 +1,7 @@
 # Instalação do Azul Nexus no IIS
 
+> Primeira instalação em servidor sem Git nem ferramentas? Siga o [tutorial passo a passo](tutorial-instalacao-servidor.md). Este documento é a referência.
+
 Implantação por `dotnet publish`, sem instalador (ADR-0001). O site roda no IIS (pool e porta próprios) e a coleta roda como serviço do Windows.
 
 ## 1. O que o servidor precisa ter
