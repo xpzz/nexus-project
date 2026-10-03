@@ -317,12 +317,8 @@ function Test-Environment {
         $checks.Add((New-Check 'Active Directory' 'Atenção' 'Domínio não detectado; a coleta do AD ficará "não configurada".' 'Informe activeDirectory.domain.'))
     }
 
-    if (-not $Ctx.Database.Server) {
-        $checks.Add((New-Check 'Banco do Nexus' 'Bloqueio' 'Servidor do banco do Nexus não informado.' 'Preencha database.server (SQL Server ou PostgreSQL). O Nexus não cria banco embarcado.'))
-    } elseif ($Ctx.Database.Provider -eq 'SqlServer' -and (Test-SameSqlInstance $Ctx.Database.Server $Ctx.Sccm.SqlServer) -and -not $Ctx.Database.AllowSccmInstance) {
-        $checks.Add((New-Check 'Banco do Nexus' 'Bloqueio' "O banco do Nexus apontaria para a instância do SCCM ($($Ctx.Database.Server)). A instância SQL licenciada com o Configuration Manager não pode hospedar outros bancos." 'Use outra instância SQL ou PostgreSQL. Só defina database.allowSccmInstance = true se houver licenciamento SQL próprio.'))
-    } else {
-        $checks.Add((New-Check 'Banco do Nexus' 'OK' "$($Ctx.Database.Provider) em $($Ctx.Database.Server), banco $($Ctx.Database.Name)."))
+    foreach ($check in (Test-NexusDatabaseChoice -Provider $Ctx.Database.Provider -Server $Ctx.Database.Server -Name $Ctx.Database.Name -SccmServer $Ctx.Sccm.SqlServer -SccmDatabase $Ctx.Sccm.Database -AllowSccmInstance $Ctx.Database.AllowSccmInstance)) {
+        $checks.Add($check)
     }
 
     foreach ($problem in $Ctx.Accounts.Problems) {

@@ -111,6 +111,18 @@ $args2 = New-AccountArguments -Command 'db-grant-script' -Accounts @('IIS APPPOO
 Assert-That 'Duas contas repetem --account e mantêm os extras' { ($args2 -join '|') -eq 'db-grant-script|--account|IIS APPPOOL\AzulNexus|--account|NT SERVICE\AzulNexus.Worker|--output|C:\x.sql' }
 Assert-That 'Resultado é uma lista de strings (não é desmembrado)' { $args1 -is [string[]] }
 
+# Escolha do banco do Nexus x instância do SCCM
+function Get-DbCheck($name, $allow, $server = 'sccmdb01.azul.corp', $provider = 'SqlServer') {
+    (Test-NexusDatabaseChoice -Provider $provider -Server $server -Name $name -SccmServer 'sccmdb01.azul.corp' -SccmDatabase 'CM_AZ1' -AllowSccmInstance $allow)[0]
+}
+Assert-That 'Mesma instância do SCCM sem liberação: bloqueia e mostra o JSON pronto' { $c = Get-DbCheck 'AzulNexus' $false; $c.Status -eq 'Bloqueio' -and $c.Fix -like '*"allowSccmInstance": true*' -and $c.Fix -like '*sccmdb01.azul.corp*' }
+Assert-That 'Mesma instância liberada: só Atenção (licença e carga)' { $c = Get-DbCheck 'AzulNexus' $true; $c.Status -eq 'Atenção' -and $c.Message -like '*licenciamento*' }
+Assert-That 'Banco do site (CM_xxx) é bloqueado mesmo com liberação' { (Get-DbCheck 'CM_AZ1' $true).Status -eq 'Bloqueio' -and (Get-DbCheck 'CM_ZZZ' $true).Status -eq 'Bloqueio' }
+Assert-That 'Outra instância SQL: OK sem exigir liberação' { (Get-DbCheck 'AzulNexus' $false 'sql-nexus01').Status -eq 'OK' }
+Assert-That 'Instância nomeada diferente na mesma máquina: OK' { (Get-DbCheck 'AzulNexus' $false 'sccmdb01.azul.corp\NEXUS').Status -eq 'OK' }
+Assert-That 'PostgreSQL não é afetado' { (Get-DbCheck 'azulnexus' $false 'sccmdb01.azul.corp' 'PostgreSql').Status -eq 'OK' }
+Assert-That 'Sem servidor: bloqueia' { (Test-NexusDatabaseChoice -Provider 'SqlServer' -Server '' -Name 'AzulNexus' -SccmServer 'x' -SccmDatabase 'CM_AZ1' -AllowSccmInstance $false)[0].Status -eq 'Bloqueio' }
+
 # Falhas seguem o padrão do produto
 $caught = $null
 try { Stop-Install -ExitCode 10 -WhatHappened 'a' -Impact 'b' -HowToFix 'c' } catch { $caught = $_.Exception }

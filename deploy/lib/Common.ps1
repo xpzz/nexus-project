@@ -272,6 +272,30 @@ function ConvertTo-ResolvedInstallFile {
     return $resolved
 }
 
+# Escolha do banco do Nexus. Na mesma instância do SCCM: nunca dentro do banco do site (CM_xxx); em outro banco da
+# instância só com allowSccmInstance = true (licenciamento confirmado), e mesmo assim com aviso de licença e carga.
+function Test-NexusDatabaseChoice {
+    param([string]$Provider, [string]$Server, [string]$Name, [string]$SccmServer, [string]$SccmDatabase, [bool]$AllowSccmInstance)
+    $checks = @()
+    if (-not $Server) {
+        return @(New-Check 'Banco do Nexus' 'Bloqueio' 'Servidor do banco do Nexus não informado.' 'Preencha database.server (SQL Server ou PostgreSQL). O Nexus não cria banco embarcado.')
+    }
+    $sameInstance = ($Provider -eq 'SqlServer') -and (Test-SameSqlInstance $Server $SccmServer)
+    if (-not $sameInstance) {
+        return @(New-Check 'Banco do Nexus' 'OK' "$Provider em $Server, banco $Name.")
+    }
+
+    $isSiteDatabase = ($Name -ieq $SccmDatabase) -or ($Name -imatch '^CM_[A-Za-z0-9]{3}$')
+    if ($isSiteDatabase) {
+        return @(New-Check 'Banco do Nexus' 'Bloqueio' "O banco '$Name' é (ou parece ser) o banco do site do SCCM em $Server. O Nexus nunca grava dentro do banco do Configuration Manager." 'Use um banco novo e separado, por exemplo: "database": { "name": "AzulNexus" }.')
+    }
+    if (-not $AllowSccmInstance) {
+        $json = '"database": { "provider": "SqlServer", "server": "' + $Server + '", "name": "' + $Name + '", "allowSccmInstance": true }'
+        return @(New-Check 'Banco do Nexus' 'Bloqueio' "O banco do Nexus ficaria na mesma instância SQL do SCCM ($Server). O SQL Server que acompanha o Configuration Manager costuma ter licença restrita aos bancos do próprio SCCM." "Se o licenciamento da instância permite (confirme com quem cuida das licenças), libere no install.json com: $json. Caso contrário, use outra instância SQL ou PostgreSQL.")
+    }
+    return @(New-Check 'Banco do Nexus' 'Atenção' "Usando a instância SQL do SCCM ($Server) para o banco separado '$Name', por decisão do responsável (allowSccmInstance = true). Confirme que o licenciamento permite. As gravações do Nexus não passam pelos limites de proteção do SCCM (concorrência, janelas de pausa, recuo por CPU), que valem só para a leitura das views." 'Se possível, mova depois para outra instância: basta mudar database.server e rodar o instalador de novo (os dados antigos precisam ser migrados pelo DBA).')
+}
+
 # Argumentos do nexusctl com uma opção repetida por valor: --account A --account B [extras].
 # Montado em função própria porque "@(...) + @(...)" solto na chamada vira argumentos separados no PowerShell.
 function New-AccountArguments {
