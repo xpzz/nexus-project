@@ -24,5 +24,7 @@
     <ProjectReference Include="..\Nexus.Collectors.Sccm\Nexus.Collectors.Sccm.csproj" />
     <ProjectReference Include="..\Nexus.Collectors.ActiveDirectory\Nexus.Collectors.ActiveDirectory.csproj" />
     <ProjectReference Include="..\Nexus.Simulation\Nexus.Simulation.csproj" />
+    <ProjectReference Include="..\Nexus.Collectors.Graph\Nexus.Collectors.Graph.csproj" />
+    <ProjectReference Include="..\Nexus.Reconciliation\Nexus.Reconciliation.csproj" />
   </ItemGroup>
 </Project>

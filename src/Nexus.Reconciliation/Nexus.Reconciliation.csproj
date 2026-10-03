@@ -1,6 +1,8 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <ProjectReference Include="..\Nexus.Core\Nexus.Core.csproj" />
+    <ProjectReference Include="..\Nexus.Data\Nexus.Data.csproj" />
     <ProjectReference Include="..\Nexus.Collectors.Sccm\Nexus.Collectors.Sccm.csproj" />
     <ProjectReference Include="..\Nexus.Collectors.ActiveDirectory\Nexus.Collectors.ActiveDirectory.csproj" />
     <ProjectReference Include="..\Nexus.Collectors.Graph\Nexus.Collectors.Graph.csproj" />

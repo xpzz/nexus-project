@@ -28,7 +28,11 @@ public static class SccmSimulatorScript
                 AADDeviceID uniqueidentifier NULL,
                 SMBIOS_GUID0 nvarchar(64) NULL,
                 Operating_System_Name_and0 nvarchar(256) NULL,
-                SerialNumber0 nvarchar(64) NULL);
+                SerialNumber0 nvarchar(128) NULL,
+                Manufacturer0 nvarchar(128) NULL,
+                Model0 nvarchar(128) NULL,
+                LastActiveTime datetime NULL,
+                ClientActiveStatus int NULL);
             GO
             CREATE OR ALTER VIEW dbo.v_R_System AS
                 SELECT ResourceID, Name0, Resource_Domain_OR_Workgr0, Client0, Active0, Obsolete0,
@@ -38,10 +42,16 @@ public static class SccmSimulatorScript
             CREATE OR ALTER VIEW dbo.v_GS_PC_BIOS AS
                 SELECT ResourceID, SerialNumber0 FROM dbo.sim_System;
             GO
+            CREATE OR ALTER VIEW dbo.v_GS_COMPUTER_SYSTEM AS
+                SELECT ResourceID, Manufacturer0, Model0 FROM dbo.sim_System;
+            GO
+            CREATE OR ALTER VIEW dbo.v_CH_ClientSummary AS
+                SELECT ResourceID, ClientActiveStatus, LastActiveTime FROM dbo.sim_System WHERE ClientActiveStatus IS NOT NULL;
+            GO
             """);
 
         // Remaining views exist with their key column so access checks and grants behave as in a site.
-        foreach (var view in Nexus.Collectors.Sccm.SccmViews.All.Except(["v_R_System", "v_GS_PC_BIOS"]))
+        foreach (var view in Nexus.Collectors.Sccm.SccmViews.All.Except(["v_R_System", "v_GS_PC_BIOS", "v_GS_COMPUTER_SYSTEM", "v_CH_ClientSummary"]))
         {
             sb.AppendLine($"CREATE OR ALTER VIEW dbo.{view} AS SELECT ResourceID FROM dbo.sim_System WHERE 1 = 0;");
             sb.AppendLine("GO");
@@ -50,7 +60,7 @@ public static class SccmSimulatorScript
         sb.AppendLine("DELETE FROM dbo.sim_System;");
         foreach (var s in estate.SccmSystems)
         {
-            estate.Serials.TryGetValue(s.ResourceId, out var serial);
+            var serial = s.Serial;
             sb.Append("INSERT INTO dbo.sim_System VALUES (")
                 .Append(s.ResourceId.ToString(CultureInfo.InvariantCulture)).Append(", ")
                 .Append(Text(s.Name)).Append(", ")
@@ -61,7 +71,11 @@ public static class SccmSimulatorScript
                 .Append(s.AadDeviceId is { } id ? $"'{id}'" : "NULL").Append(", ")
                 .Append(Text(s.SmbiosGuid)).Append(", ")
                 .Append(Text(s.OperatingSystem)).Append(", ")
-                .Append(Text(serial)).AppendLine(");");
+                .Append(Text(serial)).Append(", ")
+                .Append(Text(s.Manufacturer)).Append(", ")
+                .Append(Text(s.Model)).Append(", ")
+                .Append(s.LastActiveAt is { } at ? $"'{at.UtcDateTime:yyyy-MM-dd HH:mm:ss}'" : "NULL").Append(", ")
+                .Append(s.ClientActiveStatus is { } cas ? cas.ToString(CultureInfo.InvariantCulture) : "NULL").AppendLine(");");
         }
 
         sb.AppendLine("GO");
