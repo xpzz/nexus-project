@@ -482,6 +482,11 @@ function Set-ServiceAccountRights {
     $account = $Ctx.Accounts.Account
     $sid = (New-Object System.Security.Principal.NTAccount($account)).Translate([System.Security.Principal.SecurityIdentifier]).Value
 
+    # Serviço (Worker) e trabalho em lote (pool do IIS). Em domínio, a GPO costuma sobrescrever a concessão local:
+    # por isso o logon é TESTADO depois (Test-AccountLogons) e a falha é explicada.
+    $rights = @(
+        @{ Name = 'SeServiceLogonRight'; Label = "Fazer logon como serviço" },
+        @{ Name = 'SeBatchLogonRight'; Label = "Fazer logon como trabalho em lote" })
     $work = Join-Path $env:TEMP ("nexus-secedit-{0}" -f [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $work | Out-Null
     try {
@@ -489,16 +494,22 @@ function Set-ServiceAccountRights {
         $db = Join-Path $work 'secedit.sdb'
         Invoke-Native -FilePath 'secedit.exe' -Arguments @('/export', '/cfg', $inf, '/areas', 'USER_RIGHTS', '/quiet') | Out-Null
         $text = Get-Content $inf -Raw -Encoding Unicode
-        if ($text -notmatch "SeServiceLogonRight[^\r\n]*\*$sid") {
-            $line = [regex]::Match($text, 'SeServiceLogonRight\s*=\s*(.*)')
-            $entries = if ($line.Success -and $line.Groups[1].Value.Trim()) { $line.Groups[1].Value.Trim() + ',' } else { '' }
-            $newInf = "[Unicode]`r`nUnicode=yes`r`n[Version]`r`nsignature=`"`$CHICAGO`$`"`r`nRevision=1`r`n[Privilege Rights]`r`nSeServiceLogonRight = $entries*$sid`r`n"
+        $lines = @()
+        foreach ($right in $rights) {
+            if ($text -notmatch "$($right.Name)[^\r\n]*\*$sid") {
+                $line = [regex]::Match($text, "$($right.Name)\s*=\s*(.*)")
+                $entries = if ($line.Success -and $line.Groups[1].Value.Trim()) { $line.Groups[1].Value.Trim() + ',' } else { '' }
+                $lines += "$($right.Name) = $entries*$sid"
+                Write-Log "Direito '$($right.Label)' concedido localmente a $account."
+            } else {
+                Write-Log "A conta $account já tem o direito '$($right.Label)'."
+            }
+        }
+        if ($lines.Count -gt 0) {
+            $newInf = "[Unicode]`r`nUnicode=yes`r`n[Version]`r`nsignature=`"`$CHICAGO`$`"`r`nRevision=1`r`n[Privilege Rights]`r`n" + ($lines -join "`r`n") + "`r`n"
             $newPath = Join-Path $work 'grant.inf'
             Set-Content -Path $newPath -Value $newInf -Encoding Unicode
             Invoke-Native -FilePath 'secedit.exe' -Arguments @('/configure', '/db', $db, '/cfg', $newPath, '/areas', 'USER_RIGHTS', '/quiet') | Out-Null
-            Write-Log "Direito 'Fazer logon como serviço' concedido localmente a $account."
-        } else {
-            Write-Log "A conta $account já tem o direito 'Fazer logon como serviço'."
         }
     } finally {
         Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
@@ -507,6 +518,47 @@ function Set-ServiceAccountRights {
     $member = (Invoke-Native -FilePath 'net.exe' -Arguments @('localgroup', 'IIS_IUSRS') -AllowFailure).Output -join "`n"
     if ($member -notmatch [regex]::Escape(($account -split '\\')[-1])) {
         Invoke-Native -FilePath 'net.exe' -Arguments @('localgroup', 'IIS_IUSRS', $account, '/add') -AllowFailure | Out-Null
+    }
+}
+
+# Tenta logon real da conta como serviço e como trabalho em lote (o pool do IIS exige este) e explica a falha.
+function Test-AccountLogons {
+    param($Ctx)
+    if ($Ctx.Accounts.Mode -ne 'SharedAccount') { return }
+    if (-not ('NexusLogon' -as [type])) {
+        Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class NexusLogon
+{
+    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool LogonUser(string user, string domain, string password, int logonType, int provider, out IntPtr token);
+    [DllImport("kernel32.dll")]
+    private static extern bool CloseHandle(IntPtr handle);
+    public static int Try(string user, string domain, string password, int logonType)
+    {
+        IntPtr token;
+        if (LogonUser(user, domain, password, logonType, 0, out token)) { CloseHandle(token); return 0; }
+        return Marshal.GetLastWin32Error();
+    }
+}
+"@
+    }
+    $account = $Ctx.Accounts.Account
+    $domain, $user = if ($account.Contains('\')) { $account.Split('\', 2) } else { $null, $account }
+    $plain = ConvertTo-PlainText $script:ServicePassword
+    $problems = @()
+    foreach ($test in @(@{ Type = 'Service'; Value = 5 }, @{ Type = 'Batch'; Value = 4 })) {
+        $code = [NexusLogon]::Try($user, $domain, $plain, $test.Value)
+        if ($code -eq 0) { Write-Log "Logon de teste de $account (tipo $($test.Type)): OK."; continue }
+        $verdict = Resolve-LogonFailure -Code $code -LogonType $test.Type -Account $account
+        if ($verdict.Definitive) { $problems += $verdict } else { Write-Log "$($verdict.Summary) $($verdict.HowToFix)" 'WARN' }
+    }
+    if ($problems.Count -gt 0) {
+        Stop-Install -ExitCode $script:ExitCodes.FailedRolledBack `
+            -WhatHappened (($problems | ForEach-Object { $_.Summary }) -join ' ') `
+            -Impact 'O pool do IIS (ou o Worker) não consegue iniciar com essa conta; a instalação foi desfeita antes de subir os serviços.' `
+            -HowToFix (($problems | ForEach-Object { $_.HowToFix } | Select-Object -Unique) -join ' ')
     }
 }
 
@@ -759,13 +811,24 @@ function Write-SiteDiagnostics {
     }
 
     try {
-        $events = Get-WinEvent -FilterHashtable @{ LogName = 'Application'; Level = 2; StartTime = (Get-Date).AddMinutes(-15) } -MaxEvents 40 -ErrorAction Stop |
-            Where-Object { $_.ProviderName -match 'AspNetCore|\.NET Runtime|Application Error|Azul Nexus|WAS|W3SVC' } | Select-Object -First 6
-        if ($events) {
-            Write-Log 'Erros recentes no Log de Eventos (Application):' 'WARN'
-            foreach ($e in $events) { Write-Log ("  [{0}] {1}: {2}" -f $e.TimeCreated.ToString('HH:mm:ss'), $e.ProviderName, ($e.Message -replace '\s+', ' ').Substring(0, [math]::Min(600, $e.Message.Length))) 'WARN' }
-        }
+        $rapid = (Get-ItemProperty "IIS:\AppPools\$($Ctx.Iis.AppPoolName)" -Name failure.rapidFailProtection).Value
+        Write-Log "Rapid-Fail Protection do pool: $rapid (ligado: o pool para sozinho depois de falhas repetidas do processo)." 'WARN'
     } catch { }
+    # Pool parado por logon/identidade grava em System (origem WAS); falha do aplicativo grava em Application.
+    foreach ($source in @(
+            @{ Log = 'System'; Pattern = 'WAS|W3SVC|IIS' },
+            @{ Log = 'Application'; Pattern = 'AspNetCore|\.NET Runtime|Application Error|Azul Nexus|IIS' })) {
+        try {
+            $events = Get-WinEvent -FilterHashtable @{ LogName = $source.Log; Level = 1, 2, 3; StartTime = (Get-Date).AddMinutes(-20) } -MaxEvents 60 -ErrorAction Stop |
+                Where-Object { $_.ProviderName -match $source.Pattern } | Select-Object -First 8
+            if ($events) {
+                Write-Log "Eventos recentes no Log de Eventos ($($source.Log)):" 'WARN'
+                foreach ($e in $events) { Write-Log ("  [{0}] {1} (ID {2}): {3}" -f $e.TimeCreated.ToString('HH:mm:ss'), $e.ProviderName, $e.Id, ($e.Message -replace '\s+', ' ').Substring(0, [math]::Min(700, $e.Message.Length))) 'WARN' }
+            } else {
+                Write-Log "Nenhum evento relevante em $($source.Log) nos últimos 20 minutos." 'WARN'
+            }
+        } catch { Write-Log "Não foi possível ler o log $($source.Log): $($_.Exception.Message)" 'WARN' }
+    }
     Write-Log '--- Fim do diagnóstico ---' 'WARN'
 }
 
@@ -836,6 +899,7 @@ function Invoke-Install {
     Publish-Files -Ctx $ctx -Previous $previous
     Set-RegistryInfo -Ctx $ctx
     Set-ServiceAccountRights -Ctx $ctx
+    Test-AccountLogons -Ctx $ctx
     Set-WorkerService -Ctx $ctx
     $thumbprint = Set-HttpsCertificate -Ctx $ctx
     Set-IisSite -Ctx $ctx -Thumbprint $thumbprint

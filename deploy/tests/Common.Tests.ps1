@@ -155,6 +155,14 @@ $pErr = Resolve-HealthProbe -StatusCode $null -Body '' -ErrorText 'The request w
 Assert-That 'Erro de conexão mostra o erro real e menciona TLS 1.2' { -not $pErr.Ok -and $pErr.Summary -like '*Could not create SSL/TLS*' -and $pErr.HowToFix -like '*TLS 1.2*' }
 Assert-That 'Código de saída 30 existe para instalado sem saúde' { $script:ExitCodes.InstalledNotHealthy -eq 30 }
 
+# Logon da conta (LogonUser): explicações
+$l1385b = Resolve-LogonFailure -Code 1385 -LogonType 'Batch' -Account 'AZUL_CORP\svc.sccm'
+Assert-That 'Erro 1385 em lote: aponta o direito de lote, a GPO e o Negar logon' { $l1385b.Definitive -and $l1385b.Summary -like '*trabalho em lote*' -and $l1385b.HowToFix -like '*Log on as a batch job*' -and $l1385b.HowToFix -like '*GPO*' -and $l1385b.HowToFix -like '*Negar logon como um trabalho em lote*' }
+$l1385s = Resolve-LogonFailure -Code 1385 -LogonType 'Service' -Account 'AZUL_CORP\svc.sccm'
+Assert-That 'Erro 1385 como serviço: aponta o direito de serviço' { $l1385s.Summary -like '*como serviço*' -and $l1385s.HowToFix -like '*Log on as a service*' }
+Assert-That 'Senha errada, expirada, desabilitada e bloqueada são definitivas e distintas' { (Resolve-LogonFailure 1326 'Batch' 'a').Summary -like '*incorretos*' -and (Resolve-LogonFailure 1330 'Batch' 'a').Summary -like '*expirou*' -and (Resolve-LogonFailure 1331 'Batch' 'a').Summary -like '*desabilitada*' -and (Resolve-LogonFailure 1909 'Batch' 'a').Summary -like '*bloqueada*' }
+Assert-That 'Erro desconhecido não é definitivo (não bloqueia a instalação)' { -not (Resolve-LogonFailure 5 'Batch' 'a').Definitive }
+
 # Falhas seguem o padrão do produto
 $caught = $null
 try { Stop-Install -ExitCode 10 -WhatHappened 'a' -Impact 'b' -HowToFix 'c' } catch { $caught = $_.Exception }

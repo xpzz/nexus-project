@@ -122,6 +122,27 @@ function Resolve-HealthProbe {
         HowToFix = 'Confirme que o site e o pool estão iniciados, que há certificado no binding da porta e que o servidor aceita TLS 1.2. Veja o diagnóstico abaixo.' }
 }
 
+# Traduz o código de erro do LogonUser (Win32) para o que aconteceu e como resolver.
+# Batch = logon "como trabalho em lote" (exigido pelo pool do IIS); Service = "como serviço" (Worker).
+function Resolve-LogonFailure {
+    param([int]$Code, [ValidateSet('Batch', 'Service')][string]$LogonType, [string]$Account)
+    $what = if ($LogonType -eq 'Batch') { 'fazer logon como trabalho em lote (direito exigido pelo pool do IIS)' } else { 'fazer logon como serviço (direito exigido pelo Worker)' }
+    $policy = if ($LogonType -eq 'Batch') { "'Fazer logon como um trabalho em lote' (Log on as a batch job)" } else { "'Fazer logon como um serviço' (Log on as a service)" }
+    $deny = if ($LogonType -eq 'Batch') { "'Negar logon como um trabalho em lote'" } else { "'Negar logon como um serviço'" }
+    switch ($Code) {
+        1385 { return [pscustomobject]@{ Definitive = $true
+            Summary = "A conta $Account não tem permissão para $what neste servidor (erro 1385)."
+            HowToFix = "No servidor, abra secpol.msc › Diretivas Locais › Atribuição de Direitos de Usuário: inclua a conta em $policy e confirme que ela NÃO está em $deny. Se essas diretivas vêm de GPO (gpresult /h gpo.html), a concessão local é sobrescrita: peça à equipe de AD para ajustar a GPO." } }
+        1326 { return [pscustomobject]@{ Definitive = $true; Summary = "Usuário ou senha incorretos para $Account (erro 1326)."; HowToFix = 'Confira a senha da conta e rode o instalador de novo.' } }
+        1330 { return [pscustomobject]@{ Definitive = $true; Summary = "A senha da conta $Account expirou (erro 1330)."; HowToFix = 'Redefina a senha da conta no AD e rode o instalador de novo.' } }
+        1331 { return [pscustomobject]@{ Definitive = $true; Summary = "A conta $Account está desabilitada (erro 1331)."; HowToFix = 'Habilite a conta no AD e rode o instalador de novo.' } }
+        1909 { return [pscustomobject]@{ Definitive = $true; Summary = "A conta $Account está bloqueada (erro 1909)."; HowToFix = 'Desbloqueie a conta no AD (verifique se algum serviço antigo usa a senha errada) e rode o instalador de novo.' } }
+        default { return [pscustomobject]@{ Definitive = $false
+            Summary = "Não foi possível confirmar o logon de $Account para $what (erro Win32 $Code)."
+            HowToFix = 'Veja o Log de Eventos (System, origem WAS) depois da instalação para o motivo exato.' } }
+    }
+}
+
 function New-Check {
     param([string]$Name, [ValidateSet('OK', 'Atenção', 'Bloqueio')][string]$Status, [string]$Message, [string]$Fix = '')
     return [pscustomobject]@{ Name = $Name; Status = $Status; Message = $Message; Fix = $Fix }
