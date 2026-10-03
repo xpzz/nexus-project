@@ -1,0 +1,39 @@
+{
+  "installDir": "auto",
+  "dataDir": "auto",
+  "iis": {
+    "siteName": "Azul Nexus",
+    "appPoolName": "AzulNexus",
+    "port": 8443,
+    "hostName": "auto",
+    "certificate": "auto",
+    "openFirewall": true
+  },
+  "database": {
+    "provider": "SqlServer",
+    "server": "SQL-NEXUS01",
+    "name": "AzulNexus",
+    "port": 5432,
+    "username": "azulnexus",
+    "allowSccmInstance": false,
+    "trustServerCertificate": false
+  },
+  "serviceIdentity": {
+    "webGmsa": null,
+    "workerGmsa": null
+  },
+  "sccm": {
+    "site": "auto",
+    "sqlServer": "auto",
+    "database": "auto",
+    "grantViewAccess": "if-permitted",
+    "trustServerCertificate": false
+  },
+  "activeDirectory": {
+    "domain": "auto",
+    "server": null,
+    "searchBases": [],
+    "useLdaps": false
+  },
+  "demoMode": false
+}

@@ -11,6 +11,11 @@ Nunca conectar a SCCM, Intune, Entra ID ou AD reais: use o modo simulado (`Sourc
 dotnet build AzulNexus.slnx
 dotnet test AzulNexus.slnx
 
+# Pacote de implantação (IIS) — gera artifacts/AzulNexus-<versão>/ e .zip
+pwsh deploy/Publish-AzulNexus.ps1
+pwsh deploy/tests/Common.Tests.ps1        # testes das funções de decisão dos scripts (também em powershell.exe 5.1 no CI)
+# No servidor (admin): deploy/Install-AzulNexus.ps1 [-DetectOnly], deploy/Uninstall-AzulNexus.ps1 — veja docs/guias/instalacao-iis.md
+
 # Nova migração (sempre nos dois provedores)
 dotnet tool restore
 cd src/Nexus.Data
@@ -34,3 +39,4 @@ dotnet run --project src/Nexus.Web
 - `Nexus.Worker` — serviço Windows: agendador, coletas, verificações (rodam com a conta do serviço), limites de CPU
 - `Nexus.Web` — site no IIS: assistente, saúde, acesso por código de configuração
 - `Nexus.Cli` — `nexusctl`
+- `deploy/` — scripts de publicação, instalação, atualização e remoção no IIS (PowerShell 5.1+; lógica testável em `deploy/lib/Common.ps1`)
