@@ -123,6 +123,21 @@ Assert-That 'Instância nomeada diferente na mesma máquina: OK' { (Get-DbCheck 
 Assert-That 'PostgreSQL não é afetado' { (Get-DbCheck 'azulnexus' $false 'sccmdb01.azul.corp' 'PostgreSql').Status -eq 'OK' }
 Assert-That 'Sem servidor: bloqueia' { (Test-NexusDatabaseChoice -Provider 'SqlServer' -Server '' -Name 'AzulNexus' -SccmServer 'x' -SccmDatabase 'CM_AZ1' -AllowSccmInstance $false)[0].Status -eq 'Bloqueio' }
 
+# Invoke-Native: stderr não pode derrubar o script com $ErrorActionPreference = 'Stop' (regressão do Windows PowerShell 5.1)
+$isWin = ($PSVersionTable.PSEdition -eq 'Desktop') -or $IsWindows
+$native = if ($isWin) { @{ FilePath = 'cmd.exe'; Arguments = @('/c', 'echo mensagem-de-erro 1>&2 & exit 3') } } else { @{ FilePath = 'sh'; Arguments = @('-c', 'echo mensagem-de-erro >&2; exit 3') } }
+$oldPreference = $ErrorActionPreference; $ErrorActionPreference = 'Stop'
+$nativeResult = $null; $nativeThrew = $false
+try { $nativeResult = Invoke-Native @native -AllowFailure } catch { $nativeThrew = $true }
+$ErrorActionPreference = $oldPreference
+Assert-That 'Invoke-Native -AllowFailure devolve o código e o stderr sem lançar exceção' { -not $nativeThrew -and $nativeResult.ExitCode -eq 3 -and ($nativeResult.Output -join ' ') -like '*mensagem-de-erro*' }
+$failed = $null
+try { Invoke-Native @native | Out-Null } catch { $failed = $_.Exception }
+Assert-That 'Invoke-Native sem -AllowFailure falha com o padrão do produto e código 20' { $failed -and $failed.Data['ExitCode'] -eq 20 -and $failed.Message -like '*mensagem-de-erro*' -and $failed.Message -like '*Como resolver*' }
+$okNative = if ($isWin) { Invoke-Native -FilePath 'cmd.exe' -Arguments @('/c', 'echo ok') } else { Invoke-Native -FilePath 'sh' -Arguments @('-c', 'echo ok') }
+Assert-That 'Invoke-Native com sucesso devolve a saída' { $okNative.ExitCode -eq 0 -and ($okNative.Output -join '') -like '*ok*' }
+Assert-That 'ErrorActionPreference é restaurado depois da chamada' { $ErrorActionPreference -eq 'Stop' }
+
 # Falhas seguem o padrão do produto
 $caught = $null
 try { Stop-Install -ExitCode 10 -WhatHappened 'a' -Impact 'b' -HowToFix 'c' } catch { $caught = $_.Exception }

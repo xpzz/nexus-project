@@ -1,20 +1,17 @@
 using System.Text;
-using System.Text.RegularExpressions;
+using Nexus.Core.Sql;
 
 namespace Nexus.Cli;
 
-public static partial class DatabaseScripts
+public static class DatabaseScripts
 {
     /// <summary>
     /// Logins and least privilege on the Nexus database (SQL Server): read/write data, no DDL.
-    /// Migrations run with the identity of whoever installs/updates, or by the DBA.
+    /// Migrations run with the identity of whoever installs/updates, or by the DBA. Accounts are matched by SID.
     /// </summary>
     public static string SqlServerGrants(string database, IEnumerable<string> accounts)
     {
-        if (!Name().IsMatch(database))
-        {
-            throw new ArgumentException($"Nome de banco inválido: '{database}'.", nameof(database));
-        }
+        SqlAccessScript.ValidateDatabase(database);
 
         var sb = new StringBuilder();
         sb.AppendLine("-- Azul Nexus: acesso das contas dos serviços ao banco do Nexus. Idempotente.");
@@ -23,26 +20,12 @@ public static partial class DatabaseScripts
         sb.AppendLine("GO");
         foreach (var account in accounts.Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            if (!Account().IsMatch(account))
-            {
-                throw new ArgumentException($"Conta inválida: '{account}'.", nameof(accounts));
-            }
-
-            sb.AppendLine("USE [master];");
-            sb.AppendLine($"IF SUSER_ID(N'{account}') IS NULL CREATE LOGIN [{account}] FROM WINDOWS;");
-            sb.AppendLine($"USE [{database}];");
-            sb.AppendLine($"IF USER_ID(N'{account}') IS NULL CREATE USER [{account}] FOR LOGIN [{account}];");
-            sb.AppendLine($"ALTER ROLE [db_datareader] ADD MEMBER [{account}];");
-            sb.AppendLine($"ALTER ROLE [db_datawriter] ADD MEMBER [{account}];");
+            SqlAccessScript.EnsureLoginAndUser(sb, database, account);
+            SqlAccessScript.AddToRole(sb, "db_datareader");
+            SqlAccessScript.AddToRole(sb, "db_datawriter");
             sb.AppendLine("GO");
         }
 
         return sb.ToString();
     }
-
-    [GeneratedRegex(@"^[A-Za-z0-9_]{1,128}$")]
-    private static partial Regex Name();
-
-    [GeneratedRegex(@"^[A-Za-z0-9 ._-]{1,64}\\[A-Za-z0-9 ._-]{1,64}\$?$")]
-    private static partial Regex Account();
 }

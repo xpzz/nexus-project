@@ -53,6 +53,28 @@ function Stop-Install {
     throw (New-InstallException -ExitCode $ExitCode -Message $message)
 }
 
+# Executa um programa nativo e devolve ExitCode e Output. No Windows PowerShell 5.1, com $ErrorActionPreference = 'Stop',
+# qualquer linha escrita em stderr (2>&1) vira exceção e derrubaria o script mesmo com -AllowFailure;
+# por isso o preference é 'Continue' só durante a chamada.
+function Invoke-Native {
+    param([string]$FilePath, [string[]]$Arguments, [switch]$AllowFailure)
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $output = @(& $FilePath @Arguments 2>&1 | ForEach-Object { "$_" })
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if ($code -ne 0 -and -not $AllowFailure) {
+        Stop-Install -ExitCode $script:ExitCodes.FailedRolledBack `
+            -WhatHappened "O comando '$([IO.Path]::GetFileName($FilePath)) $($Arguments -join ' ')' falhou com código $code. $($output -join ' ')" `
+            -Impact 'A instalação foi interrompida.' `
+            -HowToFix 'Corrija a causa indicada e rode o script de novo; ele é idempotente.'
+    }
+    return [pscustomobject]@{ ExitCode = $code; Output = $output }
+}
+
 function New-Check {
     param([string]$Name, [ValidateSet('OK', 'Atenção', 'Bloqueio')][string]$Status, [string]$Message, [string]$Fix = '')
     return [pscustomobject]@{ Name = $Name; Status = $Status; Message = $Message; Fix = $Fix }

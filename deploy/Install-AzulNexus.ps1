@@ -66,19 +66,6 @@ function Get-PackageVersion {
     return '0.0.0'
 }
 
-function Invoke-Native {
-    param([string]$FilePath, [string[]]$Arguments, [switch]$AllowFailure)
-    $output = & $FilePath @Arguments 2>&1 | ForEach-Object { "$_" }
-    $code = $LASTEXITCODE
-    if ($code -ne 0 -and -not $AllowFailure) {
-        Stop-Install -ExitCode $script:ExitCodes.FailedRolledBack `
-            -WhatHappened "O comando '$([IO.Path]::GetFileName($FilePath)) $($Arguments -join ' ')' falhou com código $code. $($output -join ' ')" `
-            -Impact 'A instalação foi interrompida.' `
-            -HowToFix 'Corrija a causa indicada e rode o script de novo; ele é idempotente.'
-    }
-    return [pscustomobject]@{ ExitCode = $code; Output = $output }
-}
-
 function Invoke-Nexusctl {
     param([string[]]$Arguments, [switch]$AllowFailure, [switch]$Quiet)
     $result = Invoke-Native -FilePath $script:Nexusctl -Arguments $Arguments -AllowFailure:$AllowFailure
@@ -511,7 +498,7 @@ function Set-ServiceAccountRights {
         Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
     }
 
-    $member = & net.exe localgroup IIS_IUSRS 2>&1 | Out-String
+    $member = (Invoke-Native -FilePath 'net.exe' -Arguments @('localgroup', 'IIS_IUSRS') -AllowFailure).Output -join "`n"
     if ($member -notmatch [regex]::Escape(($account -split '\\')[-1])) {
         Invoke-Native -FilePath 'net.exe' -Arguments @('localgroup', 'IIS_IUSRS', $account, '/add') -AllowFailure | Out-Null
     }

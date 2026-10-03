@@ -54,8 +54,8 @@ try {
         $service = Get-CimInstance Win32_Service -Filter "Name='AzulNexus.Worker'" -ErrorAction SilentlyContinue
         if ($service -and $service.StartName -and $service.StartName -notlike 'LocalSystem') { $workerAccount = $service.StartName }
         if ($workerAccount) {
-            & $nexusctl sccm-grant-script --account $workerAccount --revoke --output (Join-Path $scripts 'sccm-revoke.sql') 2>&1 | Out-Null
-            if ($LASTEXITCODE -eq 0) { Write-Log "Script de reversão do SQL do SCCM: $(Join-Path $scripts 'sccm-revoke.sql') (entregue ao DBA; não foi executado)." }
+            $revoke = Invoke-Native -FilePath $nexusctl -Arguments @('sccm-grant-script', '--account', $workerAccount, '--revoke', '--output', (Join-Path $scripts 'sccm-revoke.sql')) -AllowFailure
+            if ($revoke.ExitCode -eq 0) { Write-Log "Script de reversão do SQL do SCCM: $(Join-Path $scripts 'sccm-revoke.sql') (entregue ao DBA; não foi executado)." }
         }
     }
     Set-Content -Path (Join-Path $scripts 'entra-limpeza.txt') -Encoding UTF8 -Value @(

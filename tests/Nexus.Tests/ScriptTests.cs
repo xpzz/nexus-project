@@ -19,17 +19,32 @@ public class SccmGrantScriptTests
         Assert.DoesNotContain("ALTER TABLE", script, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("GRANT INSERT", script, StringComparison.OrdinalIgnoreCase);
         // Idempotent guards
-        Assert.Contains("IF SUSER_ID(", script);
-        Assert.Contains("IF USER_ID(", script);
         Assert.Contains("IF DATABASE_PRINCIPAL_ID(", script);
+    }
+
+    [Fact]
+    public void MatchesTheAccountBySidSoExistingLoginsAndDboDoNotBreakIt()
+    {
+        // Regression: CREATE USER failed with error 15063 ("The login already has an account under a different
+        // user name") when the account already mapped to another database user, e.g. dbo.
+        var script = SccmGrantScript.Grant("CM_AZ1", @"AZUL_CORP\svc.sccm");
+        Assert.Contains("SUSER_SID(N'AZUL_CORP\\svc.sccm')", script);
+        Assert.Contains("FROM sys.database_principals WHERE sid = @sid", script);
+        Assert.Contains("IF @user IS NULL", script);
+        Assert.Contains("IF @user <> N'dbo' EXEC (N'ALTER ROLE [azul_nexus_reader] ADD MEMBER '", script);
+        Assert.DoesNotContain("IF USER_ID(", script);
+        Assert.DoesNotContain("IF SUSER_ID(", script);
     }
 
     [Fact]
     public void RevokeUndoesTheGrant()
     {
         var script = SccmGrantScript.Revoke("CM_AZ1", @"AZUL\svc-nexus$");
-        Assert.Contains("DROP USER", script);
+        Assert.Contains("DROP MEMBER", script);
         Assert.Contains("DROP ROLE", script);
+        // Never removes a login or user that may have existed before the Nexus.
+        Assert.DoesNotContain("DROP USER", script);
+        Assert.DoesNotContain(script.Split('\n'), line => !line.StartsWith("--") && line.Contains("DROP LOGIN"));
     }
 
     [Theory]
@@ -50,6 +65,16 @@ public class DatabaseScriptTests
         Assert.Contains("db_datawriter", script);
         Assert.DoesNotContain("db_owner", script);
         Assert.DoesNotContain("db_ddladmin", script);
+    }
+
+    [Fact]
+    public void OneBatchPerAccountMatchedBySid()
+    {
+        var script = DatabaseScripts.SqlServerGrants("AzulNexus", [@"AZUL_CORP\svc.sccm", @"AZUL_CORP\svc.sccm"]);
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(script, "DECLARE @sid")); // duplicate accounts collapse
+        Assert.Contains("IF @user <> N'dbo' EXEC (N'ALTER ROLE [db_datareader] ADD MEMBER '", script);
+        Assert.Contains("IF @user <> N'dbo' EXEC (N'ALTER ROLE [db_datawriter] ADD MEMBER '", script);
+        Assert.DoesNotContain("IF USER_ID(", script);
     }
 }
 
