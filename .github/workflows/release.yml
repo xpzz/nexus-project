@@ -34,6 +34,7 @@ jobs:
         run: |
           ./deploy/tests/Common.Tests.ps1
           ./deploy/tests/Syntax.Tests.ps1
+          ./deploy/tests/Azure.Tests.ps1
 
       - name: Baixar o ASP.NET Core Hosting Bundle (instalador oficial da Microsoft)
         id: bundle

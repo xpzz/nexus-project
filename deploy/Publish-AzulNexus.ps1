@@ -58,12 +58,12 @@ Invoke-Publish -Project 'Nexus.Cli' -Output (Join-Path $package 'app') -SelfCont
 
 $deploy = Join-Path $package 'deploy'
 New-Item -ItemType Directory -Path (Join-Path $deploy 'lib') -Force | Out-Null
-foreach ($file in 'Install-AzulNexus.ps1', 'Uninstall-AzulNexus.ps1', 'install.sample.json') {
+foreach ($file in 'Install-AzulNexus.ps1', 'Install-AzulNexusAzure.ps1', 'Uninstall-AzulNexus.ps1', 'install.sample.json') {
     Copy-Item (Join-Path $PSScriptRoot $file) $deploy
 }
-Copy-Item (Join-Path $PSScriptRoot 'lib\Common.ps1') (Join-Path $deploy 'lib')
+Copy-Item (Join-Path $PSScriptRoot 'lib\*.ps1') (Join-Path $deploy 'lib')
 # Atalhos de duplo clique na raiz do pacote (o "instalador" sem .exe, ADR-0001).
-foreach ($file in 'Instalar.cmd', 'Verificar-Ambiente.cmd') { Copy-Item (Join-Path $PSScriptRoot $file) $package }
+foreach ($file in 'Instalar.cmd', 'Verificar-Ambiente.cmd', 'Configurar-Azure.cmd') { Copy-Item (Join-Path $PSScriptRoot $file) $package }
 if ($HostingBundlePath) {
     if (-not (Test-Path $HostingBundlePath)) { throw "Hosting Bundle não encontrado em $HostingBundlePath." }
     $prereq = Join-Path $package 'prereq'
@@ -75,7 +75,7 @@ if (Test-Path $guides) { Copy-Item $guides (Join-Path $package 'docs') -Recurse 
 Set-Content -Path (Join-Path $package 'VERSION.txt') -Value $version -Encoding ASCII
 
 # Verificações do pacote: o que o instalador exige tem de estar lá.
-$required = @('web\AzulNexus.Web.dll', 'web\web.config', 'app\AzulNexus.Worker.exe', 'app\nexusctl.exe', 'deploy\Install-AzulNexus.ps1', 'Instalar.cmd')
+$required = @('web\AzulNexus.Web.dll', 'web\web.config', 'app\AzulNexus.Worker.exe', 'app\nexusctl.exe', 'deploy\Install-AzulNexus.ps1', 'deploy\Install-AzulNexusAzure.ps1', 'deploy\lib\Azure.ps1', 'Instalar.cmd', 'Configurar-Azure.cmd')
 foreach ($item in $required) {
     if (-not (Test-Path (Join-Path $package $item))) { throw "Pacote incompleto: falta $item." }
 }

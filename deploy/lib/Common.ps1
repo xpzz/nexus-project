@@ -404,6 +404,41 @@ function New-AccountArguments {
     return , $arguments.ToArray()
 }
 
+function Grant-Acl {
+    param([string]$Path, [string[]]$Grants, [switch]$ResetInheritance)
+    $arguments = @($Path)
+    if ($ResetInheritance) { $arguments += '/inheritance:r' }
+    foreach ($grant in $Grants) { $arguments += @('/grant:r', $grant) }
+    $arguments += '/Q'
+    Invoke-Native -FilePath 'icacls.exe' -Arguments $arguments | Out-Null
+}
+
+# A conta do serviço precisa ler a chave privada de certificados de LocalMachine\My usados por ele
+# (HTTPS do Kestrel, certificados dos registros de aplicativo do Entra). O instalador roda como administrador;
+# o serviço, não.
+function Grant-CertificateKeyAccess {
+    param([Parameter(Mandatory)][string]$Account, [Parameter(Mandatory)][string]$Thumbprint)
+    $certificate = Get-ChildItem Cert:\LocalMachine\My | Where-Object { $_.Thumbprint -eq $Thumbprint } | Select-Object -First 1
+    if (-not $certificate) { return }
+    $keyFile = $null
+    try {
+        $rsa = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($certificate)
+        if ($rsa -is [System.Security.Cryptography.RSACng]) {
+            $name = $rsa.Key.UniqueName
+            $keyFile = Get-ChildItem (Join-Path $env:ProgramData 'Microsoft\Crypto\Keys') -Filter $name -ErrorAction SilentlyContinue | Select-Object -First 1
+        } elseif ($rsa -and $rsa.CspKeyContainerInfo) {
+            $name = $rsa.CspKeyContainerInfo.UniqueKeyContainerName
+            $keyFile = Get-ChildItem (Join-Path $env:ProgramData 'Microsoft\Crypto\RSA\MachineKeys') -Filter $name -ErrorAction SilentlyContinue | Select-Object -First 1
+        }
+    } catch { Write-Log "Não foi possível localizar a chave privada do certificado: $($_.Exception.Message)" 'WARN' }
+    if ($keyFile) {
+        Grant-Acl -Path $keyFile.FullName -Grants @("${Account}:R")
+        Write-Log "Leitura da chave privada do certificado concedida a $Account."
+    } else {
+        Write-Log 'Não foi possível localizar o arquivo da chave privada (certificado de HSM/cartão ou chave de usuário). Se o serviço não conseguir usar o certificado, conceda leitura da chave à conta do serviço em certlm.msc › Gerenciar Chaves Privadas.' 'WARN'
+    }
+}
+
 function ConvertTo-PlainText {
     param([securestring]$Secure)
     if (-not $Secure) { return $null }

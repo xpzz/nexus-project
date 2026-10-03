@@ -14,6 +14,8 @@ dotnet test AzulNexus.slnx
 # Pacote de implantação (IIS) — gera artifacts/AzulNexus-<versão>/ e .zip
 pwsh deploy/Publish-AzulNexus.ps1
 pwsh deploy/tests/Common.Tests.ps1        # testes das funções de decisão dos scripts (também em powershell.exe 5.1 no CI)
+pwsh deploy/tests/Azure.Tests.ps1         # provisionamento do Entra ID contra um Graph simulado
+pwsh deploy/tests/Syntax.Tests.ps1        # BOM e sintaxe de todos os .ps1
 # No servidor (admin): deploy/Install-AzulNexus.ps1 [-DetectOnly], deploy/Uninstall-AzulNexus.ps1 — veja docs/guias/instalacao-iis.md
 
 # Nova migração (sempre nos dois provedores)
@@ -39,4 +41,5 @@ dotnet run --project src/Nexus.Web
 - `Nexus.Worker` — serviço Windows: agendador, coletas, verificações (rodam com a conta do serviço), limites de CPU
 - `Nexus.Web` — site no IIS: assistente, saúde, acesso por código de configuração
 - `Nexus.Cli` — `nexusctl`
+- `deploy/Install-AzulNexusAzure.ps1` + `lib/Azure.ps1` — Entra ID/Intune: registros, certificados, consentimento, funções (`config/azure.json`, lido por `AzureSettingsStore`)
 - `deploy/` — scripts de publicação, instalação, atualização e remoção no IIS (PowerShell 5.1+; lógica testável em `deploy/lib/Common.ps1`)
