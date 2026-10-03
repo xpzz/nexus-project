@@ -31,7 +31,9 @@ jobs:
 
       - name: Testes dos scripts de implantação (Windows PowerShell 5.1)
         shell: powershell
-        run: ./deploy/tests/Common.Tests.ps1
+        run: |
+          ./deploy/tests/Common.Tests.ps1
+          ./deploy/tests/Syntax.Tests.ps1
 
       - name: Baixar o ASP.NET Core Hosting Bundle (instalador oficial da Microsoft)
         id: bundle

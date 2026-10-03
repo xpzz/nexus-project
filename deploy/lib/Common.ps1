@@ -1,4 +1,4 @@
-# Funções compartilhadas pelos scripts de implantação do Azul Nexus.
+﻿# Funções compartilhadas pelos scripts de implantação do Azul Nexus.
 # Compatível com Windows PowerShell 5.1 (padrão do Windows Server) e PowerShell 7.
 # As funções "puras" (sem efeito no servidor) são testadas em deploy/tests/Common.Tests.ps1.
 
@@ -270,6 +270,20 @@ function ConvertTo-ResolvedInstallFile {
     }
     if ($Context.Collection) { $resolved['collection'] = $Context.Collection }
     return $resolved
+}
+
+# Argumentos do nexusctl com uma opção repetida por valor: --account A --account B [extras].
+# Montado em função própria porque "@(...) + @(...)" solto na chamada vira argumentos separados no PowerShell.
+function New-AccountArguments {
+    param([Parameter(Mandatory)][string]$Command, [string[]]$Accounts, [string[]]$Extra = @())
+    $arguments = New-Object System.Collections.Generic.List[string]
+    $arguments.Add($Command)
+    foreach ($account in @($Accounts | Where-Object { $_ } | Select-Object -Unique)) {
+        $arguments.Add('--account')
+        $arguments.Add($account)
+    }
+    foreach ($item in $Extra) { $arguments.Add($item) }
+    return , $arguments.ToArray()
 }
 
 function ConvertTo-PlainText {

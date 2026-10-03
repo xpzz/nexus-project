@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Instala, atualiza ou repara o Azul Nexus: site no IIS, serviço Worker, banco, permissões e primeira coleta.
 
@@ -655,10 +655,11 @@ function Initialize-Database {
     }
 
     if ($Ctx.Database.Provider -eq 'SqlServer') {
-        $grant = Invoke-Nexusctl -Arguments @('db-grant', '--account') + @($Ctx.Accounts.WebAccount, $Ctx.Accounts.WorkerAccount | Select-Object -Unique) -AllowFailure
+        $dbAccounts = @($Ctx.Accounts.WebAccount, $Ctx.Accounts.WorkerAccount)
+        $grant = Invoke-Nexusctl -Arguments (New-AccountArguments -Command 'db-grant' -Accounts $dbAccounts) -AllowFailure
         if ($grant.ExitCode -ne 0) {
             $file = Join-Path $Ctx.DataDir 'scripts\nexus-db-grant.sql'
-            Invoke-Nexusctl -Arguments @('db-grant-script', '--account') + @($Ctx.Accounts.WebAccount, $Ctx.Accounts.WorkerAccount | Select-Object -Unique) + @('--output', $file) -AllowFailure | Out-Null
+            Invoke-Nexusctl -Arguments (New-AccountArguments -Command 'db-grant-script' -Accounts $dbAccounts -Extra @('--output', $file)) -AllowFailure | Out-Null
             $script:Pending.Add("DBA: executar $file (cria o banco '$($Ctx.Database.Name)' e dá acesso às contas dos serviços) e depois 'nexusctl migrate'.")
             return
         }

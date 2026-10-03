@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Remove o Azul Nexus do servidor: site e pool no IIS, serviço Worker, regra de firewall e binários.
 
