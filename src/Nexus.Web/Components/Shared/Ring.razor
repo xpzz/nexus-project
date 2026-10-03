@@ -1,0 +1,16 @@
+@{
+    var pct = Math.Clamp(Value ?? 0, 0, 100);
+    var circ = 2 * Math.PI * 42;
+    var dash = (pct / 100 * circ).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+    var total = circ.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+    var color = Value is null ? "var(--c-mute)" : Value >= 85 ? "var(--ok)" : Value >= 65 ? "var(--warn)" : "var(--bad)";
+}
+<div class="ring @(Small ? "sm" : "")" role="img" aria-label="Índice de saúde @(Value?.ToString("0") ?? "sem dados")">
+    <svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="42" fill="none" stroke="var(--mute-soft)" stroke-width="10" /><circle cx="50" cy="50" r="42" fill="none" stroke="@color" stroke-width="10" stroke-linecap="round" stroke-dasharray="@dash @total" /></svg>
+    <b>@(Value is null ? "—" : Value.Value.ToString("0"))</b>
+</div>
+
+@code {
+    [Parameter] public double? Value { get; set; }
+    [Parameter] public bool Small { get; set; }
+}

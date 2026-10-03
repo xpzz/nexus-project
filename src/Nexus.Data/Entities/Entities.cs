@@ -166,6 +166,9 @@ public sealed class Asset
     public string? Model { get; set; }
     /// <summary>WindowsClient, WindowsServer, Android, iOS, macOS or Other.</summary>
     public string Platform { get; set; } = "Other";
+    /// <summary>Operating system name as reported by the most reliable source (e.g. "Windows 10 Enterprise").</summary>
+    public string? OperatingSystem { get; set; }
+    public string? OsVersion { get; set; }
     /// <summary>Corporate, Personal or Unknown (value declared by the source; see <see cref="OwnershipSource"/>).</summary>
     public string Ownership { get; set; } = "Unknown";
     public string? OwnershipSource { get; set; }

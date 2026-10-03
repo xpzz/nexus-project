@@ -1,0 +1,107 @@
+@page "/painel"
+@rendermode InteractiveServer
+@inject InventorySnapshotService Inventory
+@inject TimeProvider Clock
+
+<PageTitle>Visão geral · Azul Nexus</PageTitle>
+
+@if (_snapshot is null)
+{
+    <p class="hint">Carregando o inventário…</p>
+}
+else if (!_snapshot.HasData)
+{
+    <div class="ph"><div><h1>Visão geral do parque</h1><p>Ainda não há dispositivos reconciliados.</p></div></div>
+    <div class="card">
+        <h3>O que falta para ver o parque aqui</h3>
+        <p class="hint">O inventário aparece depois da primeira coleta. Confira as fontes no assistente e peça uma coleta na tela de saúde do Nexus.</p>
+        <div class="actions"><a class="button primary" href="/assistente">Abrir o assistente</a><a class="button" href="/saude">Saúde do Nexus</a></div>
+    </div>
+}
+else
+{
+    var o = _overview!;
+    <div class="ph">
+        <div><h1>Visão geral do parque</h1><p>Um registro por equipamento, ligando SCCM, Intune, Entra ID e AD. Clique em qualquer número para ver os dispositivos.</p></div>
+        <span class="asof">Dados de @_snapshot.LoadedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm") · coleta, não tempo real</span>
+    </div>
+
+    <section class="card hero" aria-label="Saúde do parque">
+        <Ring Value="o.ParkScore" />
+        <div>
+            <h2>@o.Headline</h2>
+            <p class="hint" style="margin:2px 0 0">Índice médio dos @Fmt.Number(o.Active) dispositivos ativos. @(o.BelowTarget == 0 ? "Todas as metas disponíveis foram atingidas." : $"{o.BelowTarget} meta(s) abaixo do objetivo.") @Fmt.Pct(o.AtRiskPercent) dos ativos em risco.</p>
+            <div class="states">
+                @foreach (var st in States.All)
+                {
+                    <a href="@Fmt.Inv(estado: st)"><b>@Fmt.Number(o.States[st])</b><span><span class="pill @Fmt.StateCss(st)">@st</span></span></a>
+                }
+            </div>
+        </div>
+    </section>
+
+    <div class="grid g3">
+        @foreach (var k in o.Highlights)
+        {
+            <KpiCardView Card="k" />
+        }
+    </div>
+
+    <div class="ttl"><h2>Indicadores</h2></div>
+    <div class="grid g3">
+        @foreach (var k in o.Kpis)
+        {
+            <KpiCardView Card="k" />
+        }
+    </div>
+
+    <div class="ttl"><h2>Grupos do parque</h2><span class="asof">Cada grupo é avaliado pela gestão que se espera dele</span></div>
+    <div class="grid g3">
+        @foreach (var g in o.Groups)
+        {
+            <a class="box" href="@GroupHref(g.Group)">
+                <div class="tt"><span>@Groups.Title(g.Group)</span><Ring Value="g.Score" Small="true" /></div>
+                <div class="n">@Fmt.Number(g.Total)<em>@Fmt.Number(g.Active) ativos</em></div>
+                <Bar Label="@("Gestão em " + Groups.Title(g.Group))" ShowLegend="false" Segments="ManagementSegs(g)" />
+                <div class="legend" style="margin-top:0">@foreach (var s in ManagementSegs(g).Where(s => s.Count > 0)){<span><u class="seg @s.Css"></u>@s.Label <b>@Fmt.Number(s.Count)</b></span>}</div>
+                <div class="mini"><span>Esperado</span><b style="font-weight:400;text-align:right;max-width:150px">@Groups.Expected(g.Group)</b><span>Em risco</span><b>@g.AtRisk</b><span>Desatualizados</span><b>@g.Stale</b></div>
+            </a>
+        }
+    </div>
+
+    <section class="card">
+        <div class="ttl"><h3>O que pede ação primeiro</h3><a href="/pendencias">Todas as pendências</a></div>
+        <div class="list">
+            @foreach (var r in o.TopRules)
+            {
+                <div class="row">
+                    <div class="t"><b>@r.Rule.Title</b><span>@r.Rule.Action · responsável sugerido: @r.Rule.Owner</span></div>
+                    <div class="r"><span class="pill @Fmt.PriorityCss(r.Rule.Priority)">@Fmt.PriorityLabel(r.Rule.Priority)</span><strong>@Fmt.Number(r.Devices)</strong><a class="button" href="@Fmt.Inv(pendencia: r.Rule.Id)">Ver lista</a></div>
+                </div>
+            }
+            @if (o.TopRules.Count == 0)
+            {
+                <div class="row"><span class="pill ok">Nenhuma pendência nas regras disponíveis</span></div>
+            }
+        </div>
+    </section>
+}
+
+@code {
+    private InventorySnapshot? _snapshot;
+    private OverviewReport? _overview;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _snapshot = await Inventory.GetAsync();
+        if (_snapshot.HasData)
+        {
+            _overview = _snapshot.Overview();
+        }
+    }
+
+    private static string GroupHref(string group) => group is Groups.ByodMobile or Groups.ByodComputers ? "/byod" : "/parque/" + Fmt.Slug(group);
+
+    private static IReadOnlyList<Seg> ManagementSegs(GroupCard g) =>
+        Management.All.Where(m => m != Management.OnlyMam).Select(m => new Seg(m, g.ByManagement[m], Fmt.ManagementSeg(m))).ToList();
+}

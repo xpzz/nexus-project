@@ -1,19 +1,88 @@
 @inherits LayoutComponentBase
+@inject InventorySnapshotService Inventory
+@inject TimeProvider Clock
 
-<div class="shell">
-    <header class="topbar">
-        <span class="brand">Azul Nexus</span>
-        <nav>
+<div class="app">
+    <aside class="side">
+        <a class="brand" href="/painel"><div class="logo">N</div><div><b>Azul Nexus</b><span>Saúde e inventário do parque</span></div></a>
+        <nav class="nav" aria-label="Principal">
+            <h6>Painel</h6>
+            <NavLink href="/painel" Match="NavLinkMatch.All">Visão geral</NavLink>
+            <h6>Parque</h6>
+            <NavLink href="/parque/computadores">Computadores<i>@Count(Groups.Computers)</i></NavLink>
+            <NavLink href="/parque/servidores">Servidores<i>@Count(Groups.Servers)</i></NavLink>
+            <NavLink href="/parque/celulares">Celulares corp.<i>@Count(Groups.CorpMobile)</i></NavLink>
+            <NavLink href="/byod">BYOD<i>@(Count(Groups.ByodMobile) + Count(Groups.ByodComputers))</i></NavLink>
+            <NavLink href="/parque/externos">Externos<i>@Count(Groups.External)</i></NavLink>
+            <NavLink href="/parque/sem-gestao">Sem gestão<i>@_snapshot.Views.Count(v => v.Issues.Contains("nomgr"))</i></NavLink>
+            <NavLink href="/inventario" Match="NavLinkMatch.All">Inventário completo<i>@_snapshot.Views.Count</i></NavLink>
+            <h6>Operação</h6>
+            <NavLink href="/operacao">SCCM e Intune</NavLink>
+            <NavLink href="/pendencias">Pendências<i>@_snapshot.Views.Count(v => v.Issues.Any(i => i != "stale"))</i></NavLink>
+            <h6>Configuração</h6>
             <NavLink href="/assistente">Assistente</NavLink>
-            <NavLink href="/saude">Saúde</NavLink>
+            <NavLink href="/saude">Saúde do Nexus</NavLink>
         </nav>
-        <span class="badge">Modo de configuração</span>
-    </header>
-    <main class="content">
-        @Body
-    </main>
+        <div class="sidefoot">Somente leitura. Nenhuma ação é executada nas ferramentas de origem.</div>
+    </aside>
+    <div class="main">
+        <header class="top">
+            <form class="search" method="get" action="/inventario" role="search">
+                <span aria-hidden="true">⌕</span>
+                <input name="q" type="search" placeholder="Buscar por nome, usuário, serial ou modelo" aria-label="Busca global" />
+            </form>
+            <div class="chips">
+                @foreach (var chip in Chips())
+                {
+                    <a class="src" href="/operacao" title="@chip.Detail"><i class="dot @chip.Dot"></i>@chip.Name · @chip.Text</a>
+                }
+            </div>
+            <button type="button" id="theme">Tema</button>
+        </header>
+        <main class="page">
+            @Body
+        </main>
+    </div>
 </div>
 
 <div id="blazor-error-ui">
     Ocorreu um erro inesperado. <a href="" class="reload">Recarregar</a>
 </div>
+
+@code {
+    private InventorySnapshot _snapshot = InventorySnapshot.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _snapshot = await Inventory.GetAsync();
+        }
+        catch (Exception)
+        {
+            _snapshot = InventorySnapshot.Empty; // setup screens must still open when the inventory cannot be read
+        }
+    }
+
+    private int Count(string group) => _snapshot.Views.Count(v => v.Group == group);
+
+    private IEnumerable<(string Name, string Text, string Dot, string Detail)> Chips()
+    {
+        var now = Clock.GetUtcNow();
+        foreach (var job in _snapshot.Jobs.Where(j => j.Name != "inventory.reconcile"))
+        {
+            if (job.LastSuccessAt is null)
+            {
+                yield return (Fmt.JobLabel(job.Name), "sem coleta", "m", job.Error ?? job.Status ?? "Ainda não coletou.");
+            }
+            else if (job.Status is "Falhou")
+            {
+                yield return (Fmt.JobLabel(job.Name), "atrasada", "w", job.Error ?? "A última coleta falhou; mantido o último resultado válido.");
+            }
+            else
+            {
+                yield return (Fmt.JobLabel(job.Name), Fmt.Ago(job.LastSuccessAt, now), "", "Em dia");
+            }
+        }
+    }
+}

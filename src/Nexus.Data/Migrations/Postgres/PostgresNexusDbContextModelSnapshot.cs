@@ -151,6 +151,12 @@ namespace Nexus.Data.Migrations.Postgres
                     b.Property<bool>("NeedsReview")
                         .HasColumnType("boolean");
 
+                    b.Property<string>("OperatingSystem")
+                        .HasColumnType("text");
+
+                    b.Property<string>("OsVersion")
+                        .HasColumnType("text");
+
                     b.Property<string>("Ownership")
                         .IsRequired()
                         .HasMaxLength(16)

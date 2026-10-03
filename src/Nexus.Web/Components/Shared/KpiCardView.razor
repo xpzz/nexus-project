@@ -1,0 +1,34 @@
+@using System.Globalization
+@if (Card.State != KpiState.Available)
+{
+    <div class="card kcard">
+        <div class="l"><span>@Card.Label</span><span class="pill m">@(Card.State == KpiState.NotEnabled ? "Aguardando coleta" : "Sem dados")</span></div>
+        <div class="v" style="color:var(--ink3)">—</div>
+        <div class="d">@Card.Context</div>
+    </div>
+}
+else if (Card.Target is null)
+{
+    <a class="card kcard" href="@Card.Link">
+        <div class="l"><span>@Card.Label</span></div>
+        <div class="v">@Fmt.Number(Card.Numerator ?? 0)</div>
+        <div class="d">@Card.Context</div>
+    </a>
+}
+else
+{
+    var tone = Card.MeetsTarget ? "ok" : (Card.Percent >= Card.Target - 5 ? "warn" : "bad");
+    var width = Math.Min(100, Card.Percent ?? 0).ToString("0.#", CultureInfo.InvariantCulture);
+    var mark = (Card.Target ?? 0).ToString("0.#", CultureInfo.InvariantCulture);
+    <a class="card kcard" href="@(Card.Link ?? "#")">
+        <div class="l"><span>@Card.Label</span></div>
+        <div class="v">@Fmt.Pct(Card.Percent)</div>
+        <div class="meter" role="img" aria-label="@Fmt.Pct(Card.Percent) com meta de @Fmt.Pct(Card.Target)"><i class="@tone" style="width:@width%"></i><u style="left:@mark%"></u></div>
+        <div class="tg"><span>@Card.Numerator de @Card.Denominator</span><span>@(Card.MeetsTarget ? "meta atingida" : $"faltam {Card.MissingPoints?.ToString("0.#")} pp") · meta @Fmt.Pct(Card.Target)</span></div>
+        <div class="d">@Card.Context</div>
+    </a>
+}
+
+@code {
+    [Parameter, EditorRequired] public KpiCard Card { get; set; } = default!;
+}

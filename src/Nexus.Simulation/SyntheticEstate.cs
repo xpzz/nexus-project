@@ -44,7 +44,8 @@ public sealed class SyntheticEstate
             var stale = i % 9 == 0;               // no recent communication
             var invalidSerial = i % 19 == 0;
             var serial = invalidSerial ? InvalidSerials[i % InvalidSerials.Length] : $"SN{random.Next(100000, 999999)}{i:D4}";
-            var os = isServer ? "Microsoft Windows Server 2022 Datacenter" : "Microsoft Windows 11 Enterprise";
+            var win10 = !isServer && i % 6 == 0;          // still on Windows 10 (out of support)
+            var os = isServer ? "Microsoft Windows Server 2022 Datacenter" : win10 ? "Microsoft Windows 10 Enterprise" : "Microsoft Windows 11 Enterprise";
             var (maker, models) = Hardware[i % Hardware.Length];
             var model = models[i % models.Length];
             var lastActive = stale ? start.AddDays(-random.Next(60, 120)) : start.AddHours(-random.Next(1, 72));
@@ -77,7 +78,7 @@ public sealed class SyntheticEstate
                     : i % 2 == 0 ? "configurationManagerClientMdm" : "mdm";
                 IntuneDevices.Add(new IntuneManagedDevice(
                     GuidFrom(seed, i, 4).ToString(), name, aadDeviceId ?? (cloudOnly ? GuidFrom(seed, i, 2) : null), serial, maker, model,
-                    "Windows", "10.0.22631", agent, "windowsAzureADJoin", "company",
+                    "Windows", win10 ? "10.0.19045" : "10.0.22631", agent, "windowsAzureADJoin", "company",
                     stale ? start.AddDays(-random.Next(45, 100)) : start.AddMinutes(-random.Next(5, 2000)),
                     start.AddDays(-random.Next(30, 900)), i % 6 == 0 ? "noncompliant" : "compliant",
                     $"user{i}@corp.azul.sim", GuidFrom(seed, i, 5).ToString()));
@@ -113,6 +114,13 @@ public sealed class SyntheticEstate
                 "Windows", "10.0.19045", "mdm", "windowsAzureADJoin", "company", Now.AddDays(-120), Now.AddDays(-800), "compliant", null, null));
             IntuneDevices.Add(new IntuneManagedDevice("reenroll-new", reenroll.Name, reenrollAad, reenroll.Serial, reenroll.Manufacturer, reenroll.Model,
                 "Windows", "10.0.22631", "mdm", "windowsAzureADJoin", "company", Now.AddHours(-2), Now.AddDays(-30), "compliant", null, null));
+        }
+
+        // External devices registered in Entra ID only (guests and contractors): registered is not managed.
+        for (var x = 0; x < 20; x++)
+        {
+            EntraDevices.Add(new EntraDevice(GuidFrom(seed, 7000 + x, 10).ToString(), GuidFrom(seed, 7000 + x, 11), $"EXT-{x + 1:D3}", "Workplace",
+                Now.AddDays(-random.Next(0, 120)), true, x % 4 == 0 ? "Android" : "Windows", x % 4 == 0 ? "14" : "10.0.22631", "Personal", Now.AddDays(-random.Next(30, 600))));
         }
 
         // Mobile devices only in Intune: 40 corporate and 60 personal (BYOD).

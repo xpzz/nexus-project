@@ -325,8 +325,8 @@ public class InventoryPipelineTests : IDisposable
         Assert.Equal(2, assets.Count(a => a.Name.StartsWith("AZ-VM-CLONE")));
         Assert.Contains(await db.ReviewItems.ToListAsync(), r => r.Kind == "CloneSuspect");
         // 100 mobile devices: 40 corporate and 60 personal.
-        Assert.Equal(60, assets.Count(a => a.Platform is "Android" or "iOS" && a.Ownership == "Personal"));
-        Assert.Equal(40, assets.Count(a => a.Platform is "Android" or "iOS" && a.Ownership == "Corporate"));
+        Assert.Equal(60, assets.Count(a => a.Platform is "Android" or "iOS" && a.Ownership == "Personal" && a.InIntune));
+        Assert.Equal(40, assets.Count(a => a.Platform is "Android" or "iOS" && a.Ownership == "Corporate" && a.InIntune));
         // Tenant attach exists and is not counted as MDM.
         Assert.Contains(assets, a => a.IntuneChannel == "TenantAttach" && a.Coverage != "Both" && a.Coverage != "OnlyIntune");
         // Job states exist for every source and the reconcile job ran.

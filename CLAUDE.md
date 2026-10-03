@@ -41,7 +41,7 @@ dotnet run --project src/Nexus.Web
 - `Nexus.Reconciliation` — ativo único (regras da ADR-0004), KPIs de cobertura e persistência
 - `Nexus.Simulation` — dados sintéticos determinísticos e script do banco SCCM simulado
 - `Nexus.Worker` — serviço Windows: agendador, coletas, verificações (rodam com a conta do serviço), limites de CPU
-- `Nexus.Web` — site no IIS: assistente, saúde, acesso por código de configuração
+- `Nexus.Web` — site (serviço do Windows ou IIS): painel, parque por grupo, BYOD, inventário, dispositivo, pendências, SCCM e Intune; assistente, saúde, acesso por código de configuração. Regras, índice e KPIs em `Nexus.Reconciliation` (`HealthModel`, `Overview`, `InventoryQuery`); regras sem dado coletado aparecem como "Aguardando coleta", nunca como zero
 - `Nexus.Cli` — `nexusctl`
 - `deploy/Install-AzulNexusAzure.ps1` + `lib/Azure.ps1` — Entra ID/Intune: registros, certificados, consentimento, funções (`config/azure.json`, lido por `AzureSettingsStore`)
 - `deploy/` — scripts de publicação, instalação, atualização e remoção no IIS (PowerShell 5.1+; lógica testável em `deploy/lib/Common.ps1`)

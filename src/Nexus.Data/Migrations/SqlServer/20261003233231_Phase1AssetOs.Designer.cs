@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Nexus.Data;
 
@@ -11,9 +12,11 @@ using Nexus.Data;
 namespace Nexus.Data.Migrations.SqlServer
 {
     [DbContext(typeof(SqlServerNexusDbContext))]
-    partial class SqlServerNexusDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261003233231_Phase1AssetOs")]
+    partial class Phase1AssetOs
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

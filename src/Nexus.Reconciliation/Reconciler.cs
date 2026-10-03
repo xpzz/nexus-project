@@ -251,6 +251,8 @@ public static class Reconciler
             EntraTrustType = primaryEntra?.TrustType,
         };
 
+        asset.OperatingSystem = primarySccm?.OperatingSystem ?? primaryIntune?.OperatingSystem ?? primaryEntra?.OperatingSystem ?? primaryAd?.OperatingSystem;
+        asset.OsVersion = primaryIntune?.OsVersion ?? primaryEntra?.OperatingSystemVersion ?? primaryAd?.OperatingSystemVersion;
         asset.Platform = PlatformOf(primaryIntune?.OperatingSystem ?? primarySccm?.OperatingSystem ?? primaryEntra?.OperatingSystem ?? primaryAd?.OperatingSystem);
 
         (asset.Ownership, asset.OwnershipSource) = OwnershipOf(primaryIntune, primaryEntra, asset);
