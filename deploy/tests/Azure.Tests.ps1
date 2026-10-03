@@ -209,7 +209,8 @@ Assert-That 'Validação aponta cada permissão que falta, uma linha por permiss
 Assert-That 'Validação não chama a API das permissões que faltam' { @($badReport | Where-Object { $_.Item -eq 'Chamada: User.Read.All' }).Count -eq 0 }
 
 function Get-AppToken { param($TenantId, $ClientId, $Certificate) throw (New-Object System.Management.Automation.RuntimeException 'x') }
-$errReport = Test-NexusAzureAccess -TenantId 'tenant-1' -ClientId 'c' -Certificate $collectorCert
+# @(): com um único resultado o Windows PowerShell 5.1 devolve o objeto solto (sem Count nem índice).
+$errReport = @(Test-NexusAzureAccess -TenantId 'tenant-1' -ClientId 'c' -Certificate $collectorCert)
 Assert-That 'Falha ao obter o token vira uma linha de falha explicada' { $errReport.Count -eq 1 -and $errReport[0].Status -eq 'Falha' -and $errReport[0].Item -eq 'Token com o certificado' }
 
 # ---------------------------------------------------------------- azure.json
