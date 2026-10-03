@@ -1,0 +1,85 @@
+name: Release
+
+# Publica o pacote de implantação como GitHub Release (download direto, sem login e sem expirar).
+# Roda a cada push na main e manualmente. A tag é v<versão de Directory.Build.props>; o release é
+# recriado a cada execução, portanto sempre aponta para o último commit. Para uma versão nova, suba
+# <Version> em Directory.Build.props.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Testes
+        run: dotnet test AzulNexus.slnx --nologo
+
+      - name: Testes dos scripts de implantação (Windows PowerShell 5.1)
+        shell: powershell
+        run: ./deploy/tests/Common.Tests.ps1
+
+      - name: Baixar o ASP.NET Core Hosting Bundle (instalador oficial da Microsoft)
+        id: bundle
+        shell: pwsh
+        run: |
+          $target = Join-Path $env:RUNNER_TEMP 'dotnet-hosting-win.exe'
+          try {
+            Invoke-WebRequest -Uri 'https://aka.ms/dotnet/10.0/dotnet-hosting-win.exe' -OutFile $target -MaximumRedirection 10
+            $signature = Get-AuthenticodeSignature $target
+            $sizeMb = [math]::Round((Get-Item $target).Length / 1MB, 1)
+            if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notlike '*Microsoft*' -or $sizeMb -lt 20) {
+              throw "Arquivo inesperado (assinatura: $($signature.Status), $sizeMb MB)."
+            }
+            "path=$target" >> $env:GITHUB_OUTPUT
+            "Hosting Bundle incluído: $sizeMb MB, assinado por $($signature.SignerCertificate.Subject)"
+          } catch {
+            "::warning::Hosting Bundle não incluído no pacote: $($_.Exception.Message). O tutorial orienta o download manual."
+          }
+
+      - name: Gerar o pacote
+        shell: pwsh
+        run: |
+          $arguments = @{}
+          if ('${{ steps.bundle.outputs.path }}') { $arguments['HostingBundlePath'] = '${{ steps.bundle.outputs.path }}' }
+          ./deploy/Publish-AzulNexus.ps1 @arguments
+
+      - name: Publicar o release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $zip = Get-ChildItem artifacts -Filter 'AzulNexus-*.zip' | Select-Object -First 1
+          $version = (Get-Content (Join-Path ($zip.FullName -replace '\.zip$', '') 'VERSION.txt') -Raw).Trim()
+          $tag = "v$version"
+          $hash = (Get-FileHash $zip.FullName -Algorithm SHA256).Hash
+          $hashFile = "$($zip.FullName).sha256"
+          "$hash  $($zip.Name)" | Set-Content $hashFile -Encoding ASCII
+          $notes = @(
+            "Pacote de implantação do Azul Nexus $version (commit ${{ github.sha }}).",
+            '',
+            "Baixe **$($zip.Name)**, descompacte no servidor e siga o tutorial: docs/guias/tutorial-instalacao-servidor.md.",
+            "Para instalar: duplo clique em **Instalar.cmd**. Para só verificar o ambiente: **Verificar-Ambiente.cmd**.",
+            '',
+            "SHA256: $hash",
+            '',
+            'Pré-lançamento: ainda não foi executado em um Windows Server real.'
+          ) -join "`n"
+          gh release delete $tag --cleanup-tag --yes 2>$null
+          $global:LASTEXITCODE = 0
+          gh release create $tag $zip.FullName $hashFile --title "Azul Nexus $version" --notes $notes --prerelease --target ${{ github.sha }}
+          if ($LASTEXITCODE -ne 0) { throw 'Falha ao criar o release.' }

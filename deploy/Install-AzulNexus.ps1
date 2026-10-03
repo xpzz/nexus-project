@@ -268,6 +268,8 @@ function Test-Environment {
         $checks.Add((New-Check 'ASP.NET Core Hosting Bundle' 'OK' "Módulo do IIS e runtime $($runtime.Name) presentes."))
     } elseif ($HostingBundleInstaller -and $AllowIisRestart) {
         $checks.Add((New-Check 'ASP.NET Core Hosting Bundle' 'Atenção' 'Ausente; será instalado de forma silenciosa e o IIS será reiniciado (autorizado por -AllowIisRestart).'))
+    } elseif ($HostingBundleInstaller) {
+        $checks.Add((New-Check 'ASP.NET Core Hosting Bundle' 'Bloqueio' 'Hosting Bundle ausente. Há um instalador no pacote, mas instalá-lo reinicia o IIS e, em servidor de site do SCCM, interrompe por instantes o management point e o distribution point.' 'Em janela de manutenção, rode com -AllowIisRestart (o instalador do pacote será usado), ou use o Instalar.cmd e responda S.'))
     } else {
         $checks.Add((New-Check 'ASP.NET Core Hosting Bundle' 'Bloqueio' 'ASP.NET Core 10 Hosting Bundle ausente. A instalação reinicia o IIS e, em servidor de site do SCCM, interrompe por instantes o management point e o distribution point.' 'Instale o Hosting Bundle 10.x em janela de manutenção, ou rode este script com -HostingBundleInstaller <caminho do dotnet-hosting-10.x-win.exe> -AllowIisRestart.'))
     }
@@ -675,6 +677,10 @@ public static class NexusLocalProbe
 #endregion
 
 function Invoke-Install {
+    if (-not $HostingBundleInstaller) {
+        $bundled = Get-ChildItem (Join-Path $script:PackageRoot 'prereq') -Filter 'dotnet-hosting*.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($bundled) { $script:HostingBundleInstaller = $bundled.FullName }
+    }
     $answersPath = if ($Answers) { $Answers } else { Join-Path $PSScriptRoot 'install.json' }
     if (-not (Test-Path $answersPath)) {
         Stop-Install -ExitCode $script:ExitCodes.PrerequisiteBlocked -WhatHappened "Arquivo de respostas não encontrado: $answersPath." -Impact 'Não há como saber o banco e as demais escolhas.' -HowToFix 'Copie install.sample.json para install.json, ajuste database.server e rode de novo (ou use -Answers <arquivo>).'
