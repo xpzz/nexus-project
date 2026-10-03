@@ -7,6 +7,17 @@ Para um servidor que **não tem Git, .NET SDK nem nada instalado**. Você só pr
 
 ---
 
+## Como o site roda: serviço do Windows (padrão) ou IIS
+
+O instalador tem dois modos de hospedar o site, escolhidos em `"hosting"` no `install.json`:
+
+| Modo | O que é | O que exige | Quando usar |
+|---|---|---|---|
+| `"service"` (**padrão**) | O site roda como **serviço do Windows** (`AzulNexus.Web`, Kestrel, HTTPS direto), na mesma conta do Worker | Só o direito **"Fazer logon como serviço"**. **Não precisa de IIS, de Hosting Bundle nem de reiniciar o IIS** | Servidor de site do SCCM, ou onde a GPO não libera o logon "em lote" |
+| `"iis"` | O site roda em um **pool do IIS** | IIS com WebSockets, Hosting Bundle (reinicia o IIS) e o direito **"Fazer logon como trabalho em lote"** para a conta do pool | Quando a empresa exige IIS |
+
+Nas etapas abaixo, **IIS e Hosting Bundle (etapas 2 e 3) só valem para o modo `iis`**.
+
 ## Etapa 0 — O que você vai precisar (checklist)
 
 | Item | Quem fornece | Observação |
@@ -47,7 +58,7 @@ Get-ChildItem C:\Instalacao\AzulNexus                  # deve mostrar: Instalar.
 
 > Se a sua empresa bloqueia scripts por GPO, peça à segurança para liberar a pasta `C:\Instalacao` ou assine os scripts (`Publish-AzulNexus.ps1 -CodeSigningThumbprint`).
 
-### IIS
+### IIS (somente no modo `iis`)
 
 Servidores de site do SCCM com management point ou distribution point já têm o IIS. Para conferir e completar o que faltar (não reinicia o IIS):
 
@@ -57,7 +68,7 @@ Install-WindowsFeature Web-Server, Web-WebSockets, Web-Scripting-Tools, Web-Mgmt
 
 ---
 
-## Etapa 3 — Hosting Bundle
+## Etapa 3 — Hosting Bundle (somente no modo `iis`)
 
 O Nexus precisa do **ASP.NET Core 10 Hosting Bundle** no servidor. Instalá-lo **reinicia o IIS**: em servidor de site do SCCM, interrompe por instantes o management point e o distribution point, então faça em **janela de manutenção**.
 
@@ -139,6 +150,7 @@ Ajuste **apenas o que for necessário**. Exemplo mínimo (SQL Server, tudo local
 
 ```json
 {
+  "hosting": "service",
   "installDir": "auto",
   "dataDir": "auto",
   "iis": { "siteName": "Azul Nexus", "appPoolName": "AzulNexus", "port": 8443, "hostName": "nexus.suaempresa.local", "certificate": "auto", "openFirewall": true },
@@ -235,6 +247,9 @@ C:\"Program Files"\"Azul Nexus"\deploy\Uninstall-AzulNexus.ps1 -RemoveData # apa
 | `... is not digitally signed` / aviso de segurança ao abrir | Rode o `Unblock-File` da etapa 2 |
 | Saiu com código **10** | Nenhuma alteração foi feita. Leia as linhas `Bloqueio` e o "Como resolver" |
 | Saiu com código **20** | Houve falha e o script desfez o que fez. O motivo está no console e no log (`<dados>\logs\install-*.log`). Corrija e rode de novo (é seguro repetir) |
+| Pool `AzulNexus` **parado** / site HTTP **503**, sem log do site | Quase sempre é o **logon da conta `svc.sccm` como trabalho em lote**, que o pool do IIS exige e que GPO de domínio costuma restringir (o Worker, que usa "como serviço", pode subir normalmente). O instalador agora **testa o logon** e explica; para corrigir: `secpol.msc` › Diretivas Locais › Atribuição de Direitos de Usuário › **Fazer logon como um trabalho em lote** (incluir a conta) e **Negar logon como um trabalho em lote** (a conta não pode estar). Se vier de GPO (`gpresult /h gpo.html`), peça ao AD para ajustar. Outras causas aparecem no Log de Eventos **System** (origem **WAS**, IDs 5057 e 5059) |
+| Saiu com código **30** | A instalação foi **mantida**; o site não passou na verificação. Abra o log (`<dados>\logs\install-*.log`) e veja o bloco **Diagnóstico do site** (estado do pool, últimas linhas do log do site e erros do Log de Eventos). Pool parado costuma ser senha da conta recusada |
+| O serviço **AzulNexus.Web** não inicia ou cai (modo `service`) | Veja `<dados>\logs\web-*.json` (o motivo é registrado como erro fatal) e o Log de Eventos **System** (origem *Service Control Manager*, IDs 7000, 7041 = logon recusado; 7034 = o serviço caiu). Causas comuns: certificado sem permissão de leitura da chave (certlm.msc › Gerenciar Chaves Privadas), porta em uso, senha da conta recusada |
 | Site responde **500.19** ou **502** | Hosting Bundle ausente ou o pool sem acesso. Rode `iisreset` e depois o instalador de novo (ele repara) |
 | `/healthz` mostra `database-unreachable` | A conta do site não tem login no banco: aplique `nexus-db-grant.sql` e rode `Restart-WebAppPool AzulNexus` |
 | Aviso de certificado no navegador | Certificado autoassinado, ou o nome acessado é diferente do certificado |

@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     Layout do pacote:
-      web\     site para o IIS (framework-dependent, exige o ASP.NET Core 10 Hosting Bundle no servidor)
+      web\     site (self-contained): serviço do Windows com Kestrel (padrão) ou IIS in-process (exige o Hosting Bundle)
       app\     AzulNexus.Worker.exe e nexusctl.exe (self-contained: não exigem runtime instalado)
       deploy\  Install-AzulNexus.ps1, Uninstall-AzulNexus.ps1, lib\, install.sample.json
       docs\    guias
@@ -51,7 +51,8 @@ function Invoke-Publish {
     if ($LASTEXITCODE -ne 0) { throw "dotnet publish falhou para $Project (código $LASTEXITCODE)." }
 }
 
-Invoke-Publish -Project 'Nexus.Web' -Output (Join-Path $package 'web') -SelfContained $false
+# Self-contained: o modo "service" não precisa de runtime nem de Hosting Bundle (o modo "iis" ainda precisa do módulo do IIS).
+Invoke-Publish -Project 'Nexus.Web' -Output (Join-Path $package 'web') -SelfContained $true
 Invoke-Publish -Project 'Nexus.Worker' -Output (Join-Path $package 'app') -SelfContained $true
 Invoke-Publish -Project 'Nexus.Cli' -Output (Join-Path $package 'app') -SelfContained $true
 

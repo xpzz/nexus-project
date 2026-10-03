@@ -49,13 +49,15 @@ Parâmetros úteis: `-Answers <arquivo>`, `-HostingBundleInstaller <exe> -AllowI
 | 3010 | Reinício necessário |
 | 10 | Bloqueio de pré-requisito (nada foi alterado) |
 | 20 | Falha, com desfazer concluído |
+| 30 | Instalado, mas o site não passou na verificação (`/healthz`): **nada é desfeito**, e o diagnóstico (estado do pool e do site, últimas linhas do log do site, erros do Log de Eventos) é gravado no log da instalação |
 
 ### Arquivo de respostas (`install.json`)
 
 | Campo | Padrão | Observação |
 |---|---|---|
 | `installDir` / `dataDir` | `auto` | Programas em `Program Files\Azul Nexus`; dados no maior volume fora do SO (`<vol>\AzulNexus`), senão `ProgramData` |
-| `iis.siteName`, `iis.appPoolName` | `Azul Nexus`, `AzulNexus` | Site e pool exclusivos; sites do SCCM não são tocados |
+| `hosting` | `service` | **`service`**: o site roda como serviço do Windows (Kestrel, HTTPS direto), sem IIS, sem Hosting Bundle e sem o direito de logon em lote (só "como serviço"). **`iis`**: pool do IIS (exige IIS, Hosting Bundle e logon em lote). A porta e o certificado vêm de `iis.port` e `iis.certificate` nos dois modos |
+| `iis.siteName`, `iis.appPoolName` | (só modo `iis`) | `Azul Nexus`, `AzulNexus` | Site e pool exclusivos; sites do SCCM não são tocados |
 | `iis.port` | `8443` | Portas 80, 443, 8530, 8531 e 10123 são recusadas |
 | `iis.hostName` | `auto` | FQDN do servidor |
 | `iis.certificate` | `auto` | `auto` escolhe o melhor certificado; ou informe o thumbprint; `self-signed` só em piloto |

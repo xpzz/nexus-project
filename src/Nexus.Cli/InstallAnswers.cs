@@ -15,6 +15,9 @@ public sealed class InstallAnswers
     public InstallActiveDirectory ActiveDirectory { get; set; } = new();
     public CollectionSettings? Collection { get; set; }
     public string? PublicUrl { get; set; }
+    public string? Hosting { get; set; }
+    public int? HttpsPort { get; set; }
+    public string? CertificateThumbprint { get; set; }
     public bool DemoMode { get; set; }
 
     public sealed class InstallDatabase
@@ -67,6 +70,21 @@ public sealed class InstallAnswers
         if (!string.IsNullOrWhiteSpace(PublicUrl))
         {
             current.Web.PublicUrl = PublicUrl;
+        }
+
+        if (Hosting is "service" or "iis")
+        {
+            current.Web.Hosting = Hosting;
+        }
+
+        if (HttpsPort is > 0)
+        {
+            current.Web.HttpsPort = HttpsPort.Value;
+        }
+
+        if (!string.IsNullOrWhiteSpace(CertificateThumbprint))
+        {
+            current.Web.CertificateThumbprint = CertificateThumbprint;
         }
 
         current.DemoMode = DemoMode;

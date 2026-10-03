@@ -1,4 +1,5 @@
 {
+  "hosting": "service",
   "installDir": "auto",
   "dataDir": "auto",
   "iis": {

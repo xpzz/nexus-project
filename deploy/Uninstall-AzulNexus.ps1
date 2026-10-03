@@ -65,12 +65,14 @@ try {
         '- Banco do Nexus no servidor SQL/PostgreSQL, se não for mais necessário.'
     )
 
-    if (Get-Service -Name 'AzulNexus.Worker' -ErrorAction SilentlyContinue) {
-        Write-Log 'Removendo o serviço AzulNexus.Worker...'
-        Stop-Service -Name 'AzulNexus.Worker' -Force -ErrorAction SilentlyContinue
-        $service = Get-Service -Name 'AzulNexus.Worker' -ErrorAction SilentlyContinue
-        if ($service) { try { $service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(60)) } catch { } }
-        & sc.exe delete 'AzulNexus.Worker' | Out-Null
+    foreach ($serviceName in 'AzulNexus.Web', 'AzulNexus.Worker') {
+        if (Get-Service -Name $serviceName -ErrorAction SilentlyContinue) {
+            Write-Log "Removendo o serviço $serviceName..."
+            Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
+            $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+            if ($service) { try { $service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(60)) } catch { } }
+            & sc.exe delete $serviceName | Out-Null
+        }
     }
 
     if (Test-Path 'HKLM:\SOFTWARE\Microsoft\InetStp') {
@@ -109,7 +111,7 @@ try {
         Remove-Item 'HKLM:\SOFTWARE\Azul\Nexus' -Recurse -Force
     } else {
         # Mantém DataDir no registro para que uma reinstalação reencontre os dados.
-        Remove-ItemProperty -Path 'HKLM:\SOFTWARE\Azul\Nexus' -Name 'InstallDir', 'Version', 'SiteName', 'AppPoolName', 'Url' -ErrorAction SilentlyContinue
+        Remove-ItemProperty -Path 'HKLM:\SOFTWARE\Azul\Nexus' -Name 'InstallDir', 'Version', 'SiteName', 'AppPoolName', 'Url', 'Hosting' -ErrorAction SilentlyContinue
         Write-Log "Dados preservados em $dataDir (configuração, logs, chaves, backups e scripts)." 
     }
     Write-Log 'Remoção concluída. Itens fora do servidor: veja scripts\entra-limpeza.txt e scripts\sccm-revoke.sql.' 'STEP'

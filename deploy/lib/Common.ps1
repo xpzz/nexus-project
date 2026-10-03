@@ -7,6 +7,7 @@ $script:ExitCodes = @{
     RebootRequired      = 3010
     PrerequisiteBlocked = 10
     FailedRolledBack    = 20
+    InstalledNotHealthy = 30
 }
 
 # Portas que o Nexus nunca deve usar: SCCM (management point / distribution point), WSUS e sites padrão.
@@ -73,6 +74,73 @@ function Invoke-Native {
             -HowToFix 'Corrija a causa indicada e rode o script de novo; ele é idempotente.'
     }
     return [pscustomobject]@{ ExitCode = $code; Output = $output }
+}
+
+# Interpreta a resposta (ou a falta dela) do /healthz do site e diz, em português, o que aconteceu e como resolver.
+function Resolve-HealthProbe {
+    param($StatusCode, [string]$Body, [string]$ErrorText)
+    $status = $null
+    if ($Body -match '"status"\s*:\s*"([^"]+)"') { $status = $Matches[1] }
+
+    if ($StatusCode -eq 200 -and $status -eq 'ok') {
+        return [pscustomobject]@{ Ok = $true; Summary = 'O site respondeu e o banco está na versão atual.'; HowToFix = '' }
+    }
+    if ($status -eq 'database-unreachable') {
+        return [pscustomobject]@{ Ok = $false
+            Summary = 'O site subiu, mas não consegue conectar ao banco do Nexus.'
+            HowToFix = 'Confirme que a conta dos serviços (svc.sccm) tem acesso ao banco do Nexus (db_datareader e db_datawriter) e que o servidor SQL está acessível. Depois: Restart-WebAppPool AzulNexus.' }
+    }
+    if ($status -eq 'migrations-pending') {
+        return [pscustomobject]@{ Ok = $false
+            Summary = 'O site subiu, mas as tabelas do banco do Nexus estão desatualizadas.'
+            HowToFix = 'Rode "nexusctl migrate" como administrador (ou aplique o script de <dados>\scripts\nexus-db-migrations.sql).' }
+    }
+    if ($status -eq 'unconfigured') {
+        return [pscustomobject]@{ Ok = $false
+            Summary = 'O site subiu, mas não encontrou a configuração (nexus.json).'
+            HowToFix = 'Confirme que a conta do pool tem leitura em <dados>\config e rode o instalador de novo.' }
+    }
+    if ($null -ne $StatusCode) {
+        $code = [int]$StatusCode
+        if ($code -eq 404) {
+            return [pscustomobject]@{ Ok = $false
+                Summary = 'O IIS respondeu 404: o endereço não bate com o site do Nexus.'
+                HowToFix = 'Confira o nome em iis.hostName e o binding HTTPS do site no Gerenciador do IIS.' }
+        }
+        if ($code -ge 500) {
+            return [pscustomobject]@{ Ok = $false
+                Summary = "O IIS respondeu HTTP ${code}: o aplicativo do Nexus não iniciou."
+                HowToFix = 'Veja o estado do pool AzulNexus (parado = senha da conta recusada ou conta sem permissão), o Log de Eventos (Application: IIS AspNetCore Module V2 e .NET Runtime) e <dados>\logs\web-*.json.' }
+        }
+        return [pscustomobject]@{ Ok = $false
+            Summary = "O site respondeu HTTP $code, resposta inesperada do /healthz."
+            HowToFix = 'Veja <dados>\logs\web-*.json e o Log de Eventos.' }
+    }
+    $detail = if ($ErrorText) { $ErrorText } else { 'sem resposta' }
+    return [pscustomobject]@{ Ok = $false
+        Summary = "Não foi possível conectar ao site por HTTPS ($detail)."
+        HowToFix = 'Confirme que o site e o pool estão iniciados, que há certificado no binding da porta e que o servidor aceita TLS 1.2. Veja o diagnóstico abaixo.' }
+}
+
+# Traduz o código de erro do LogonUser (Win32) para o que aconteceu e como resolver.
+# Batch = logon "como trabalho em lote" (exigido pelo pool do IIS); Service = "como serviço" (Worker).
+function Resolve-LogonFailure {
+    param([int]$Code, [ValidateSet('Batch', 'Service')][string]$LogonType, [string]$Account)
+    $what = if ($LogonType -eq 'Batch') { 'fazer logon como trabalho em lote (direito exigido pelo pool do IIS)' } else { 'fazer logon como serviço (direito exigido pelo Worker)' }
+    $policy = if ($LogonType -eq 'Batch') { "'Fazer logon como um trabalho em lote' (Log on as a batch job)" } else { "'Fazer logon como um serviço' (Log on as a service)" }
+    $deny = if ($LogonType -eq 'Batch') { "'Negar logon como um trabalho em lote'" } else { "'Negar logon como um serviço'" }
+    switch ($Code) {
+        1385 { return [pscustomobject]@{ Definitive = $true
+            Summary = "A conta $Account não tem permissão para $what neste servidor (erro 1385)."
+            HowToFix = "No servidor, abra secpol.msc › Diretivas Locais › Atribuição de Direitos de Usuário: inclua a conta em $policy e confirme que ela NÃO está em $deny. Se essas diretivas vêm de GPO (gpresult /h gpo.html), a concessão local é sobrescrita: peça à equipe de AD para ajustar a GPO." } }
+        1326 { return [pscustomobject]@{ Definitive = $true; Summary = "Usuário ou senha incorretos para $Account (erro 1326)."; HowToFix = 'Confira a senha da conta e rode o instalador de novo.' } }
+        1330 { return [pscustomobject]@{ Definitive = $true; Summary = "A senha da conta $Account expirou (erro 1330)."; HowToFix = 'Redefina a senha da conta no AD e rode o instalador de novo.' } }
+        1331 { return [pscustomobject]@{ Definitive = $true; Summary = "A conta $Account está desabilitada (erro 1331)."; HowToFix = 'Habilite a conta no AD e rode o instalador de novo.' } }
+        1909 { return [pscustomobject]@{ Definitive = $true; Summary = "A conta $Account está bloqueada (erro 1909)."; HowToFix = 'Desbloqueie a conta no AD (verifique se algum serviço antigo usa a senha errada) e rode o instalador de novo.' } }
+        default { return [pscustomobject]@{ Definitive = $false
+            Summary = "Não foi possível confirmar o logon de $Account para $what (erro Win32 $Code)."
+            HowToFix = 'Veja o Log de Eventos (System, origem WAS) depois da instalação para o motivo exato.' } }
+    }
 }
 
 function New-Check {
@@ -215,6 +283,7 @@ function Resolve-ServiceAccounts {
         [string]$WebGmsa,
         [string]$WorkerGmsa,
         [Parameter(Mandatory)][string]$PoolName,
+        [ValidateSet('service', 'iis')][string]$WebHosting = 'service',
         [string]$Provider,
         [string]$NexusDbServer,
         [string]$SccmSqlServer,
@@ -249,7 +318,7 @@ function Resolve-ServiceAccounts {
         Account       = $null
         WebGmsa       = $WebGmsa
         WorkerGmsa    = $WorkerGmsa
-        WebAccount    = if ($WebGmsa) { $WebGmsa } else { "IIS APPPOOL\$PoolName" }
+        WebAccount    = if ($WebGmsa) { $WebGmsa } elseif ($WebHosting -eq 'iis') { "IIS APPPOOL\$PoolName" } else { 'NT SERVICE\AzulNexus.Web' }
         WorkerAccount = if ($WorkerGmsa) { $WorkerGmsa } else { 'NT SERVICE\AzulNexus.Worker' }
         Problems      = $problems
     }
@@ -288,6 +357,9 @@ function ConvertTo-ResolvedInstallFile {
             useLdaps    = [bool]$Context.ActiveDirectory.UseLdaps
         }
         publicUrl       = $Context.PublicUrl
+        hosting         = $Context.Hosting
+        httpsPort       = [int]$Context.Iis.Port
+        certificateThumbprint = $Context.Iis.Thumbprint
         demoMode        = [bool]$Context.DemoMode
     }
     if ($Context.Collection) { $resolved['collection'] = $Context.Collection }

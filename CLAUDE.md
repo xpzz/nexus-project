@@ -1,6 +1,6 @@
 # Azul Nexus — guia para o Claude Code
 
-Especificação: `docs/SPEC.md`. Decisões: `docs/adr/` (a ADR-0001 troca o instalador por `dotnet publish` + IIS).
+Especificação: `docs/SPEC.md`. Decisões: `docs/adr/` (ADR-0001: sem instalador, `dotnet publish`; ADR-0002: conta única; ADR-0003: site como serviço do Windows por padrão, IIS opcional).
 Código e identificadores em inglês; interface, mensagens e documentação em português do Brasil.
 Toda mensagem de erro: o que aconteceu, impacto e como resolver (`Nexus.Core.Errors.ErrorCatalog`).
 Nunca conectar a SCCM, Intune, Entra ID ou AD reais: use o modo simulado (`SourceMode.Simulated`, `Nexus.Simulation`).
