@@ -13,17 +13,7 @@
 <body>
     <Routes />
     <script src="_framework/blazor.web.js"></script>
-    <script>
-        document.addEventListener('click', function (e) {
-            var row = e.target.closest('tr[data-href]');
-            if (row && !e.target.closest('a')) { var go = row.dataset.href; if (window.Blazor && Blazor.navigateTo) Blazor.navigateTo(go); else location.href = go; return; }
-        });
-    </script>
-    <script>
-        document.addEventListener('change', function (e) {
-            if (e.target.matches('select[data-auto]') && e.target.form) e.target.form.submit();
-        });
-    </script>
+    <script src="@Assets["app.js"]"></script>
 </body>
 </html>
 

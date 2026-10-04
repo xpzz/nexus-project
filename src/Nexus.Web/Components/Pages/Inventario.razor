@@ -136,8 +136,8 @@
 
 <div class="pager">
     <span>@(_rows.Count == 0 ? 0 : _skip + 1)–@Math.Min(_rows.Count, _skip + _q.PageSize) de @Fmt.Number(_rows.Count)</span>
-    @if (_skip == 0) { <span class="button off">Anterior</span> } else { <a class="button" href="@_q.With("pagina", (_skip / _q.PageSize - 1).ToString()).Url()">Anterior</a> }
-    @if (_skip + _q.PageSize >= _rows.Count) { <span class="button off">Próxima</span> } else { <a class="button" href="@_q.With("pagina", (_skip / _q.PageSize + 1).ToString()).Url()">Próxima</a> }
+    @if (_skip == 0) { <span class="button off" aria-disabled="true">Anterior</span> } else { <a class="button" href="@_q.With("pagina", (_skip / _q.PageSize - 1).ToString()).Url()">Anterior</a> }
+    @if (_skip + _q.PageSize >= _rows.Count) { <span class="button off" aria-disabled="true">Próxima</span> } else { <a class="button" href="@_q.With("pagina", (_skip / _q.PageSize + 1).ToString()).Url()">Próxima</a> }
 </div>
 
 @code {

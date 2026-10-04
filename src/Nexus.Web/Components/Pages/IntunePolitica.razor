@@ -50,8 +50,8 @@ else
         </tbody></table></div>
         <div class="pager">
             <span>@(_total == 0 ? 0 : Pagina * 25 + 1)–@Math.Min(_total, Pagina * 25 + 25) de @Fmt.Number(_total)</span>
-            @if (Pagina <= 0) { <span class="button" style="opacity:.5">Anterior</span> } else { <a class="button" href="@Self(Estado, Pagina - 1)">Anterior</a> }
-            @if ((Pagina + 1) * 25 >= _total) { <span class="button" style="opacity:.5">Próxima</span> } else { <a class="button" href="@Self(Estado, Pagina + 1)">Próxima</a> }
+            @if (Pagina <= 0) { <span class="button off" aria-disabled="true">Anterior</span> } else { <a class="button" href="@Self(Estado, Pagina - 1)">Anterior</a> }
+            @if ((Pagina + 1) * 25 >= _total) { <span class="button off" aria-disabled="true">Próxima</span> } else { <a class="button" href="@Self(Estado, Pagina + 1)">Próxima</a> }
         </div>
     }
     else

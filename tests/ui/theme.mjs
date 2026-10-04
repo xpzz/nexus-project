@@ -14,7 +14,7 @@ await p.emulateMedia({ colorScheme: 'dark' }); await p.waitForTimeout(200);
 check('sistema acompanha o SO ao mudar para escuro', await bg(p) === dark);
 await p.click('[data-theme-set=dark]'); await p.emulateMedia({ colorScheme: 'light' }); await p.waitForTimeout(200);
 check('escolha explícita escuro vence o SO claro', await bg(p) === dark, await st(p));
-for (const href of ['/inventario', '/comparativo', '/atividade', '/painel']) {
+for (const href of ['/inventario', '/comparativo', '/mam', '/painel']) {
   await p.click(`.nav a[href="${href}"]`); await p.waitForTimeout(1200);
   check('navegação interna mantém escuro ' + href, await bg(p) === dark, await st(p));
 }

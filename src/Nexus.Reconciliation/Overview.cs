@@ -280,6 +280,21 @@ public sealed class InventorySnapshotService(INexusDbFactory dbFactory, TimeProv
     private volatile InventorySnapshot _snapshot = InventorySnapshot.Empty;
     private int _refreshing;
 
+    /// <summary>Reloads now and waits. Used after a change made in the interface (an exception, for example), so the next page already shows it.</summary>
+    public async Task<InventorySnapshot> RefreshAsync(CancellationToken cancellationToken = default)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            _snapshot = await InventorySnapshotLoader.LoadAsync(dbFactory, clock, cancellationToken, policy?.Invoke(), governance?.Invoke());
+            return _snapshot;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
     public async Task<InventorySnapshot> GetAsync(CancellationToken cancellationToken = default)
     {
         var current = _snapshot;

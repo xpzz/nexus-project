@@ -1,9 +1,9 @@
-<div class="stack" role="img" aria-label="@Label">
+<div class="stack" role="@Role" aria-label="@Summary">
     @foreach (var s in Segments.Where(s => s.Count > 0))
     {
         if (s.Href is not null)
         {
-            <a class="seg @s.Css" style="flex:@s.Count" href="@s.Href" title="@s.Label: @s.Count"></a>
+            <a class="seg @s.Css" style="flex:@s.Count" href="@s.Href" title="@s.Label: @s.Count" aria-label="@s.Label: @s.Count"></a>
         }
         else
         {
@@ -33,6 +33,13 @@
 }
 
 @code {
+    /// <summary>A bar with links is a group of links (an image cannot contain interactive content); a plain bar is one image that says what it shows.</summary>
+    private string Role => Segments.Any(x => x.Href is not null && x.Count > 0) ? "group" : "img";
+
+    private string Summary => Segments.Any(x => x.Href is null)
+        ? Label + ": " + string.Join(", ", Segments.Where(x => x.Count > 0).Select(x => x.Label + " " + x.Count))
+        : Label;
+
     [Parameter, EditorRequired] public IReadOnlyList<Seg> Segments { get; set; } = [];
     [Parameter] public string Label { get; set; } = "Distribuição";
     [Parameter] public bool ShowLegend { get; set; } = true;

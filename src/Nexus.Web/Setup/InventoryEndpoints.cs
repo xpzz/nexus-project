@@ -59,7 +59,7 @@ public static class InventoryEndpoints
         });
 
         // Approved exceptions: the gap stays visible, marked as excepted with its reason and an expiry. Needs the analyst role.
-        app.MapPost("/mam/excecoes", async (HttpContext http, CurrentAccess access, INexusDbFactory dbFactory, TimeProvider clock, CancellationToken ct) =>
+        app.MapPost("/mam/excecoes", async (HttpContext http, CurrentAccess access, INexusDbFactory dbFactory, InventorySnapshotService inventory, TimeProvider clock, CancellationToken ct) =>
         {
             if (!access.CanAnalyze)
             {
@@ -82,10 +82,11 @@ public static class InventoryEndpoints
             });
             Audit.Record(db, access.Actor, "exception.created", $"{control} para {(name.Length > 0 ? name : id)} por {days} dias: {reason}");
             await db.SaveChangesAsync(ct);
+            await inventory.RefreshAsync(ct);
             return Results.Redirect("/mam#excecoes");
         });
 
-        app.MapPost("/mam/excecoes/{id:long}/revogar", async (long id, CurrentAccess access, INexusDbFactory dbFactory, CancellationToken ct) =>
+        app.MapPost("/mam/excecoes/{id:long}/revogar", async (long id, CurrentAccess access, INexusDbFactory dbFactory, InventorySnapshotService inventory, CancellationToken ct) =>
         {
             if (!access.CanAnalyze)
             {
@@ -102,6 +103,7 @@ public static class InventoryEndpoints
             exception.Active = false;
             Audit.Record(db, access.Actor, "exception.revoked", $"{exception.Control} para {exception.SubjectName}");
             await db.SaveChangesAsync(ct);
+            await inventory.RefreshAsync(ct);
             return Results.Redirect("/mam#excecoes");
         });
 
@@ -192,19 +194,19 @@ public static class InventoryCsv
     public static string Build(IReadOnlyList<AssetView> rows, bool includePersonalData)
     {
         var sb = new StringBuilder();
-        sb.AppendLine(string.Join(";", Header));
+        sb.Append(string.Join(";", Header)).Append("\r\n");
         foreach (var v in rows)
         {
             var a = v.Asset;
             var user = a.Ownership == "Personal" && !includePersonalData ? PersonalData.Mask(a.PrimaryUser) : a.PrimaryUser;
             var sources = string.Join("+", new[] { (a.InSccm, "SCCM"), (a.InIntune, "Intune"), (a.InEntra, "Entra"), (a.InAd, "AD"), (a.InXdr, "XDR"), (a.InNetskope, "Netskope"), (a.HasMam, "MAM") }.Where(x => x.Item1).Select(x => x.Item2));
-            sb.AppendLine(string.Join(";", new[]
+            sb.Append(string.Join(";", new[]
             {
                 a.Id.ToString(), a.Name, AssetTypes.Title(a.AssetType), InventoryQuery.OwnershipOf(v), OperationalStates.Title(a.OperationalState), a.ActivityScore.ToString(CultureInfo.InvariantCulture),
                 a.ActivityExplanation, a.Serial, a.Manufacturer, a.Model, a.OperatingSystem, a.OsVersion, user, a.Department, v.Management, sources,
                 Date(a.SccmLastSeenAt), Date(a.IntuneLastSyncAt), Date(a.XdrLastSeenAt), Date(a.NetskopeLastSeenAt), Date(a.AdLastLogonAt), Date(a.EntraLastSignInAt),
                 a.Confidence switch { "High" => "Alta", "Medium" => "Média", _ => "Baixa" },
-            }.Select(Cell)));
+            }.Select(Cell))).Append("\r\n");
         }
 
         return sb.ToString();
