@@ -29,6 +29,10 @@ public abstract class NexusDbContext(DbContextOptions options) : DbContext(optio
     public DbSet<MamRegistrationRecord> MamRegistrations => Set<MamRegistrationRecord>();
     public DbSet<InstalledSoftwareRecord> InstalledSoftware => Set<InstalledSoftwareRecord>();
     public DbSet<InventoryFetch> InventoryFetches => Set<InventoryFetch>();
+    public DbSet<JobRun> JobRuns => Set<JobRun>();
+    public DbSet<RawRecordVersion> RawRecordVersions => Set<RawRecordVersion>();
+    public DbSet<EvidenceTimelineEntry> EvidenceTimeline => Set<EvidenceTimelineEntry>();
+    public DbSet<AssetChange> AssetChanges => Set<AssetChange>();
 
     protected override void OnModelCreating(ModelBuilder model)
     {
@@ -215,6 +219,45 @@ public abstract class NexusDbContext(DbContextOptions options) : DbContext(optio
             e.Property(x => x.Version).HasMaxLength(128);
             e.Property(x => x.Publisher).HasMaxLength(256);
             e.HasIndex(x => x.AssetId);
+        });
+
+        model.Entity<JobRun>(e =>
+        {
+            e.ToTable("job_runs");
+            e.Property(x => x.Job).HasMaxLength(64);
+            e.Property(x => x.Status).HasMaxLength(32);
+            e.Property(x => x.Message).HasMaxLength(2000);
+            e.HasIndex(x => new { x.Job, x.StartedAt });
+            e.HasIndex(x => x.RunId);
+        });
+
+        model.Entity<RawRecordVersion>(e =>
+        {
+            e.ToTable("raw_record_versions");
+            e.Property(x => x.Source).HasMaxLength(32);
+            e.Property(x => x.SourceKey).HasMaxLength(256);
+            e.Property(x => x.Hash).HasMaxLength(64);
+            e.HasIndex(x => new { x.Source, x.SourceKey, x.IsCurrent });
+            e.HasIndex(x => x.LastSeenAt);
+        });
+
+        model.Entity<EvidenceTimelineEntry>(e =>
+        {
+            e.ToTable("evidence_timeline");
+            e.Property(x => x.Source).HasMaxLength(32);
+            e.HasIndex(x => new { x.AssetId, x.Source, x.ObservedAt });
+            e.HasIndex(x => x.CollectedAt);
+        });
+
+        model.Entity<AssetChange>(e =>
+        {
+            e.ToTable("asset_changes");
+            e.Property(x => x.AssetName).HasMaxLength(256);
+            e.Property(x => x.Field).HasMaxLength(64);
+            e.Property(x => x.OldValue).HasMaxLength(512);
+            e.Property(x => x.NewValue).HasMaxLength(512);
+            e.HasIndex(x => new { x.AssetId, x.At });
+            e.HasIndex(x => x.At);
         });
 
         model.Entity<InventoryFetch>(e =>

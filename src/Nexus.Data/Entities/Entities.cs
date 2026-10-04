@@ -429,6 +429,23 @@ public sealed class Asset
     /// <summary>Signals that counted, as JSON: key, label, date, tier and probability.</summary>
     public string? EvidenceJson { get; set; }
     public bool DecommissionCandidate { get; set; }
+    public string? Fqdn { get; set; }
+    /// <summary>Hardware (BIOS) UUID as reported by SCCM.</summary>
+    public string? Uuid { get; set; }
+    /// <summary>IP addresses known across tools, separated by commas.</summary>
+    public string? IpAddresses { get; set; }
+    /// <summary>MAC addresses known across tools, separated by commas (supporting evidence only: never joins records on its own).</summary>
+    public string? MacAddresses { get; set; }
+    /// <summary>Last interactive user the tools know (SCCM console usage or the Intune primary user).</summary>
+    public string? LastUser { get; set; }
+    public DateTimeOffset? SccmLastDdrAt { get; set; }
+    public DateTimeOffset? SccmLastSwScanAt { get; set; }
+    /// <summary>Intune enrollment type as Graph reports it (for example androidEnterprisePersonallyOwnedWorkProfile, userEnrollment).</summary>
+    public string? IntuneEnrollmentType { get; set; }
+    /// <summary>Intune managed device owner type: company or personal.</summary>
+    public string? IntuneOwnerType { get; set; }
+    public string? IntuneRegistrationState { get; set; }
+    public bool? IntuneSupervised { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }
 
@@ -453,4 +470,64 @@ public sealed class ReviewItem
     public string Detail { get; set; } = "";
     public string? Sources { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
+}
+
+/// <summary>One run of a collection job, kept for the operations page and for tracing a result back to a Run ID.</summary>
+public sealed class JobRun
+{
+    public long Id { get; set; }
+    public Guid RunId { get; set; }
+    public string Job { get; set; } = "";
+    public DateTimeOffset StartedAt { get; set; }
+    public DateTimeOffset CompletedAt { get; set; }
+    public string Status { get; set; } = "";
+    public int? Records { get; set; }
+    public int DurationMs { get; set; }
+    /// <summary>What happened, how it affects the data and how to fix it (never a token or a connection string).</summary>
+    public string? Message { get; set; }
+}
+
+/// <summary>
+/// A version of a source record. The raw tables hold the latest snapshot and are replaced on every collection; this table keeps what each source
+/// said and when it changed, so a classification can be explained later. A new version is written only when the payload changes (volatile
+/// dates such as last sync are left out of the comparison: they live in <see cref="EvidenceTimelineEntry"/>).
+/// </summary>
+public sealed class RawRecordVersion
+{
+    public long Id { get; set; }
+    public string Source { get; set; } = "";
+    public string SourceKey { get; set; } = "";
+    public string PayloadJson { get; set; } = "";
+    public string Hash { get; set; } = "";
+    public DateTimeOffset FirstSeenAt { get; set; }
+    /// <summary>Last collection that still returned this exact payload.</summary>
+    public DateTimeOffset LastSeenAt { get; set; }
+    public bool IsCurrent { get; set; }
+    /// <summary>Set when the source stopped returning the record.</summary>
+    public DateTimeOffset? RemovedAt { get; set; }
+    public Guid RunId { get; set; }
+}
+
+/// <summary>The last-report date each tool gave for an asset, one row per change (at most one per source and device per day).</summary>
+public sealed class EvidenceTimelineEntry
+{
+    public long Id { get; set; }
+    public Guid AssetId { get; set; }
+    public string Source { get; set; } = "";
+    public DateTimeOffset ObservedAt { get; set; }
+    public DateTimeOffset CollectedAt { get; set; }
+}
+
+/// <summary>A relevant change in a consolidated asset between two reconciliations (state, type, owner, management, identity).</summary>
+public sealed class AssetChange
+{
+    public long Id { get; set; }
+    public Guid AssetId { get; set; }
+    public string AssetName { get; set; } = "";
+    public DateTimeOffset At { get; set; }
+    /// <summary>Field name, or Created / Removed.</summary>
+    public string Field { get; set; } = "";
+    public string? OldValue { get; set; }
+    public string? NewValue { get; set; }
+    public Guid RunId { get; set; }
 }

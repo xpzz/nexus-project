@@ -335,6 +335,40 @@ public class InventoryPipelineTests : IDisposable
     }
 
     [Fact]
+    public async Task CollectionsKeepHistoryAndTheEngineClassifiesEveryAsset()
+    {
+        await CollectAllAsync();
+        await using var db = _db.Create();
+        foreach (var source in new[] { "sccm", "ad", "intune", "entra", "xdr", "netskope", "mam", "entra-user" })
+        {
+            Assert.True(await db.RawRecordVersions.AnyAsync(v => v.Source == source && v.IsCurrent), $"sem versões de {source}");
+        }
+
+        var runs = await db.JobRuns.ToListAsync();
+        Assert.All(JobNames.All, name => Assert.Contains(runs, r => r.Job == name && r.Status == JobRunner.StatusSucceeded));
+        Assert.All(runs, r => Assert.NotEqual(Guid.Empty, r.RunId));
+
+        var assets = await db.Assets.ToListAsync();
+        Assert.All(assets, a =>
+        {
+            Assert.Contains(a.OperationalState, OperationalStates.All);
+            Assert.False(string.IsNullOrWhiteSpace(a.ActivityExplanation));
+        });
+        Assert.Contains(assets, a => a.OperationalState == OperationalStates.Confirmed);
+        Assert.Contains(assets, a => a.AssetType == AssetTypes.Server);
+        Assert.True(await db.EvidenceTimeline.AnyAsync());
+
+        // The first pass reconciled after every source arrived, so states changed along the way and the history shows it.
+        Assert.True(await db.AssetChanges.AnyAsync(c => c.Field == "OperationalState"));
+
+        var versions = await db.RawRecordVersions.CountAsync();
+        var changes = await db.AssetChanges.CountAsync();
+        await CollectAllAsync();
+        Assert.Equal(versions, await db.RawRecordVersions.CountAsync()); // same payloads: no duplicate versions
+        Assert.Equal(changes, await db.AssetChanges.CountAsync()); // nothing changed: nothing recorded
+    }
+
+    [Fact]
     public async Task ReconcilingTwiceKeepsAssetIdsAndCounts()
     {
         await CollectAllAsync();

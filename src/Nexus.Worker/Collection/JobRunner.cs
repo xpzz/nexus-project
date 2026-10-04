@@ -52,6 +52,9 @@ public sealed class JobRunner(
     private readonly Dictionary<string, SemaphoreSlim> _locks = JobNames.All.ToDictionary(n => n, _ => new SemaphoreSlim(1, 1));
     private bool _slowQueryObserved;
 
+    /// <summary>Run ID of the job being executed; flows to the history tables and the logs.</summary>
+    private static readonly AsyncLocal<Guid> CurrentRunId = new();
+
     public TimeSpan IntervalOf(string job, NexusSettings settings) => job switch
     {
         JobNames.Sccm => TimeSpan.FromMinutes(settings.Collection.SccmIntervalMinutes),
@@ -88,13 +91,16 @@ public sealed class JobRunner(
     {
         var settings = settingsProvider.Current;
         var now = clock.GetUtcNow();
+        var runId = Guid.NewGuid();
+        CurrentRunId.Value = runId;
+        using var scope = logger.BeginScope(new Dictionary<string, object> { ["RunId"] = runId, ["Job"] = job });
 
         var blocked = await gate.CheckAsync(settings.Collection, job == JobNames.Sccm && _slowQueryObserved, cancellationToken);
         if (blocked is not null)
         {
             _slowQueryObserved = false; // one postponement per slow query
             var outcome = new JobOutcome(StatusPostponed, null, blocked.ToString());
-            await SaveStateAsync(job, now, outcome, TimeSpan.Zero, now + PostponeDelay, cancellationToken);
+            await SaveStateAsync(job, now, outcome, TimeSpan.Zero, now + PostponeDelay, cancellationToken, runId);
             logger.LogInformation("Coleta {Job} adiada: {Reason}", job, blocked.WhatHappened);
             return outcome;
         }
@@ -127,7 +133,7 @@ public sealed class JobRunner(
             result = new JobOutcome(StatusFailed, null, ex.Message);
         }
 
-        await SaveStateAsync(job, now, result, stopwatch.Elapsed, now + IntervalOf(job, settings), cancellationToken);
+        await SaveStateAsync(job, now, result, stopwatch.Elapsed, now + IntervalOf(job, settings), cancellationToken, runId);
         if (result.Status == StatusSucceeded && job != JobNames.Reconcile)
         {
             await RunAsync(JobNames.Reconcile, cancellationToken); // new data: refresh the reconciled view
@@ -150,7 +156,30 @@ public sealed class JobRunner(
         var policy = EvidencePolicy.From(settingsProvider.Current.Evidence);
         var result = await new InventoryReconciler(dbFactory, clock, TimeSpan.FromDays(policy.Default.ProbableDays), policy).RunAsync(cancellationToken);
         logger.LogInformation("Reconciliação: {Assets} ativos, {Review} itens para revisão.", result.Assets.Count, result.Review.Count);
+        await PurgeHistoryAsync(cancellationToken);
         return result.Assets.Count;
+    }
+
+    private async Task PurgeHistoryAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var retention = Math.Max(30, settingsProvider.Current.Collection.HistoryRetentionDays);
+            var limit = clock.GetUtcNow() - TimeSpan.FromDays(retention);
+            await using var db = dbFactory.Create();
+            var versions = await RawRecordArchive.PurgeAsync(db, clock.GetUtcNow(), retention, cancellationToken);
+            var runs = await db.JobRuns.Where(r => r.StartedAt < limit).ExecuteDeleteAsync(cancellationToken);
+            var timeline = await db.EvidenceTimeline.Where(e => e.CollectedAt < limit).ExecuteDeleteAsync(cancellationToken);
+            var changes = await db.AssetChanges.Where(c => c.At < limit).ExecuteDeleteAsync(cancellationToken);
+            if (versions + runs + timeline + changes > 0)
+            {
+                logger.LogInformation("Histórico expirado removido (retenção de {Days} dias): {Versions} versões, {Runs} execuções, {Timeline} datas de evidência, {Changes} mudanças.", retention, versions, runs, timeline, changes);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "A limpeza do histórico falhou e será tentada na próxima reconciliação.");
+        }
     }
 
     private async Task<int?> CollectIntuneAsync(NexusSettings settings, DateTimeOffset now, CancellationToken cancellationToken)
@@ -181,7 +210,7 @@ public sealed class JobRunner(
             logger.LogWarning("Este tenant recusou os campos estendidos dos dispositivos (criptografia, armazenamento, jailbreak); coletado só o básico.");
         }
 
-        await ReplaceAsync<IntuneDeviceRecord>(rows.Values.ToList(), cancellationToken);
+        await ReplaceAsync<IntuneDeviceRecord>(rows.Values.ToList(), cancellationToken, "intune", r => r.Id);
         return rows.Count;
     }
 
@@ -204,7 +233,7 @@ public sealed class JobRunner(
             };
         }
 
-        await ReplaceAsync<EntraDeviceRecord>(rows.Values.ToList(), cancellationToken);
+        await ReplaceAsync<EntraDeviceRecord>(rows.Values.ToList(), cancellationToken, "entra", r => r.Id);
         return rows.Count;
     }
 
@@ -238,7 +267,7 @@ public sealed class JobRunner(
         }
 
         _slowQueryObserved = queryGate.SlowQueryObserved;
-        await ReplaceAsync<SccmDeviceRecord>(rows.Values.ToList(), cancellationToken);
+        await ReplaceAsync<SccmDeviceRecord>(rows.Values.ToList(), cancellationToken, "sccm", r => r.ResourceId.ToString());
         return rows.Count;
     }
 
@@ -262,7 +291,7 @@ public sealed class JobRunner(
             };
         }
 
-        await ReplaceAsync<AdComputerRecord>(rows.Values.ToList(), cancellationToken);
+        await ReplaceAsync<AdComputerRecord>(rows.Values.ToList(), cancellationToken, "ad", r => r.ObjectGuid.ToString());
         return rows.Count;
     }
 
@@ -284,7 +313,7 @@ public sealed class JobRunner(
             };
         }
 
-        await ReplaceAsync<XdrEndpointRecord>(rows.Values.ToList(), cancellationToken);
+        await ReplaceAsync<XdrEndpointRecord>(rows.Values.ToList(), cancellationToken, "xdr", r => r.AgentId);
         return rows.Count;
     }
 
@@ -307,7 +336,7 @@ public sealed class JobRunner(
             };
         }
 
-        await ReplaceAsync<NetskopeClientRecord>(rows.Values.ToList(), cancellationToken);
+        await ReplaceAsync<NetskopeClientRecord>(rows.Values.ToList(), cancellationToken, "netskope", r => r.Id);
         return rows.Count;
     }
 
@@ -330,7 +359,7 @@ public sealed class JobRunner(
             };
         }
 
-        await ReplaceAsync<MamRegistrationRecord>(rows.Values.ToList(), cancellationToken);
+        await ReplaceAsync<MamRegistrationRecord>(rows.Values.ToList(), cancellationToken, "mam", r => r.Id);
         return rows.Count;
     }
 
@@ -362,7 +391,7 @@ public sealed class JobRunner(
             }
         }
 
-        await ReplaceAsync<EntraUserRecord>(rows.Values.ToList(), cancellationToken);
+        await ReplaceAsync<EntraUserRecord>(rows.Values.ToList(), cancellationToken, "entra-user", r => r.Id);
         return rows.Count;
     }
 
@@ -410,7 +439,29 @@ public sealed class JobRunner(
         return policies.Count;
     }
 
-    private async Task ReplaceAsync<T>(List<T> rows, CancellationToken cancellationToken) where T : class
+    /// <summary>Replaces the raw table in one transaction (a failure keeps the last snapshot) and then archives the versions that changed.</summary>
+    private async Task ReplaceAsync<T>(List<T> rows, CancellationToken cancellationToken, string? archiveSource = null, Func<T, string>? archiveKey = null) where T : class
+    {
+        await ReplaceTableAsync(rows, cancellationToken);
+        if (archiveSource is null || archiveKey is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await using var db = dbFactory.Create();
+            var result = await RawRecordArchive.ArchiveAsync(db, archiveSource, rows, archiveKey, clock.GetUtcNow(), CurrentRunId.Value, cancellationToken);
+            logger.LogInformation("Versões de {Source}: {Created} novas, {Changed} alteradas, {Unchanged} iguais, {Removed} removidas (run {RunId}).", archiveSource, result.Created, result.Changed, result.Unchanged, result.Removed, CurrentRunId.Value);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The collection itself succeeded; losing one history write must not turn it into a failure.
+            logger.LogWarning(ex, "Não foi possível arquivar as versões de {Source}. A coleta foi concluída; o histórico desta rodada ficou incompleto.", archiveSource);
+        }
+    }
+
+    private async Task ReplaceTableAsync<T>(List<T> rows, CancellationToken cancellationToken) where T : class
     {
         await using var db = dbFactory.Create();
         var strategy = db.Database.CreateExecutionStrategy();
@@ -429,7 +480,7 @@ public sealed class JobRunner(
         });
     }
 
-    private async Task SaveStateAsync(string job, DateTimeOffset startedAt, JobOutcome outcome, TimeSpan duration, DateTimeOffset nextRun, CancellationToken cancellationToken)
+    private async Task SaveStateAsync(string job, DateTimeOffset startedAt, JobOutcome outcome, TimeSpan duration, DateTimeOffset nextRun, CancellationToken cancellationToken, Guid runId)
     {
         await using var db = dbFactory.Create();
         var state = await db.Jobs.FirstOrDefaultAsync(j => j.Name == job, cancellationToken);
@@ -451,6 +502,11 @@ public sealed class JobRunner(
             state.LastRecordCount = outcome.Records;
         }
 
+        db.JobRuns.Add(new JobRun
+        {
+            RunId = runId, Job = job, StartedAt = startedAt, CompletedAt = state.LastCompletedAt!.Value, Status = outcome.Status, Records = outcome.Records,
+            DurationMs = (int)duration.TotalMilliseconds, Message = outcome.Message is { Length: > 2000 } m ? m[..2000] : outcome.Message,
+        });
         await db.SaveChangesAsync(cancellationToken);
     }
 }

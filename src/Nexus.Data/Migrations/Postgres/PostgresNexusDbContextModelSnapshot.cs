@@ -163,6 +163,9 @@ namespace Nexus.Data.Migrations.Postgres
                     b.Property<string>("EvidenceJson")
                         .HasColumnType("text");
 
+                    b.Property<string>("Fqdn")
+                        .HasColumnType("text");
+
                     b.Property<bool>("HasMam")
                         .HasColumnType("boolean");
 
@@ -189,12 +192,27 @@ namespace Nexus.Data.Migrations.Postgres
                         .HasMaxLength(24)
                         .HasColumnType("character varying(24)");
 
+                    b.Property<string>("IntuneEnrollmentType")
+                        .HasColumnType("text");
+
                     b.Property<DateTimeOffset?>("IntuneLastSyncAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("IntuneOwnerType")
+                        .HasColumnType("text");
+
+                    b.Property<string>("IntuneRegistrationState")
+                        .HasColumnType("text");
+
+                    b.Property<bool?>("IntuneSupervised")
+                        .HasColumnType("boolean");
 
                     b.Property<string>("IntuneUserId")
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
+
+                    b.Property<string>("IpAddresses")
+                        .HasColumnType("text");
 
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
@@ -210,6 +228,12 @@ namespace Nexus.Data.Migrations.Postgres
 
                     b.Property<DateTimeOffset?>("LastStrongActivityAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LastUser")
+                        .HasColumnType("text");
+
+                    b.Property<string>("MacAddresses")
+                        .HasColumnType("text");
 
                     b.Property<int>("MamAppCount")
                         .HasColumnType("integer");
@@ -297,6 +321,9 @@ namespace Nexus.Data.Migrations.Postgres
                         .HasMaxLength(16)
                         .HasColumnType("character varying(16)");
 
+                    b.Property<DateTimeOffset?>("SccmLastDdrAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTimeOffset?>("SccmLastHwScanAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -304,6 +331,9 @@ namespace Nexus.Data.Migrations.Postgres
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<DateTimeOffset?>("SccmLastSeenAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("SccmLastSwScanAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Serial")
@@ -315,6 +345,9 @@ namespace Nexus.Data.Migrations.Postgres
 
                     b.Property<bool?>("UserEnabled")
                         .HasColumnType("boolean");
+
+                    b.Property<string>("Uuid")
+                        .HasColumnType("text");
 
                     b.Property<string>("XdrAgentType")
                         .HasMaxLength(64)
@@ -349,6 +382,50 @@ namespace Nexus.Data.Migrations.Postgres
                     b.HasIndex("Platform");
 
                     b.ToTable("assets", (string)null);
+                });
+
+            modelBuilder.Entity("Nexus.Data.Entities.AssetChange", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<Guid>("AssetId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AssetName")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<DateTimeOffset>("At")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Field")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("NewValue")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<string>("OldValue")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<Guid>("RunId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("At");
+
+                    b.HasIndex("AssetId", "At");
+
+                    b.ToTable("asset_changes", (string)null);
                 });
 
             modelBuilder.Entity("Nexus.Data.Entities.AssetLink", b =>
@@ -501,6 +578,37 @@ namespace Nexus.Data.Migrations.Postgres
                     b.HasKey("Id");
 
                     b.ToTable("entra_users", (string)null);
+                });
+
+            modelBuilder.Entity("Nexus.Data.Entities.EvidenceTimelineEntry", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<Guid>("AssetId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CollectedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("ObservedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CollectedAt");
+
+                    b.HasIndex("AssetId", "Source", "ObservedAt");
+
+                    b.ToTable("evidence_timeline", (string)null);
                 });
 
             modelBuilder.Entity("Nexus.Data.Entities.HealthResultRecord", b =>
@@ -841,6 +949,52 @@ namespace Nexus.Data.Migrations.Postgres
                     b.ToTable("inventory_fetches", (string)null);
                 });
 
+            modelBuilder.Entity("Nexus.Data.Entities.JobRun", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTimeOffset>("CompletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("DurationMs")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Job")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Message")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<int?>("Records")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("RunId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("StartedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RunId");
+
+                    b.HasIndex("Job", "StartedAt");
+
+                    b.ToTable("job_runs", (string)null);
+                });
+
             modelBuilder.Entity("Nexus.Data.Entities.JobState", b =>
                 {
                     b.Property<string>("Name")
@@ -1003,6 +1157,57 @@ namespace Nexus.Data.Migrations.Postgres
                     b.HasIndex("HostName");
 
                     b.ToTable("netskope_clients", (string)null);
+                });
+
+            modelBuilder.Entity("Nexus.Data.Entities.RawRecordVersion", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTimeOffset>("FirstSeenAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Hash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<bool>("IsCurrent")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTimeOffset>("LastSeenAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("RemovedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("RunId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("SourceKey")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LastSeenAt");
+
+                    b.HasIndex("Source", "SourceKey", "IsCurrent");
+
+                    b.ToTable("raw_record_versions", (string)null);
                 });
 
             modelBuilder.Entity("Nexus.Data.Entities.ReviewItem", b =>

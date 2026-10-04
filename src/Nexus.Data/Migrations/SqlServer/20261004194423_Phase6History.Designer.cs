@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Nexus.Data;
 
@@ -11,9 +12,11 @@ using Nexus.Data;
 namespace Nexus.Data.Migrations.SqlServer
 {
     [DbContext(typeof(SqlServerNexusDbContext))]
-    partial class SqlServerNexusDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261004194423_Phase6History")]
+    partial class Phase6History
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -163,9 +166,6 @@ namespace Nexus.Data.Migrations.SqlServer
                     b.Property<string>("EvidenceJson")
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<string>("Fqdn")
-                        .HasColumnType("nvarchar(max)");
-
                     b.Property<bool>("HasMam")
                         .HasColumnType("bit");
 
@@ -192,27 +192,12 @@ namespace Nexus.Data.Migrations.SqlServer
                         .HasMaxLength(24)
                         .HasColumnType("nvarchar(24)");
 
-                    b.Property<string>("IntuneEnrollmentType")
-                        .HasColumnType("nvarchar(max)");
-
                     b.Property<DateTimeOffset?>("IntuneLastSyncAt")
                         .HasColumnType("datetimeoffset");
-
-                    b.Property<string>("IntuneOwnerType")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("IntuneRegistrationState")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<bool?>("IntuneSupervised")
-                        .HasColumnType("bit");
 
                     b.Property<string>("IntuneUserId")
                         .HasMaxLength(64)
                         .HasColumnType("nvarchar(64)");
-
-                    b.Property<string>("IpAddresses")
-                        .HasColumnType("nvarchar(max)");
 
                     b.Property<bool>("IsActive")
                         .HasColumnType("bit");
@@ -228,12 +213,6 @@ namespace Nexus.Data.Migrations.SqlServer
 
                     b.Property<DateTimeOffset?>("LastStrongActivityAt")
                         .HasColumnType("datetimeoffset");
-
-                    b.Property<string>("LastUser")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("MacAddresses")
-                        .HasColumnType("nvarchar(max)");
 
                     b.Property<int>("MamAppCount")
                         .HasColumnType("int");
@@ -321,9 +300,6 @@ namespace Nexus.Data.Migrations.SqlServer
                         .HasMaxLength(16)
                         .HasColumnType("nvarchar(16)");
 
-                    b.Property<DateTimeOffset?>("SccmLastDdrAt")
-                        .HasColumnType("datetimeoffset");
-
                     b.Property<DateTimeOffset?>("SccmLastHwScanAt")
                         .HasColumnType("datetimeoffset");
 
@@ -331,9 +307,6 @@ namespace Nexus.Data.Migrations.SqlServer
                         .HasColumnType("datetimeoffset");
 
                     b.Property<DateTimeOffset?>("SccmLastSeenAt")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<DateTimeOffset?>("SccmLastSwScanAt")
                         .HasColumnType("datetimeoffset");
 
                     b.Property<string>("Serial")
@@ -345,9 +318,6 @@ namespace Nexus.Data.Migrations.SqlServer
 
                     b.Property<bool?>("UserEnabled")
                         .HasColumnType("bit");
-
-                    b.Property<string>("Uuid")
-                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("XdrAgentType")
                         .HasMaxLength(64)

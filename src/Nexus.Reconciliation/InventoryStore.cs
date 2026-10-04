@@ -28,7 +28,13 @@ public sealed class InventoryReconciler(INexusDbFactory dbFactory, TimeProvider 
             await db.NetskopeClients.AsNoTracking().ToListAsync(cancellationToken),
             evidence);
 
+        var runId = Guid.NewGuid();
+        var before = await db.Assets.AsNoTracking().ToDictionaryAsync(a => a.Id, cancellationToken);
+        var seedTimeline = !await db.EvidenceTimeline.AnyAsync(cancellationToken);
+
         var result = Reconciler.Run(input);
+        var changes = AssetHistory.Diff(before, result.Assets, input.Now, runId);
+        var timeline = AssetHistory.Timeline(before, result.Assets, input.Now, seedTimeline);
 
         var strategy = db.Database.CreateExecutionStrategy();
         await strategy.ExecuteAsync(async () =>
@@ -48,6 +54,20 @@ public sealed class InventoryReconciler(INexusDbFactory dbFactory, TimeProvider 
             foreach (var chunk in result.Links.Chunk(1000))
             {
                 db.AssetLinks.AddRange(chunk);
+                await db.SaveChangesAsync(cancellationToken);
+                db.ChangeTracker.Clear();
+            }
+
+            foreach (var chunk in changes.Chunk(1000))
+            {
+                db.AssetChanges.AddRange(chunk);
+                await db.SaveChangesAsync(cancellationToken);
+                db.ChangeTracker.Clear();
+            }
+
+            foreach (var chunk in timeline.Chunk(1000))
+            {
+                db.EvidenceTimeline.AddRange(chunk);
                 await db.SaveChangesAsync(cancellationToken);
                 db.ChangeTracker.Clear();
             }

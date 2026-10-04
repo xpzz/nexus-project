@@ -199,6 +199,8 @@ public sealed class CollectionSettings
     public int UsersIntervalMinutes { get; set; } = 240;
     public int XdrIntervalMinutes { get; set; } = 60;
     public int NetskopeIntervalMinutes { get; set; } = 60;
+    /// <summary>How long superseded versions of source records, evidence dates and asset changes are kept (minimum 30).</summary>
+    public int HistoryRetentionDays { get; set; } = 400;
 
     /// <summary>Legacy. The thresholds that decide whether a device is active now live in <see cref="NexusSettings.Evidence"/> (ADR-0007).</summary>
     public int ActivityWindowDays { get; set; } = 30;

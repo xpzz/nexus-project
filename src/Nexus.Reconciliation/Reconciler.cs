@@ -368,7 +368,18 @@ public static class Reconciler
             { Active: not true } or { ClientActiveStatus: 0 } => "Inactive",
             _ => "Healthy",
         };
-        asset.SccmLastSeenAt = primarySccm?.LastActiveAt;
+        // Any contact that comes from the SCCM client counts as the client being alive: last active time, heartbeat (DDR), policy request, hardware scan.
+        asset.SccmLastSeenAt = primarySccm is null ? null : new[] { primarySccm.LastActiveAt, primarySccm.LastDdrAt, primarySccm.LastPolicyRequestAt, primarySccm.LastHwScanAt }.Max();
+        asset.SccmLastDdrAt = primarySccm?.LastDdrAt;
+        asset.SccmLastSwScanAt = primarySccm?.LastSwScanAt;
+        asset.Uuid = primarySccm?.SmbiosGuid;
+        asset.Fqdn = primaryAd?.DnsHostName ?? (primarySccm is { Domain.Length: > 0, Name.Length: > 0 } ? $"{primarySccm.Name}.{primarySccm.Domain}".ToLowerInvariant() : null);
+        asset.IpAddresses = primaryXdr?.Ip;
+        asset.LastUser = primarySccm?.LastLogonUser ?? primaryIntune?.UserPrincipalName;
+        asset.IntuneEnrollmentType = primaryIntune?.EnrollmentType;
+        asset.IntuneOwnerType = primaryIntune?.OwnerType;
+        asset.IntuneRegistrationState = primaryIntune?.DeviceRegistrationState;
+        asset.IntuneSupervised = primaryIntune?.IsSupervised;
         asset.IntuneChannel = intune.Count == 0 ? "None" : intune.Select(r => ChannelOf(r.ManagementAgent)).MinBy(ChannelRank)!;
         asset.IntuneLastSyncAt = primaryIntune?.LastSyncAt;
         asset.EntraLastSignInAt = primaryEntra?.LastSignInAt;
