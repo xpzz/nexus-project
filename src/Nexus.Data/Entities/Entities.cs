@@ -114,6 +114,11 @@ public sealed class SccmDeviceRecord
     public long? DiskTotalMb { get; set; }
     public long? DiskFreeMb { get; set; }
     public string? BiosVersion { get; set; }
+    /// <summary>MAC addresses, comma separated, upper case.</summary>
+    public string? MacAddresses { get; set; }
+    public string? IpAddresses { get; set; }
+    /// <summary>laptop, desktop, server, tablet or other, from the SMBIOS chassis type.</summary>
+    public string? Chassis { get; set; }
     public DateTimeOffset CollectedAt { get; set; }
 }
 
@@ -162,6 +167,9 @@ public sealed class IntuneDeviceRecord
     public string? DeviceRegistrationState { get; set; }
     public bool? AutopilotEnrolled { get; set; }
     public DateTimeOffset? ComplianceGraceExpiresAt { get; set; }
+    /// <summary>Hardware MACs of company-owned devices only (never stored for personal devices).</summary>
+    public string? EthernetMac { get; set; }
+    public string? WifiMac { get; set; }
     public DateTimeOffset CollectedAt { get; set; }
 }
 
@@ -282,6 +290,8 @@ public sealed class MamRegistrationRecord
     public string? FlaggedReasons { get; set; }
     public string? AppliedPolicies { get; set; }
     public string? IntendedPolicies { get; set; }
+    /// <summary>Latest app operation (for example selective wipe) as "name|state|when".</summary>
+    public string? LastOperation { get; set; }
     public DateTimeOffset CollectedAt { get; set; }
 }
 
@@ -446,6 +456,11 @@ public sealed class Asset
     public string? IntuneOwnerType { get; set; }
     public string? IntuneRegistrationState { get; set; }
     public bool? IntuneSupervised { get; set; }
+    /// <summary>Last Microsoft 365 sign-in from this device (Entra device id match). Null when the sign-in collector is off or the device was not seen.</summary>
+    public DateTimeOffset? LastM365AccessAt { get; set; }
+    public string? M365Workloads { get; set; }
+    /// <summary>Hardware chassis as SCCM reports it (laptop, desktop, server, tablet...); decides notebook versus desktop.</summary>
+    public string? Chassis { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }
 
@@ -560,4 +575,76 @@ public sealed class ProtectionException
     public DateTimeOffset ApprovedAt { get; set; }
     public DateTimeOffset? ExpiresAt { get; set; }
     public bool Active { get; set; } = true;
+}
+
+/// <summary>An iOS or Android app protection policy: settings that decide whether corporate data can leave the app, targeted apps and assignment.</summary>
+public sealed class AppProtectionPolicyRecord
+{
+    public string Id { get; set; } = "";
+    public string Platform { get; set; } = "";
+    public string Name { get; set; } = "";
+    public DateTimeOffset? LastModifiedAt { get; set; }
+    public int? Version { get; set; }
+    public bool IsAssigned { get; set; }
+    public bool AssignedToAll { get; set; }
+    public string? Assignments { get; set; }
+    /// <summary>Targeted app identifiers (bundle or package ids) as a JSON array.</summary>
+    public string AppsJson { get; set; } = "[]";
+    /// <summary>The whitelisted settings as a JSON object of name to value.</summary>
+    public string SettingsJson { get; set; } = "{}";
+    public DateTimeOffset CollectedAt { get; set; }
+}
+
+/// <summary>An app configuration policy. Edge's URL allow and block lists are read from its settings.</summary>
+public sealed class AppConfigRecord
+{
+    public string Id { get; set; } = "";
+    /// <summary>managed-app (MAM) or managed-device (MDM).</summary>
+    public string Kind { get; set; } = "";
+    public string Platform { get; set; } = "";
+    public string Name { get; set; } = "";
+    public DateTimeOffset? LastModifiedAt { get; set; }
+    public string? Assignments { get; set; }
+    public string AppsJson { get; set; } = "[]";
+    public string SettingsJson { get; set; } = "{}";
+    public DateTimeOffset CollectedAt { get; set; }
+}
+
+public sealed class ConditionalAccessRecord
+{
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+    /// <summary>enabled, disabled or enabledForReportingButNotEnforced.</summary>
+    public string State { get; set; } = "";
+    public DateTimeOffset? ModifiedAt { get; set; }
+    public string? Users { get; set; }
+    public string? Applications { get; set; }
+    public string? Platforms { get; set; }
+    public string? GrantControls { get; set; }
+    public bool RequiresCompliantDevice { get; set; }
+    public bool RequiresApprovedApp { get; set; }
+    public bool RequiresAppProtection { get; set; }
+    public bool RequiresMfa { get; set; }
+    public bool TargetsMicrosoft365 { get; set; }
+    public DateTimeOffset CollectedAt { get; set; }
+}
+
+/// <summary>Microsoft 365 access seen in sign-ins, per device (or per user, system and browser when no device is identified).</summary>
+public sealed class AccessEvidenceRecord
+{
+    public string Key { get; set; } = "";
+    public string? UserId { get; set; }
+    public string? UserPrincipalName { get; set; }
+    public string? EntraDeviceId { get; set; }
+    public string? DeviceName { get; set; }
+    public string? OperatingSystem { get; set; }
+    public string? Browser { get; set; }
+    public bool? IsManaged { get; set; }
+    public bool? IsCompliant { get; set; }
+    public string? TrustType { get; set; }
+    public DateTimeOffset LastAccessAt { get; set; }
+    public string? Workloads { get; set; }
+    public int Count { get; set; }
+    public string? ClientApp { get; set; }
+    public DateTimeOffset CollectedAt { get; set; }
 }

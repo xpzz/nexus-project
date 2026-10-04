@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Nexus.Data;
 
@@ -11,9 +12,11 @@ using Nexus.Data;
 namespace Nexus.Data.Migrations.SqlServer
 {
     [DbContext(typeof(SqlServerNexusDbContext))]
-    partial class SqlServerNexusDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261004202923_Phase9Governance")]
+    partial class Phase9Governance
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1027,9 +1030,6 @@ namespace Nexus.Data.Migrations.SqlServer
                         .HasMaxLength(64)
                         .HasColumnType("nvarchar(64)");
 
-                    b.Property<string>("EthernetMac")
-                        .HasColumnType("nvarchar(max)");
-
                     b.Property<long?>("FreeStorageBytes")
                         .HasColumnType("bigint");
 
@@ -1087,9 +1087,6 @@ namespace Nexus.Data.Migrations.SqlServer
                     b.Property<string>("UserPrincipalName")
                         .HasMaxLength(256)
                         .HasColumnType("nvarchar(256)");
-
-                    b.Property<string>("WifiMac")
-                        .HasColumnType("nvarchar(max)");
 
                     b.HasKey("Id");
 
@@ -1582,9 +1579,6 @@ namespace Nexus.Data.Migrations.SqlServer
                         .HasMaxLength(128)
                         .HasColumnType("nvarchar(128)");
 
-                    b.Property<string>("Chassis")
-                        .HasColumnType("nvarchar(max)");
-
                     b.Property<bool?>("Client")
                         .HasColumnType("bit");
 
@@ -1615,9 +1609,6 @@ namespace Nexus.Data.Migrations.SqlServer
                         .HasMaxLength(256)
                         .HasColumnType("nvarchar(256)");
 
-                    b.Property<string>("IpAddresses")
-                        .HasColumnType("nvarchar(max)");
-
                     b.Property<DateTimeOffset?>("LastActiveAt")
                         .HasColumnType("datetimeoffset");
 
@@ -1639,9 +1630,6 @@ namespace Nexus.Data.Migrations.SqlServer
 
                     b.Property<DateTimeOffset?>("LastSwScanAt")
                         .HasColumnType("datetimeoffset");
-
-                    b.Property<string>("MacAddresses")
-                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("Manufacturer")
                         .HasMaxLength(128)

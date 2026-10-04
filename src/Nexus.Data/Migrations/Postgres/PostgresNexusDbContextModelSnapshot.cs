@@ -22,6 +22,72 @@ namespace Nexus.Data.Migrations.Postgres
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Nexus.Data.Entities.AccessEvidenceRecord", b =>
+                {
+                    b.Property<string>("Key")
+                        .HasMaxLength(320)
+                        .HasColumnType("character varying(320)");
+
+                    b.Property<string>("Browser")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("ClientApp")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<DateTimeOffset>("CollectedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Count")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("DeviceName")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("EntraDeviceId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<bool?>("IsCompliant")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool?>("IsManaged")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTimeOffset>("LastAccessAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("OperatingSystem")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("TrustType")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("UserId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("UserPrincipalName")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("Workloads")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.HasKey("Key");
+
+                    b.HasIndex("EntraDeviceId");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("access_evidence", (string)null);
+                });
+
             modelBuilder.Entity("Nexus.Data.Entities.AdComputerRecord", b =>
                 {
                     b.Property<Guid>("ObjectGuid")
@@ -70,6 +136,98 @@ namespace Nexus.Data.Migrations.Postgres
                     b.ToTable("ad_computers", (string)null);
                 });
 
+            modelBuilder.Entity("Nexus.Data.Entities.AppConfigRecord", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("AppsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Assignments")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<DateTimeOffset>("CollectedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<DateTimeOffset?>("LastModifiedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("Platform")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("SettingsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("app_configs", (string)null);
+                });
+
+            modelBuilder.Entity("Nexus.Data.Entities.AppProtectionPolicyRecord", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("AppsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<bool>("AssignedToAll")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Assignments")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<DateTimeOffset>("CollectedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsAssigned")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTimeOffset?>("LastModifiedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("Platform")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("SettingsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int?>("Version")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("app_protection_policies", (string)null);
+                });
+
             modelBuilder.Entity("Nexus.Data.Entities.Asset", b =>
                 {
                     b.Property<Guid>("Id")
@@ -108,6 +266,9 @@ namespace Nexus.Data.Migrations.Postgres
 
                     b.Property<string>("AssetType")
                         .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Chassis")
                         .HasColumnType("text");
 
                     b.Property<int>("CompliancePolicies")
@@ -226,10 +387,16 @@ namespace Nexus.Data.Migrations.Postgres
                     b.Property<DateTimeOffset?>("LastActivityAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<DateTimeOffset?>("LastM365AccessAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTimeOffset?>("LastStrongActivityAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("LastUser")
+                        .HasColumnType("text");
+
+                    b.Property<string>("M365Workloads")
                         .HasColumnType("text");
 
                     b.Property<string>("MacAddresses")
@@ -501,6 +668,64 @@ namespace Nexus.Data.Migrations.Postgres
                     b.HasIndex("At");
 
                     b.ToTable("audit_events", (string)null);
+                });
+
+            modelBuilder.Entity("Nexus.Data.Entities.ConditionalAccessRecord", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Applications")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<DateTimeOffset>("CollectedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("GrantControls")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<DateTimeOffset?>("ModifiedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("Platforms")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<bool>("RequiresAppProtection")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("RequiresApprovedApp")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("RequiresCompliantDevice")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("RequiresMfa")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(48)
+                        .HasColumnType("character varying(48)");
+
+                    b.Property<bool>("TargetsMicrosoft365")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Users")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("conditional_access_policies", (string)null);
                 });
 
             modelBuilder.Entity("Nexus.Data.Entities.EntraDeviceRecord", b =>
@@ -802,6 +1027,9 @@ namespace Nexus.Data.Migrations.Postgres
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
+                    b.Property<string>("EthernetMac")
+                        .HasColumnType("text");
+
                     b.Property<long?>("FreeStorageBytes")
                         .HasColumnType("bigint");
 
@@ -859,6 +1087,9 @@ namespace Nexus.Data.Migrations.Postgres
                     b.Property<string>("UserPrincipalName")
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
+
+                    b.Property<string>("WifiMac")
+                        .HasColumnType("text");
 
                     b.HasKey("Id");
 
@@ -1074,6 +1305,9 @@ namespace Nexus.Data.Migrations.Postgres
                     b.Property<string>("IntendedPolicies")
                         .HasMaxLength(1024)
                         .HasColumnType("character varying(1024)");
+
+                    b.Property<string>("LastOperation")
+                        .HasColumnType("text");
 
                     b.Property<DateTimeOffset?>("LastSyncAt")
                         .HasColumnType("timestamp with time zone");
@@ -1348,6 +1582,9 @@ namespace Nexus.Data.Migrations.Postgres
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");
 
+                    b.Property<string>("Chassis")
+                        .HasColumnType("text");
+
                     b.Property<bool?>("Client")
                         .HasColumnType("boolean");
 
@@ -1378,6 +1615,9 @@ namespace Nexus.Data.Migrations.Postgres
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
 
+                    b.Property<string>("IpAddresses")
+                        .HasColumnType("text");
+
                     b.Property<DateTimeOffset?>("LastActiveAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -1399,6 +1639,9 @@ namespace Nexus.Data.Migrations.Postgres
 
                     b.Property<DateTimeOffset?>("LastSwScanAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("MacAddresses")
+                        .HasColumnType("text");
 
                     b.Property<string>("Manufacturer")
                         .HasMaxLength(128)

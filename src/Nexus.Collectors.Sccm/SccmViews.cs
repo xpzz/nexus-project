@@ -11,6 +11,8 @@ public static class SccmViews
         "v_GS_COMPUTER_SYSTEM",
         "v_GS_PC_BIOS",
         "v_GS_SYSTEM_ENCLOSURE",
+        "v_RA_System_MACAddresses",
+        "v_RA_System_IPAddresses",
         "v_GS_COMPUTER_SYSTEM_PRODUCT",
         "v_GS_OPERATING_SYSTEM",
         "v_GS_PROCESSOR",

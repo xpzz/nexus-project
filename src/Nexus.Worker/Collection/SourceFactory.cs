@@ -26,6 +26,9 @@ public interface ISourceFactory
     /// </summary>
     IGraphReader? CreateGraphReader(NexusSettings settings);
 
+    /// <summary>App protection, app configuration, Conditional Access and sign-ins. Null when Azure is not configured.</summary>
+    IGraphGovernanceReader? CreateGovernanceReader(NexusSettings settings);
+
     /// <summary>Live connection (token + client) for the access check; null when not configured or in demo mode.</summary>
     GraphConnection? CreateGraphConnection(NexusSettings settings);
 }
@@ -98,6 +101,17 @@ public sealed class SourceFactory(NexusPaths paths) : ISourceFactory
 
         var connection = CreateGraphConnection(settings);
         return connection is null ? null : new HttpGraphReader(connection.Client);
+    }
+
+    public IGraphGovernanceReader? CreateGovernanceReader(NexusSettings settings)
+    {
+        if (settings.DemoMode)
+        {
+            return _estate.Value.CreateGovernanceReader();
+        }
+
+        var connection = CreateGraphConnection(settings);
+        return connection is null ? null : new HttpGovernanceReader(connection.Client);
     }
 
     public GraphConnection? CreateGraphConnection(NexusSettings settings)

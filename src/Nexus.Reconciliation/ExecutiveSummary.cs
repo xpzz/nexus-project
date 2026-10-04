@@ -22,6 +22,7 @@ public static class SourceHealthBuilder
         ("ad", "Active Directory", false, ["ad.computers"]),
         ("intune", "Intune", false, ["intune.devices", "intune.policies", "intune.mam"]),
         ("entra", "Entra ID", false, ["entra.devices", "entra.users"]),
+        ("governance", "Governança Microsoft (APP, Acesso Condicional, sign-ins)", true, ["intune.apppolicies", "entra.ca", "entra.signins"]),
         ("xdr", "Cortex XDR", true, ["xdr.endpoints"]),
         ("netskope", "Netskope", true, ["netskope.clients"]),
     ];
@@ -40,6 +41,9 @@ public static class SourceHealthBuilder
         "intune.mam" => "Proteção de aplicativos (MAM)",
         "entra.users" => "Usuários do Entra ID",
         "intune.policies" => "Políticas do Intune",
+        "intune.apppolicies" => "Políticas de proteção de apps e configuração do Edge",
+        "entra.ca" => "Políticas de Acesso Condicional",
+        "entra.signins" => "Acessos ao Microsoft 365 (sign-ins)",
         "inventory.reconcile" => "Reconciliação",
         _ => job,
     };

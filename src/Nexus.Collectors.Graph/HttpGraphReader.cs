@@ -12,10 +12,11 @@ public sealed class HttpGraphReader(GraphHttpClient client) : IGraphReader
     private const string DeviceBaseFields = "id,deviceName,azureADDeviceId,serialNumber,manufacturer,model,operatingSystem,osVersion,managementAgent,deviceEnrollmentType,managedDeviceOwnerType,lastSyncDateTime,enrolledDateTime,complianceState,userPrincipalName,userId";
     public const string ManagedDevicesBaseUrl = "/deviceManagement/managedDevices?$top=500&$select=" + DeviceBaseFields;
     public const string ManagedDevicesUrl = "/deviceManagement/managedDevices?$top=500&$select=" + DeviceBaseFields +
-        ",isEncrypted,jailBroken,isSupervised,totalStorageSpaceInBytes,freeStorageSpaceInBytes,physicalMemoryInBytes,deviceRegistrationState,autopilotEnrolled,complianceGracePeriodExpirationDateTime";
+        ",isEncrypted,jailBroken,isSupervised,totalStorageSpaceInBytes,freeStorageSpaceInBytes,physicalMemoryInBytes,deviceRegistrationState,autopilotEnrolled,complianceGracePeriodExpirationDateTime,ethernetMacAddress,wiFiMacAddress";
     public const string EntraDevicesUrl = "/devices?$top=500&$select=id,deviceId,displayName,trustType,approximateLastSignInDateTime,accountEnabled,operatingSystem,operatingSystemVersion,deviceOwnership,registrationDateTime";
     public const string MamRegistrationsUrl = "/deviceAppManagement/managedAppRegistrations?$top=100";
     public const string MamRegistrationsExpandedUrl = MamRegistrationsUrl + "&$expand=appliedPolicies($select=id,displayName),intendedPolicies($select=id,displayName)";
+    public const string MamRegistrationsWithOperationsUrl = MamRegistrationsExpandedUrl + ",operations($select=displayName,lastModifiedDateTime,state)";
 
     private static readonly (string Kind, string Path, string NameField, bool Optional)[] PolicySources =
     [
@@ -70,7 +71,10 @@ public sealed class HttpGraphReader(GraphHttpClient client) : IGraphReader
                 Long(d, "physicalMemoryInBytes"),
                 Text(d, "deviceRegistrationState"),
                 Bool(d, "autopilotEnrolled"),
-                Date(d, "complianceGracePeriodExpirationDateTime"));
+                Date(d, "complianceGracePeriodExpirationDateTime"),
+                // The MAC of a personal device is not collected: it identifies a person's own equipment (LGPD), and BYOD is matched by other keys.
+                Text(d, "managedDeviceOwnerType") == "personal" ? null : Text(d, "ethernetMacAddress"),
+                Text(d, "managedDeviceOwnerType") == "personal" ? null : Text(d, "wiFiMacAddress"));
         }
     }
 
@@ -225,14 +229,20 @@ public sealed class HttpGraphReader(GraphHttpClient client) : IGraphReader
 
     public async IAsyncEnumerable<MamRegistration> ReadMamRegistrationsAsync([EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        var url = MamRegistrationsExpandedUrl;
-        try
+        // Richest read first: policy names and the selective-wipe operations. A tenant that rejects part of it still gets the rest.
+        var url = MamRegistrationsWithOperationsUrl;
+        foreach (var candidate in new[] { MamRegistrationsWithOperationsUrl, MamRegistrationsExpandedUrl, MamRegistrationsUrl })
         {
-            using var probe = await client.GetAsync(url.Replace("$top=100", "$top=1"), cancellationToken);
-        }
-        catch (GraphException ex) when (ex.Status == HttpStatusCode.BadRequest)
-        {
-            url = MamRegistrationsUrl; // without policy names
+            url = candidate;
+            try
+            {
+                using var probe = await client.GetAsync(candidate.Replace("$top=100", "$top=1"), cancellationToken);
+                break;
+            }
+            catch (GraphException ex) when (ex.Status == HttpStatusCode.BadRequest && candidate != MamRegistrationsUrl)
+            {
+                // try the next, simpler form
+            }
         }
 
         await foreach (var r in client.GetPagedAsync(url, cancellationToken))
@@ -243,8 +253,20 @@ public sealed class HttpGraphReader(GraphHttpClient client) : IGraphReader
                 type.Contains("ios", StringComparison.OrdinalIgnoreCase) ? "iOS" : type.Contains("android", StringComparison.OrdinalIgnoreCase) ? "Android" : type.Contains("windows", StringComparison.OrdinalIgnoreCase) ? "Windows" : Text(r, "deviceType"),
                 AppIdOf(r), Text(r, "applicationVersion"), Text(r, "platformVersion"), Date(r, "lastSyncDateTime"), Date(r, "createdDateTime"),
                 r.TryGetProperty("flaggedReasons", out var fr) && fr.ValueKind == JsonValueKind.Array ? string.Join(", ", fr.EnumerateArray().Select(x => x.GetString())) : null,
-                Names(r, "appliedPolicies"), Names(r, "intendedPolicies"));
+                Names(r, "appliedPolicies"), Names(r, "intendedPolicies"), LastOperationOf(r));
         }
+    }
+
+    /// <summary>The most recent app operation of a registration (for example a selective wipe), as "name|state|when".</summary>
+    private static string? LastOperationOf(JsonElement registration)
+    {
+        if (!registration.TryGetProperty("operations", out var ops) || ops.ValueKind != JsonValueKind.Array || ops.GetArrayLength() == 0)
+        {
+            return null;
+        }
+
+        var last = ops.EnumerateArray().OrderByDescending(o => Date(o, "lastModifiedDateTime") ?? DateTimeOffset.MinValue).First();
+        return $"{Text(last, "displayName")}|{Text(last, "state")}|{Date(last, "lastModifiedDateTime"):O}";
     }
 
     public async IAsyncEnumerable<EntraUser> ReadUsersAsync(IReadOnlyList<string> rawUserIds, [EnumeratorCancellation] CancellationToken cancellationToken)

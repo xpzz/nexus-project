@@ -154,6 +154,18 @@ public static class EvidenceEngine
             return AssetTypes.Server;
         }
 
+        // The hardware chassis is the most reliable answer for computers; names and models only guess.
+        if (a.Platform is not "iOS" and not "Android")
+        {
+            switch (a.Chassis)
+            {
+                case "laptop": return AssetTypes.Notebook;
+                case "desktop": return Named("kiosk") ? AssetTypes.Kiosk : Named("shared") ? AssetTypes.Shared : AssetTypes.Desktop;
+                case "server": return AssetTypes.Server;
+                case "tablet": return AssetTypes.Tablet;
+            }
+        }
+
         if (a.Platform is "iOS" or "Android")
         {
             return Tablets.IsMatch(hardware) ? AssetTypes.Tablet : AssetTypes.Phone;
@@ -199,6 +211,7 @@ public static class EvidenceEngine
             Make("xdr", "Cortex XDR", a.XdrLastSeenAt, SignalTier.Telemetry),
             Make("netskope", "Netskope", a.NetskopeLastSeenAt, SignalTier.Telemetry),
             Make("mam", "Proteção de apps (MAM)", a.MamLastSyncAt, SignalTier.Telemetry),
+            Make("m365", "Microsoft 365 (acesso)", a.LastM365AccessAt, SignalTier.Telemetry),
             Make("entra", "Entra ID (login)", a.EntraLastSignInAt, SignalTier.Identity),
             Make("ad", "Active Directory (logon)", a.AdLastLogonAt, SignalTier.Identity),
         ];

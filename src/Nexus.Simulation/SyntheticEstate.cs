@@ -144,6 +144,10 @@ public sealed class SyntheticEstate
     public List<IntunePolicy> Policies { get; } = [];
     public List<DevicePolicyState> PolicyStates { get; } = [];
     public List<MamRegistration> MamRegistrations { get; } = [];
+    public List<AppProtectionPolicyInfo> AppProtectionPolicies { get; } = [];
+    public List<AppConfigInfo> AppConfigs { get; } = [];
+    public List<ConditionalAccessInfo> ConditionalAccessPolicies { get; } = [];
+    public List<SignInAccess> SignIns { get; } = [];
     public List<EntraUser> Users { get; } = [];
     public Dictionary<string, List<DetectedApp>> DetectedApps { get; } = [];
 
@@ -157,9 +161,14 @@ public sealed class SyntheticEstate
 
     public INetskopeReader CreateNetskopeReader() => new FakeNetskopeReader(NetskopeClients);
 
-    public ISccmReader CreateSccmReader() => new InMemorySccmReader(SccmSystems, SoftwareFor);
+    public ISccmReader CreateSccmReader() => new InMemorySccmReader(SccmSystems, SoftwareFor, SccmExtrasById);
 
     public IDirectoryReader CreateDirectoryReader() => new FakeDirectoryReader(AdComputers);
+
+    public IGraphGovernanceReader CreateGovernanceReader() => new FakeGovernanceReader
+    {
+        Protection = AppProtectionPolicies, Configs = AppConfigs, ConditionalAccess = ConditionalAccessPolicies, SignIns = SignIns,
+    };
 
     public IGraphReader CreateGraphReader() => new FakeGraphReader(IntuneDevices, EntraDevices)
     {
@@ -442,12 +451,67 @@ public sealed class SyntheticEstate
         }
 
         Users.AddRange(userIds.Values);
+        EnrichGovernance(random);
+        EnrichNetwork(seed);
 
         // Applications Intune detected on Windows devices.
         var names = new[] { ("Microsoft 365 Apps", "16.0.17928"), ("Google Chrome", "129.0.6668"), ("Zoom", "6.2.0"), ("Adobe Reader", "24.003"), ("7-Zip", "23.01"), ("Java 8", "8.0.421"), ("Slack", "4.40.133") };
         foreach (var d in IntuneDevices.Where(d => d.OperatingSystem == "Windows"))
         {
             DetectedApps[d.Id] = names.Where(_ => random.NextDouble() < .7).Select(n => new DetectedApp(n.Item1, n.Item2, null, random.Next(20, 900) * 1_000_000L)).ToList();
+        }
+    }
+
+    /// <summary>Synthetic governance data: protection policies (one with deliberate gaps), Edge URL lists, Conditional Access and Microsoft 365 sign-ins.</summary>
+    private void EnrichGovernance(Random random)
+    {
+        AppProtectionPolicies.Add(new AppProtectionPolicyInfo("00000000-0000-4000-8000-0000000000a1", "iOS", "iOS - Proteção de apps corporativos", Now.AddDays(-40), 5, true, false, "Grupo: BYOD - Celulares",
+            ["com.microsoft.office.outlook", "com.microsoft.teams", "com.microsoft.msedge", "com.microsoft.skydrive"],
+            new Dictionary<string, string>
+            {
+                ["allowedOutboundClipboardSharingLevel"] = "managedAppsWithPasteIn", ["allowedOutboundDataTransferDestinations"] = "managedApps", ["allowedInboundDataTransferSources"] = "managedApps",
+                ["allowedDataStorageLocations"] = "oneDriveForBusiness,sharePoint", ["dataBackupBlocked"] = "true", ["pinRequired"] = "true", ["minimumPinLength"] = "6",
+                ["appDataEncryptionType"] = "whenDeviceLocked", ["periodOfflineBeforeWipeIsEnforced"] = "P90D",
+            }));
+        AppProtectionPolicies.Add(new AppProtectionPolicyInfo("00000000-0000-4000-8000-0000000000a2", "Android", "Android - Proteção de apps corporativos", Now.AddDays(-200), 2, true, false, "Grupo: BYOD - Celulares",
+            ["com.microsoft.office.outlook", "com.microsoft.teams", "com.microsoft.emmx", "com.microsoft.skydrive"],
+            new Dictionary<string, string>
+            {
+                ["allowedOutboundClipboardSharingLevel"] = "allowed", ["allowedOutboundDataTransferDestinations"] = "allApps", ["allowedInboundDataTransferSources"] = "allApps",
+                ["allowedDataStorageLocations"] = "oneDriveForBusiness,sharePoint,localStorage", ["dataBackupBlocked"] = "false", ["pinRequired"] = "true", ["minimumPinLength"] = "4",
+                ["encryptAppData"] = "true", ["screenCaptureBlocked"] = "false",
+            }));
+        AppProtectionPolicies.Add(new AppProtectionPolicyInfo("00000000-0000-4000-8000-0000000000a3", "iOS", "iOS - Piloto restrito", Now.AddDays(-5), 1, false, false, "Sem atribuição", ["com.microsoft.office.outlook"],
+            new Dictionary<string, string> { ["allowedOutboundClipboardSharingLevel"] = "blocked", ["pinRequired"] = "true", ["dataBackupBlocked"] = "true" }));
+
+        string Sites(int n) => string.Join("|", Enumerable.Range(0, n).Select(i => $"bloqueado{i}.exemplo.sim"));
+        AppConfigs.Add(new AppConfigInfo("00000000-0000-4000-8000-0000000000b1", "managed-app", "iOS", "Edge corporativo - iOS", Now.AddDays(-12), "Grupo: BYOD - Celulares", ["com.microsoft.msedge"],
+            new Dictionary<string, string> { ["com.microsoft.intune.mam.managedbrowser.BlockListURLs"] = Sites(912), ["com.microsoft.intune.mam.managedbrowser.AllowListURLs"] = "corp.azul.sim|intranet.azul.sim" }));
+        AppConfigs.Add(new AppConfigInfo("00000000-0000-4000-8000-0000000000b2", "managed-device", "Android", "Edge - perfil de trabalho Android", Now.AddDays(-30), "Grupo: BYOD - Celulares", [],
+            new Dictionary<string, string> { ["URLBlocklist"] = Sites(120), ["URLAllowlist"] = "corp.azul.sim" }));
+
+        ConditionalAccessPolicies.Add(new ConditionalAccessInfo("00000000-0000-4000-8000-0000000000c1", "Exigir app protegido em celulares", "enabled", Now.AddDays(-60), "Todos os usuários", "Microsoft 365", "android, iOS",
+            ["approvedApplication", "compliantApplication"], false, true, true, false, true));
+        ConditionalAccessPolicies.Add(new ConditionalAccessInfo("00000000-0000-4000-8000-0000000000c2", "Exigir dispositivo compliant em Windows", "enabled", Now.AddDays(-90), "Todos os usuários", "Todos os aplicativos", "windows",
+            ["compliantDevice", "mfa"], true, false, false, true, true));
+        ConditionalAccessPolicies.Add(new ConditionalAccessInfo("00000000-0000-4000-8000-0000000000c3", "Exigir MFA fora da rede (relatório)", "enabledForReportingButNotEnforced", Now.AddDays(-10), "3 grupo(s)", "Todos os aplicativos", "Qualquer",
+            ["mfa"], false, false, false, true, true));
+
+        // Microsoft 365 access: most personal phones and half of the Windows laptops signed in recently; some people use a browser on a device nobody knows.
+        var workloads = new[] { "Exchange", "SharePoint", "Teams", "OneDrive" };
+        foreach (var d in IntuneDevices.Where(d => d.AzureAdDeviceId is not null && random.NextDouble() < (d.OwnerType == "personal" ? .8 : .5)))
+        {
+            var mine = workloads.Where(_ => random.NextDouble() < .6).DefaultIfEmpty("Exchange").ToList();
+            SignIns.Add(new SignInAccess("dev:" + d.AzureAdDeviceId, d.UserId, d.UserPrincipalName, d.AzureAdDeviceId.ToString(), d.DeviceName, d.OperatingSystem, d.OperatingSystem is "iOS" or "Android" ? "Edge Mobile" : "Edge",
+                d.OwnerType == "company", d.ComplianceState == "compliant", d.OwnerType == "company" ? "AzureAd" : "Workplace", Now.AddHours(-random.Next(1, 24 * 12)), string.Join(",", mine), random.Next(1, 90), "Mobile Apps and Desktop clients"));
+        }
+
+        for (var k = 0; k < 18; k++)
+        {
+            var user = Users[random.Next(Users.Count)];
+            var os = k % 3 == 0 ? "Windows" : k % 3 == 1 ? "iOS" : "Android";
+            SignIns.Add(new SignInAccess($"anon:{user.Id}|{os}|chrome".ToLowerInvariant(), user.Id, user.UserPrincipalName, null, null, os, "Chrome", null, null, null,
+                Now.AddHours(-random.Next(1, 24 * 10)), string.Join(",", workloads.Where(_ => random.NextDouble() < .5).DefaultIfEmpty("Exchange")), random.Next(1, 20), "Browser"));
         }
     }
 
@@ -458,8 +522,51 @@ public sealed class SyntheticEstate
         return new Guid(bytes);
     }
 
-    private sealed class InMemorySccmReader(IEnumerable<SccmSystem> systems, Func<int, IReadOnlyList<SccmSoftware>> software) : ISccmReader
+    /// <summary>Deterministic physical-looking MAC for a key (an Entra device id or a resource id).</summary>
+    private static string MacFor(int seed, string key)
     {
+        var bytes = new byte[6];
+        new Random(HashCode.Combine(seed, key)).NextBytes(bytes);
+        bytes[0] = (byte)(0xA4 & 0xFC); // universally administered, unicast
+        return string.Join(":", bytes.Select(b => b.ToString("X2")));
+    }
+
+    public Dictionary<int, SccmExtras> SccmExtrasById { get; } = [];
+
+    private void EnrichNetwork(int seed)
+    {
+        for (var i = 0; i < SccmSystems.Count; i++)
+        {
+            var s = SccmSystems[i];
+            var key = s.AadDeviceId?.ToString() ?? "rid" + s.ResourceId;
+            var chassis = (s.Name ?? "").Contains("-SRV-", StringComparison.OrdinalIgnoreCase) ? ChassisKinds.Server : (s.Name ?? "").Contains("-NB-", StringComparison.OrdinalIgnoreCase) ? ChassisKinds.Laptop : ChassisKinds.Desktop;
+            var vm = (s.Name ?? "").Contains("-VM-", StringComparison.OrdinalIgnoreCase);
+            SccmExtrasById[s.ResourceId] = new SccmExtras(s.ResourceId, [vm ? "00:15:5D:" + MacFor(seed, key)[9..] : MacFor(seed, key)], [$"10.{seed % 200}.{s.ResourceId % 250}.{s.ResourceId % 200 + 10}"], vm ? null : chassis);
+        }
+
+        // Two different physical machines that report the same MAC (a swapped card or a re-imaged laptop): the data-quality page must show it.
+        if (SccmSystems.Count > 10)
+        {
+            var (a, b) = (SccmSystems[3], SccmSystems[7]);
+            SccmExtrasById[b.ResourceId] = SccmExtrasById[b.ResourceId] with { Macs = SccmExtrasById[a.ResourceId].Macs };
+        }
+
+        for (var i = 0; i < IntuneDevices.Count; i++)
+        {
+            var d = IntuneDevices[i];
+            if (d.OwnerType == "personal" || d.AzureAdDeviceId is null)
+            {
+                continue;
+            }
+
+            IntuneDevices[i] = d with { EthernetMac = MacFor(seed, d.AzureAdDeviceId.ToString()!), WifiMac = MacFor(seed, "wifi" + d.AzureAdDeviceId) };
+        }
+    }
+
+    private sealed class InMemorySccmReader(IEnumerable<SccmSystem> systems, Func<int, IReadOnlyList<SccmSoftware>> software, IReadOnlyDictionary<int, SccmExtras> extras) : ISccmReader
+    {
+        public Task<IReadOnlyDictionary<int, SccmExtras>> ReadExtrasAsync(CancellationToken cancellationToken) => Task.FromResult(extras);
+
         public Task<IReadOnlyList<SccmSoftware>> ReadSoftwareAsync(int resourceId, CancellationToken cancellationToken) => Task.FromResult(software(resourceId));
 
         public async IAsyncEnumerable<SccmSystem> ReadSystemsAsync([EnumeratorCancellation] CancellationToken cancellationToken)

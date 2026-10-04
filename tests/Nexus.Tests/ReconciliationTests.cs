@@ -5,6 +5,7 @@ using Nexus.Core;
 using Nexus.Core.Configuration;
 using Nexus.Data.Entities;
 using Nexus.Data.Support;
+using Nexus.Collectors.Sccm;
 using Nexus.Reconciliation;
 using Nexus.Simulation;
 using Nexus.Worker.Collection;
@@ -366,6 +367,56 @@ public class InventoryPipelineTests : IDisposable
         await CollectAllAsync();
         Assert.Equal(versions, await db.RawRecordVersions.CountAsync()); // same payloads: no duplicate versions
         Assert.Equal(changes, await db.AssetChanges.CountAsync()); // nothing changed: nothing recorded
+    }
+
+    [Fact]
+    public async Task GovernanceCollectorsFillTheirTablesAndSignInsFeedTheAssets()
+    {
+        await CollectAllAsync();
+        await using var db = _db.Create();
+        Assert.True(await db.AppProtectionPolicies.AnyAsync(p => p.Platform == "iOS" && p.IsAssigned));
+        Assert.True(await db.AppProtectionPolicies.AnyAsync(p => !p.IsAssigned));
+        Assert.True(await db.AppConfigs.AnyAsync(c => c.Kind == "managed-app"));
+        Assert.True(await db.ConditionalAccessPolicies.AnyAsync(c => c.RequiresAppProtection));
+        Assert.True(await db.AccessEvidence.AnyAsync(a => a.EntraDeviceId != null));
+        Assert.True(await db.AccessEvidence.AnyAsync(a => a.EntraDeviceId == null)); // access without a known device
+
+        var assets = await db.Assets.ToListAsync();
+        Assert.Contains(assets, a => a.LastM365AccessAt != null && a.M365Workloads != null);
+        Assert.DoesNotContain(assets, a => a.LastM365AccessAt != null && !a.InEntra && !a.InIntune); // only device-identified sign-ins attach
+    }
+
+    [Fact]
+    public async Task SignInsWithoutPermissionFailOnlyThatJobAndNameThePermission()
+    {
+        await CollectAllAsync();
+        await using var db = _db.Create();
+        var assets = await db.Assets.CountAsync();
+        var evidence = await db.AccessEvidence.CountAsync();
+
+        _sources.FailSignIns = true;
+        var outcome = await _runner.RunAsync(JobNames.SignIns, default);
+
+        Assert.Equal(JobRunner.StatusFailed, outcome.Status);
+        Assert.Contains("AuditLog.Read.All", outcome.Message);
+        Assert.Contains("Entra ID P1", outcome.Message);
+        Assert.Equal(evidence, await db.AccessEvidence.CountAsync()); // last valid snapshot kept
+        Assert.Equal(assets, await db.Assets.CountAsync());
+        Assert.Equal(JobRunner.StatusSucceeded, (await _runner.RunAsync(JobNames.ConditionalAccess, default)).Status);
+    }
+
+    [Fact]
+    public async Task SccmNetworkDataFillsAssetsTypesAndTheSharedMacReview()
+    {
+        await CollectAllAsync();
+        await using var db = _db.Create();
+        var assets = await db.Assets.ToListAsync();
+        Assert.Contains(assets, a => a.MacAddresses != null && a.IpAddresses != null && a.Chassis == "laptop" && a.AssetType == AssetTypes.Notebook);
+        Assert.Contains(assets, a => a.Chassis == "server" && a.AssetType == AssetTypes.Server);
+        Assert.Contains(await db.ReviewItems.ToListAsync(), r => r.Kind == "SharedMac");
+        Assert.DoesNotContain(assets, a => a.Ownership == "Personal" && a.InIntune && !a.InSccm && a.MacAddresses != null); // personal devices keep no MAC (LGPD)
+        Assert.DoesNotContain(await db.IntuneDevices.ToListAsync(), d => d.OwnerType == "personal" && (d.EthernetMac != null || d.WifiMac != null));
+        Assert.All(assets.Where(a => a.MacAddresses != null), a => Assert.All(a.MacAddresses!.Split(','), m => Assert.Equal(m, NetworkIds.NormalizeMac(m))));
     }
 
     [Fact]

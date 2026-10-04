@@ -23,10 +23,13 @@ public static class JobNames
     public const string Mam = "intune.mam";
     public const string Users = "entra.users";
     public const string Policies = "intune.policies";
+    public const string AppPolicies = "intune.apppolicies";
+    public const string ConditionalAccess = "entra.ca";
+    public const string SignIns = "entra.signins";
     public const string Reconcile = "inventory.reconcile";
     // Order matters: users are resolved from the devices and MAM registrations collected just before.
-    public static readonly string[] All = [Sccm, ActiveDirectory, Intune, Entra, Xdr, Netskope, Mam, Users, Policies, Reconcile];
-    public static readonly string[] Collections = [Sccm, ActiveDirectory, Intune, Entra, Xdr, Netskope, Mam, Users, Policies];
+    public static readonly string[] All = [Sccm, ActiveDirectory, Intune, Entra, Xdr, Netskope, Mam, Users, Policies, AppPolicies, ConditionalAccess, SignIns, Reconcile];
+    public static readonly string[] Collections = [Sccm, ActiveDirectory, Intune, Entra, Xdr, Netskope, Mam, Users, Policies, AppPolicies, ConditionalAccess, SignIns];
 }
 
 public sealed record JobOutcome(string Status, int? Records, string? Message);
@@ -65,6 +68,9 @@ public sealed class JobRunner(
         JobNames.Mam => TimeSpan.FromMinutes(settings.Collection.MamIntervalMinutes),
         JobNames.Users => TimeSpan.FromMinutes(settings.Collection.UsersIntervalMinutes),
         JobNames.Policies => TimeSpan.FromMinutes(settings.Collection.PoliciesIntervalMinutes),
+        JobNames.AppPolicies => TimeSpan.FromMinutes(settings.Governance.AppPoliciesIntervalMinutes),
+        JobNames.ConditionalAccess => TimeSpan.FromMinutes(settings.Governance.ConditionalAccessIntervalMinutes),
+        JobNames.SignIns => TimeSpan.FromMinutes(settings.Governance.SignInsIntervalMinutes),
         JobNames.Reconcile => TimeSpan.FromMinutes(settings.Collection.ReconcileIntervalMinutes),
         _ => throw new ArgumentOutOfRangeException(nameof(job), job, "Coleta desconhecida."),
     };
@@ -120,6 +126,9 @@ public sealed class JobRunner(
                 JobNames.Mam => await CollectMamAsync(settings, now, cancellationToken),
                 JobNames.Users => await CollectUsersAsync(settings, now, cancellationToken),
                 JobNames.Policies => await CollectPoliciesAsync(settings, now, cancellationToken),
+                JobNames.AppPolicies => await CollectAppPoliciesAsync(settings, now, cancellationToken),
+                JobNames.ConditionalAccess => await CollectConditionalAccessAsync(settings, now, cancellationToken),
+                JobNames.SignIns => await CollectSignInsAsync(settings, now, cancellationToken),
                 JobNames.Reconcile => await ReconcileAsync(cancellationToken),
                 _ => throw new ArgumentOutOfRangeException(nameof(job)),
             };
@@ -201,7 +210,7 @@ public sealed class JobRunner(
                 LastSyncAt = d.LastSyncAt, EnrolledAt = d.EnrolledAt, ComplianceState = d.ComplianceState,
                 UserPrincipalName = d.UserPrincipalName, UserId = d.UserId, IsEncrypted = d.IsEncrypted, JailBroken = d.JailBroken, IsSupervised = d.IsSupervised,
                 TotalStorageBytes = d.TotalStorageBytes, FreeStorageBytes = d.FreeStorageBytes, PhysicalMemoryBytes = d.PhysicalMemoryBytes,
-                DeviceRegistrationState = d.DeviceRegistrationState, AutopilotEnrolled = d.AutopilotEnrolled, ComplianceGraceExpiresAt = d.ComplianceGraceExpiresAt, CollectedAt = now,
+                DeviceRegistrationState = d.DeviceRegistrationState, AutopilotEnrolled = d.AutopilotEnrolled, ComplianceGraceExpiresAt = d.ComplianceGraceExpiresAt, EthernetMac = NetworkIds.NormalizeMac(d.EthernetMac), WifiMac = NetworkIds.NormalizeMac(d.WifiMac), CollectedAt = now,
             };
         }
 
@@ -264,6 +273,27 @@ public sealed class JobRunner(
         if (reader is SqlSccmReader { FallbackReason: { } reason })
         {
             logger.LogWarning("{Reason}", reason);
+        }
+
+        try
+        {
+            var extras = await reader.ReadExtrasAsync(cancellationToken);
+            foreach (var (id, e) in extras.Where(x => rows.ContainsKey(x.Key)))
+            {
+                rows[id].MacAddresses = e.Macs.Count == 0 ? null : string.Join(",", e.Macs);
+                rows[id].IpAddresses = e.Ips.Count == 0 ? null : string.Join(",", e.Ips.Take(8));
+                rows[id].Chassis = e.Chassis;
+            }
+
+            if (reader is SqlSccmReader { ExtrasWarning: { } warning })
+            {
+                logger.LogWarning("{Warning}", warning);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // MAC, IP and chassis are enrichment: the devices themselves were read, so the collection must not fail because of them.
+            logger.LogWarning(ex, "Não foi possível ler MAC, IP e chassi do SCCM; a coleta dos dispositivos continua.");
         }
 
         _slowQueryObserved = queryGate.SlowQueryObserved;
@@ -340,6 +370,86 @@ public sealed class JobRunner(
         return rows.Count;
     }
 
+    private async Task<int?> CollectAppPoliciesAsync(NexusSettings settings, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var reader = sources.CreateGovernanceReader(settings);
+        if (reader is null)
+        {
+            return null;
+        }
+
+        var policies = new Dictionary<string, AppProtectionPolicyRecord>();
+        await foreach (var p in reader.ReadAppProtectionPoliciesAsync(cancellationToken))
+        {
+            policies[p.Id] = new AppProtectionPolicyRecord
+            {
+                Id = p.Id, Platform = p.Platform, Name = p.Name, LastModifiedAt = p.LastModifiedAt, Version = p.Version, IsAssigned = p.IsAssigned, AssignedToAll = p.AssignedToAll,
+                Assignments = p.Assignments, AppsJson = System.Text.Json.JsonSerializer.Serialize(p.Apps), SettingsJson = System.Text.Json.JsonSerializer.Serialize(p.Settings), CollectedAt = now,
+            };
+        }
+
+        var configs = new Dictionary<string, AppConfigRecord>();
+        await foreach (var c in reader.ReadAppConfigurationsAsync(cancellationToken))
+        {
+            configs[c.Id] = new AppConfigRecord
+            {
+                Id = c.Id, Kind = c.Kind, Platform = c.Platform, Name = c.Name, LastModifiedAt = c.LastModifiedAt, Assignments = c.Assignments,
+                AppsJson = System.Text.Json.JsonSerializer.Serialize(c.Apps), SettingsJson = System.Text.Json.JsonSerializer.Serialize(c.Settings), CollectedAt = now,
+            };
+        }
+
+        await ReplaceAsync<AppProtectionPolicyRecord>(policies.Values.ToList(), cancellationToken, "app-policy", r => r.Id);
+        await ReplaceAsync<AppConfigRecord>(configs.Values.ToList(), cancellationToken, "app-config", r => r.Id);
+        return policies.Count + configs.Count;
+    }
+
+    private async Task<int?> CollectConditionalAccessAsync(NexusSettings settings, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var reader = sources.CreateGovernanceReader(settings);
+        if (reader is null)
+        {
+            return null;
+        }
+
+        var rows = new Dictionary<string, ConditionalAccessRecord>();
+        await foreach (var c in reader.ReadConditionalAccessAsync(cancellationToken))
+        {
+            rows[c.Id] = new ConditionalAccessRecord
+            {
+                Id = c.Id, Name = c.Name, State = c.State, ModifiedAt = c.ModifiedAt, Users = c.Users, Applications = c.Applications, Platforms = c.Platforms, GrantControls = string.Join(",", c.GrantControls),
+                RequiresCompliantDevice = c.RequiresCompliantDevice, RequiresApprovedApp = c.RequiresApprovedApp, RequiresAppProtection = c.RequiresAppProtection, RequiresMfa = c.RequiresMfa,
+                TargetsMicrosoft365 = c.TargetsMicrosoft365, CollectedAt = now,
+            };
+        }
+
+        await ReplaceAsync<ConditionalAccessRecord>(rows.Values.ToList(), cancellationToken, "ca-policy", r => r.Id);
+        return rows.Count;
+    }
+
+    private async Task<int?> CollectSignInsAsync(NexusSettings settings, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var reader = sources.CreateGovernanceReader(settings);
+        if (reader is null)
+        {
+            return null;
+        }
+
+        var since = now - TimeSpan.FromDays(Math.Clamp(settings.Governance.SignInWindowDays, 1, 30));
+        var rows = new Dictionary<string, AccessEvidenceRecord>();
+        await foreach (var a in reader.ReadSignInAccessAsync(since, Math.Clamp(settings.Governance.MaxSignInPages, 1, 400), cancellationToken))
+        {
+            rows[a.Key] = new AccessEvidenceRecord
+            {
+                Key = a.Key, UserId = a.UserId, UserPrincipalName = a.UserPrincipalName, EntraDeviceId = a.EntraDeviceId, DeviceName = a.DeviceName, OperatingSystem = a.OperatingSystem,
+                Browser = a.Browser, IsManaged = a.IsManaged, IsCompliant = a.IsCompliant, TrustType = a.TrustType, LastAccessAt = a.LastAccessAt, Workloads = a.Workloads, Count = a.Count,
+                ClientApp = a.ClientApp, CollectedAt = now,
+            };
+        }
+
+        await ReplaceAsync<AccessEvidenceRecord>(rows.Values.ToList(), cancellationToken); // volatile by nature: the asset timeline keeps the dates
+        return rows.Count;
+    }
+
     private async Task<int?> CollectMamAsync(NexusSettings settings, DateTimeOffset now, CancellationToken cancellationToken)
     {
         var reader = sources.CreateGraphReader(settings);
@@ -355,7 +465,7 @@ public sealed class JobRunner(
             {
                 Id = r.Id, UserId = r.UserId, DeviceName = r.DeviceName, DeviceTag = r.DeviceTag, DeviceType = r.DeviceType, AppIdentifier = r.AppIdentifier,
                 AppVersion = r.AppVersion, PlatformVersion = r.PlatformVersion, LastSyncAt = r.LastSyncAt, CreatedAt = r.CreatedAt, FlaggedReasons = r.FlaggedReasons,
-                AppliedPolicies = r.AppliedPolicies, IntendedPolicies = r.IntendedPolicies, CollectedAt = now,
+                AppliedPolicies = r.AppliedPolicies, IntendedPolicies = r.IntendedPolicies, LastOperation = r.LastOperation, CollectedAt = now,
             };
         }
 

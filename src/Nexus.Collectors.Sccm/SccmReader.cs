@@ -37,12 +37,42 @@ public sealed record SccmSystem(
 
 public sealed record SccmSoftware(string Name, string? Version, string? Publisher, DateTimeOffset? InstalledOn);
 
+/// <summary>Network identifiers and the hardware chassis of one SCCM resource. Read apart from the main query so a site that does not expose these views loses only these.</summary>
+public sealed record SccmExtras(int ResourceId, IReadOnlyList<string> Macs, IReadOnlyList<string> Ips, string? Chassis);
+
+/// <summary>Maps the SMBIOS chassis type code (Win32_SystemEnclosure) to what the inventory needs: laptop, desktop, server, tablet or virtual.</summary>
+public static class ChassisKinds
+{
+    public const string Laptop = "laptop", Desktop = "desktop", Server = "server", Tablet = "tablet", Other = "other";
+
+    public static string? FromCode(int code) => code switch
+    {
+        8 or 9 or 10 or 14 or 31 or 32 => Laptop, // portable, laptop, notebook, sub-notebook, convertible, detachable
+        30 => Tablet,
+        3 or 4 or 5 or 6 or 7 or 13 or 15 or 16 or 24 or 34 or 35 or 36 => Desktop, // desktop, low profile, pizza box, mini tower, tower, all in one, space-saving, lunch box, mini PC...
+        17 or 23 or 25 or 28 or 29 => Server, // main server chassis, rack mount, multi-system, blade, blade enclosure
+        1 or 2 => null, // other / unknown: says nothing
+        _ => Other,
+    };
+
+    /// <summary>Several enclosures can be reported (docks, expansion boxes): the first one that identifies the machine wins, laptops before the rest.</summary>
+    public static string? Pick(IEnumerable<int> codes)
+    {
+        var kinds = codes.Select(FromCode).Where(k => k is not null).Select(k => k!).Distinct().ToList();
+        return kinds.Contains(Laptop) ? Laptop : kinds.Contains(Tablet) ? Tablet : kinds.Contains(Server) ? Server : kinds.Contains(Desktop) ? Desktop : kinds.FirstOrDefault();
+    }
+}
+
 public interface ISccmReader
 {
     IAsyncEnumerable<SccmSystem> ReadSystemsAsync(CancellationToken cancellationToken);
 
     /// <summary>Installed programs of one device (Add/Remove Programs, 32 and 64 bit), read on demand.</summary>
     Task<IReadOnlyList<SccmSoftware>> ReadSoftwareAsync(int resourceId, CancellationToken cancellationToken);
+
+    /// <summary>MAC addresses, IP addresses and chassis per resource. Optional: an empty result means "not available", never "no addresses".</summary>
+    Task<IReadOnlyDictionary<int, SccmExtras>> ReadExtrasAsync(CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<int, SccmExtras>>(new Dictionary<int, SccmExtras>());
 }
 
 /// <summary>
@@ -108,6 +138,62 @@ public sealed class SqlSccmReader(SccmSettings settings, SccmQueryGate gate) : I
         SELECT DisplayName0, Version0, Publisher0, InstallDate0 FROM dbo.v_GS_ADD_REMOVE_PROGRAMS_64 WHERE ResourceID = @id AND DisplayName0 IS NOT NULL
         ORDER BY 1;
         """;
+
+    public const string MacQuery = Isolation + "SELECT ResourceID, MAC_Addresses0 FROM dbo.v_RA_System_MACAddresses WHERE MAC_Addresses0 IS NOT NULL;";
+
+    public const string IpQuery = Isolation + "SELECT ResourceID, IP_Addresses0 FROM dbo.v_RA_System_IPAddresses WHERE IP_Addresses0 IS NOT NULL;";
+
+    public const string ChassisQuery = Isolation + "SELECT ResourceID, ChassisTypes0 FROM dbo.v_GS_SYSTEM_ENCLOSURE WHERE ChassisTypes0 IS NOT NULL;";
+
+    /// <summary>Why the last <see cref="ReadExtrasAsync"/> could not read one of its views (null when everything was read).</summary>
+    public string? ExtrasWarning { get; private set; }
+
+    public async Task<IReadOnlyDictionary<int, SccmExtras>> ReadExtrasAsync(CancellationToken cancellationToken)
+    {
+        var connectionString = SccmConnectionFactory.BuildConnectionString(settings);
+        ExtrasWarning = null;
+        var warnings = new List<string>();
+
+        async Task<List<(int Id, string Value)>> Pairs(string query, string what)
+        {
+            try
+            {
+                return await gate.RunAsync(async ct =>
+                {
+                    await using var connection = new SqlConnection(connectionString);
+                    await connection.OpenAsync(ct);
+                    await using var command = new SqlCommand(query, connection) { CommandTimeout = settings.CommandTimeoutSeconds };
+                    var list = new List<(int, string)>();
+                    await using var reader = await command.ExecuteReaderAsync(ct);
+                    while (await reader.ReadAsync(ct))
+                    {
+                        if (!reader.IsDBNull(0) && !reader.IsDBNull(1))
+                        {
+                            list.Add((reader.GetInt32(0), Convert.ToString(reader.GetValue(1)) ?? ""));
+                        }
+                    }
+
+                    return list;
+                }, cancellationToken);
+            }
+            catch (SqlException ex) when (FallbackErrors.Contains(ex.Number) || ex.Number is 262 or 300)
+            {
+                warnings.Add($"{what} indisponível neste site ({ex.Message}); rode 'nexusctl sccm-grant' para liberar as views novas.");
+                return [];
+            }
+        }
+
+        var macs = await Pairs(MacQuery, "MAC addresses (v_RA_System_MACAddresses)");
+        var ips = await Pairs(IpQuery, "IP addresses (v_RA_System_IPAddresses)");
+        var chassis = await Pairs(ChassisQuery, "Tipo de chassi (v_GS_SYSTEM_ENCLOSURE)");
+        ExtrasWarning = warnings.Count == 0 ? null : string.Join(" ", warnings);
+
+        var ids = macs.Select(x => x.Id).Concat(ips.Select(x => x.Id)).Concat(chassis.Select(x => x.Id)).Distinct();
+        return ids.ToDictionary(id => id, id => new SccmExtras(id,
+            macs.Where(x => x.Id == id).Select(x => NetworkIds.NormalizeMac(x.Value)).Where(m => m is not null).Select(m => m!).Distinct().ToList(),
+            ips.Where(x => x.Id == id).Select(x => x.Value.Trim()).Where(v => v.Length > 0).Distinct().ToList(),
+            ChassisKinds.Pick(chassis.Where(x => x.Id == id).Select(x => int.TryParse(x.Value, out var code) ? code : 0))));
+    }
 
     // SQL errors that mean "this site does not have that view/column or the account cannot read it".
     private static readonly int[] FallbackErrors = [207, 208, 229];
@@ -232,4 +318,40 @@ public sealed class SqlSccmReader(SccmSettings settings, SccmQueryGate gate) : I
         string text when Guid.TryParse(text, out var parsed) => parsed,
         _ => null,
     };
+}
+
+
+/// <summary>MAC address hygiene: the formats vary by source, and many addresses say nothing about a device (virtual adapters, locally administered, all zeros).</summary>
+public static class NetworkIds
+{
+    private static readonly string[] VirtualPrefixes = ["00:50:56", "00:0C:29", "00:05:69", "00:15:5D", "08:00:27", "52:54:00", "00:1C:42", "00:16:3E"];
+
+    /// <summary>AA:BB:CC:DD:EE:FF in upper case, or null when the text is not a MAC address.</summary>
+    public static string? NormalizeMac(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var hex = new string(value.Where(Uri.IsHexDigit).ToArray());
+        if (hex.Length != 12 || value.Trim().Length > 17)
+        {
+            return null;
+        }
+
+        return string.Join(":", Enumerable.Range(0, 6).Select(i => hex.Substring(i * 2, 2))).ToUpperInvariant();
+    }
+
+    /// <summary>True when the address can help tell two records apart: not zero, not a broadcast, not locally administered and not from a hypervisor.</summary>
+    public static bool IsIdentifying(string? mac)
+    {
+        if (NormalizeMac(mac) is not { } m || m is "00:00:00:00:00:00" or "FF:FF:FF:FF:FF:FF")
+        {
+            return false;
+        }
+
+        var firstByte = Convert.ToInt32(m[..2], 16);
+        return (firstByte & 0b10) == 0 && !VirtualPrefixes.Any(p => m.StartsWith(p, StringComparison.Ordinal)) && (firstByte & 1) == 0;
+    }
 }

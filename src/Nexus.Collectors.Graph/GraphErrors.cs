@@ -29,6 +29,13 @@ public static partial class GraphErrors
             "Rode Configurar-Azure.cmd -ValidateOnly no servidor para ver o motivo e corrigir.").WithDetail(text);
     }
 
+    /// <summary>403 on an optional governance read: names the permission (and the license when one is needed) instead of a generic denial.</summary>
+    public static NexusError MissingPermission(string feature, string permission, string? license, string path, string body) =>
+        new NexusError("NEXUS-AZ-403G", $"O Microsoft Graph negou a leitura de {feature}.",
+            $"{feature} ficam sem coleta; o restante do inventário continua normal e o último resultado válido é mantido.",
+            $"No aplicativo 'Azul Nexus – Coletor', conceda a permissão de aplicativo {permission} com consentimento do administrador (rode Configurar-Azure.cmd)." + (license is null ? "" : $" {license}"))
+            .WithDetail($"{path}: {Describe(body)}");
+
     public static NexusError FromGraph(HttpStatusCode status, string body, string path)
     {
         var text = Describe(body);

@@ -6,6 +6,7 @@ namespace Nexus.Core.Configuration;
 public sealed class NexusSettings
 {
     public EvidenceSettings Evidence { get; set; } = new();
+    public GovernanceSettings Governance { get; set; } = new();
 
     public int SchemaVersion { get; set; } = 1;
     public DatabaseSettings Database { get; set; } = new();
@@ -169,7 +170,7 @@ public sealed class EvidenceSettings
     /// <summary>Probability (0 to 1) that a fresh report from the tool means the device is in use. Identity sources weigh less than telemetry.</summary>
     public Dictionary<string, double> Reliability { get; set; } = new()
     {
-        ["sccm"] = 0.75, ["intune"] = 0.80, ["xdr"] = 0.80, ["netskope"] = 0.70, ["mam"] = 0.55, ["entra"] = 0.40, ["ad"] = 0.25,
+        ["sccm"] = 0.75, ["intune"] = 0.80, ["xdr"] = 0.80, ["netskope"] = 0.70, ["mam"] = 0.55, ["m365"] = 0.60, ["entra"] = 0.40, ["ad"] = 0.25,
     };
 
     /// <summary>Independent tools needed inside the confirmed window to call a device confirmed.</summary>
@@ -184,6 +185,22 @@ public sealed class EvidenceSettings
         ["shared"] = ["SHARED", "COMPART"],
         ["iot"] = ["IOT"],
     };
+}
+
+/// <summary>Governance collectors: app protection policies and app configuration, Conditional Access and Microsoft 365 access (sign-ins).</summary>
+public sealed class GovernanceSettings
+{
+    /// <summary>Sign-ins of the last N days are summarized per device (access evidence). Larger windows read more pages.</summary>
+    public int SignInWindowDays { get; set; } = 14;
+    /// <summary>Pages of 500 sign-ins read per run (a cap, so a busy tenant cannot make the collection run for hours).</summary>
+    public int MaxSignInPages { get; set; } = 40;
+    /// <summary>Operational limit of entries in the Edge URL block list (Intune app configuration).</summary>
+    public int UrlBlocklistLimit { get; set; } = 1000;
+    /// <summary>Percent of the limit kept free for growth: the list is flagged when it gets past the rest.</summary>
+    public int UrlBlocklistReservePercent { get; set; } = 10;
+    public int AppPoliciesIntervalMinutes { get; set; } = 240;
+    public int ConditionalAccessIntervalMinutes { get; set; } = 240;
+    public int SignInsIntervalMinutes { get; set; } = 120;
 }
 
 public sealed class CollectionSettings

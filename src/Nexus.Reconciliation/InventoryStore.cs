@@ -26,7 +26,8 @@ public sealed class InventoryReconciler(INexusDbFactory dbFactory, TimeProvider 
             await db.Jobs.AnyAsync(j => j.Name == "intune.policies" && j.LastSuccessAt != null, cancellationToken),
             await db.XdrEndpoints.AsNoTracking().ToListAsync(cancellationToken),
             await db.NetskopeClients.AsNoTracking().ToListAsync(cancellationToken),
-            evidence);
+            evidence,
+            await db.AccessEvidence.AsNoTracking().ToListAsync(cancellationToken));
 
         var runId = Guid.NewGuid();
         var before = await db.Assets.AsNoTracking().ToDictionaryAsync(a => a.Id, cancellationToken);
@@ -90,7 +91,8 @@ public static class InventoryReports
     {
         var ok = (await db.Jobs.AsNoTracking().Where(j => j.LastSuccessAt != null).Select(j => j.Name).ToListAsync(cancellationToken)).ToHashSet();
         return new SourceAvailability(ok.Contains("sccm.devices"), ok.Contains("intune.devices"), ok.Contains("entra.devices"), ok.Contains("ad.computers"),
-            ok.Contains("intune.policies"), ok.Contains("intune.mam"), ok.Contains("entra.users"), ok.Contains("xdr.endpoints"), ok.Contains("netskope.clients"));
+            ok.Contains("intune.policies"), ok.Contains("intune.mam"), ok.Contains("entra.users"), ok.Contains("xdr.endpoints"), ok.Contains("netskope.clients"),
+            ok.Contains("intune.apppolicies"), ok.Contains("entra.ca"), ok.Contains("entra.signins"));
     }
 
     public static async Task<KpiReport> BuildAsync(NexusDbContext db, CancellationToken cancellationToken) =>

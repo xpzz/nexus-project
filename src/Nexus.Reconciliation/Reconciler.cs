@@ -1,4 +1,5 @@
 using Nexus.Collectors.Graph;
+using Nexus.Collectors.Sccm;
 using Nexus.Data.Entities;
 
 namespace Nexus.Reconciliation;
@@ -17,7 +18,8 @@ public sealed record ReconcileInput(
     bool PoliciesCollected = false,
     IReadOnlyList<XdrEndpointRecord>? Xdr = null,
     IReadOnlyList<NetskopeClientRecord>? Netskope = null,
-    EvidencePolicy? Evidence = null);
+    EvidencePolicy? Evidence = null,
+    IReadOnlyList<AccessEvidenceRecord>? Access = null);
 
 public sealed record ReviewDraft(string Kind, string Detail, IReadOnlyList<string> Sources);
 
@@ -290,6 +292,7 @@ public static class Reconciler
         }
 
         AttachMam(input, assets, links, previous, used, review);
+        ReviewSharedMacs(assets, links, review);
 
         // Last step, once every source is attached: the evidence engine decides the operational state with the type's own thresholds.
         var policy = input.Evidence ?? EvidencePolicy.FromWindow(input.ActivityWindow);
@@ -375,7 +378,9 @@ public static class Reconciler
         asset.SccmLastSwScanAt = primarySccm?.LastSwScanAt;
         asset.Uuid = primarySccm?.SmbiosGuid;
         asset.Fqdn = primaryAd?.DnsHostName ?? (primarySccm is { Domain.Length: > 0, Name.Length: > 0 } ? $"{primarySccm.Name}.{primarySccm.Domain}".ToLowerInvariant() : null);
-        asset.IpAddresses = primaryXdr?.Ip;
+        asset.IpAddresses = string.Join(",", sccm.SelectMany(r => (r.IpAddresses ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries)).Concat([primaryXdr?.Ip ?? ""]).Where(x => x.Length > 0).Distinct().Take(8)) is { Length: > 0 } ips ? ips : null;
+        asset.MacAddresses = string.Join(",", sccm.SelectMany(r => (r.MacAddresses ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries)).Concat(intune.SelectMany(r => new[] { r.EthernetMac, r.WifiMac }.Where(m => m is not null).Select(m => m!))).Distinct()) is { Length: > 0 } macs ? macs : null;
+        asset.Chassis = primarySccm?.Chassis;
         asset.LastUser = primarySccm?.LastLogonUser ?? primaryIntune?.UserPrincipalName;
         asset.IntuneEnrollmentType = primaryIntune?.EnrollmentType;
         asset.IntuneOwnerType = primaryIntune?.OwnerType;
@@ -385,6 +390,12 @@ public static class Reconciler
         asset.IntuneLastSyncAt = primaryIntune?.LastSyncAt;
         asset.EntraLastSignInAt = primaryEntra?.LastSignInAt;
         asset.AdLastLogonAt = primaryAd?.LastLogonTimestamp;
+
+        // Sign-ins that carry the Entra device id prove the device was used to reach Microsoft 365. The id is the one Entra and Intune share.
+        var access = entra.Select(e => e.DeviceId).Concat(intune.Select(i => i.AzureAdDeviceId)).Where(g => g is not null)
+            .Select(g => lookups.AccessByDevice.GetValueOrDefault(g!.Value.ToString().ToLowerInvariant())).Where(a => a is not null).MaxBy(a => a!.LastAccessAt);
+        asset.LastM365AccessAt = access?.LastAccessAt;
+        asset.M365Workloads = access?.Workloads;
 
         ActivityModel.Apply(asset, input.Now, input.ActivityWindow);
 
@@ -403,6 +414,7 @@ public static class Reconciler
     /// <summary>Lookups built once per run: users and policy counts per Intune device.</summary>
     private sealed class Lookups
     {
+        public Dictionary<string, AccessEvidenceRecord> AccessByDevice { get; init; } = [];
         public Dictionary<string, EntraUserRecord> UsersById { get; init; } = [];
         public Dictionary<string, EntraUserRecord> UsersByUpn { get; init; } = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, (int Compliance, int ComplianceFailed, int Config, int ConfigFailed)> Policies { get; init; } = [];
@@ -421,6 +433,8 @@ public static class Reconciler
 
             return new Lookups
             {
+                AccessByDevice = (input.Access ?? []).Where(a => GraphIds.IsUsable(a.EntraDeviceId)).GroupBy(a => a.EntraDeviceId!.ToLowerInvariant())
+                    .ToDictionary(g => g.Key, g => g.OrderByDescending(a => a.LastAccessAt).First()),
                 UsersById = users.GroupBy(u => u.Id).ToDictionary(g => g.Key, g => g.First()),
                 UsersByUpn = users.Where(u => !string.IsNullOrEmpty(u.UserPrincipalName)).GroupBy(u => u.UserPrincipalName!, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase),
                 Policies = policies,
@@ -493,6 +507,23 @@ public static class Reconciler
     /// Intune device of that platform; otherwise each device tag becomes its own asset (a personal device protected only by MAM),
     /// and an ambiguous user goes to the review queue.
     /// </summary>
+    /// <summary>
+    /// A hardware MAC address that appears on two different assets is worth a look (a cloned image, a swapped network card, a record that should have been merged).
+    /// Virtual, locally administered and zero addresses, and addresses seen on more than four assets (docks, NAT devices), are ignored. Informational: nothing is merged.
+    /// </summary>
+    private static void ReviewSharedMacs(List<Asset> assets, List<AssetLink> links, List<ReviewDraft> review)
+    {
+        var linkByAsset = links.GroupBy(l => l.AssetId).ToDictionary(g => g.Key, g => g.First());
+        var shared = assets.SelectMany(a => (a.MacAddresses ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries).Where(NetworkIds.IsIdentifying).Distinct().Select(m => (Mac: m, Asset: a)))
+            .GroupBy(x => x.Mac).Where(g => g.Select(x => x.Asset.Id).Distinct().Count() is > 1 and <= 4).OrderBy(g => g.Key, StringComparer.Ordinal).Take(200);
+        foreach (var g in shared)
+        {
+            var names = g.Select(x => x.Asset).DistinctBy(a => a.Id).ToList();
+            review.Add(new ReviewDraft("SharedMac", $"O endereço MAC {g.Key} aparece em {names.Count} equipamentos diferentes ({string.Join(", ", names.Select(a => a.Name))}). Pode ser imagem clonada, placa trocada ou registro duplicado. Nada foi mesclado.",
+                names.Where(a => linkByAsset.ContainsKey(a.Id)).Select(a => $"{linkByAsset[a.Id].Source}:{linkByAsset[a.Id].SourceKey}").ToList()));
+        }
+    }
+
     private static void AttachMam(ReconcileInput input, List<Asset> assets, List<AssetLink> links, Dictionary<(string, string), Guid> previous, HashSet<Guid> used, List<ReviewDraft> review)
     {
         var registrations = input.Mam ?? [];

@@ -26,7 +26,9 @@ public sealed record IntuneManagedDevice(
     long? PhysicalMemoryBytes = null,
     string? DeviceRegistrationState = null,
     bool? AutopilotEnrolled = null,
-    DateTimeOffset? ComplianceGraceExpiresAt = null);
+    DateTimeOffset? ComplianceGraceExpiresAt = null,
+    string? EthernetMac = null,
+    string? WifiMac = null);
 
 /// <summary>Microsoft Entra device. <see cref="DeviceId"/> equals the Intune azureADDeviceId (not the directory object id).</summary>
 public sealed record EntraDevice(
@@ -52,7 +54,7 @@ public sealed record DevicePolicyState(
 
 public sealed record MamRegistration(
     string Id, string? UserId, string? DeviceName, string? DeviceTag, string? DeviceType, string? AppIdentifier, string? AppVersion,
-    string? PlatformVersion, DateTimeOffset? LastSyncAt, DateTimeOffset? CreatedAt, string? FlaggedReasons, string? AppliedPolicies, string? IntendedPolicies);
+    string? PlatformVersion, DateTimeOffset? LastSyncAt, DateTimeOffset? CreatedAt, string? FlaggedReasons, string? AppliedPolicies, string? IntendedPolicies, string? LastOperation = null);
 
 public sealed record EntraUser(string Id, string? UserPrincipalName, string? DisplayName, string? Department, bool? AccountEnabled);
 
