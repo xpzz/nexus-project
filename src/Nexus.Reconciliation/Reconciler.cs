@@ -15,7 +15,8 @@ public sealed record ReconcileInput(
     IReadOnlyList<MamRegistrationRecord>? Mam = null,
     bool PoliciesCollected = false,
     IReadOnlyList<XdrEndpointRecord>? Xdr = null,
-    IReadOnlyList<NetskopeClientRecord>? Netskope = null);
+    IReadOnlyList<NetskopeClientRecord>? Netskope = null,
+    EvidencePolicy? Evidence = null);
 
 public sealed record ReviewDraft(string Kind, string Detail, IReadOnlyList<string> Sources);
 
@@ -288,6 +289,14 @@ public static class Reconciler
         }
 
         AttachMam(input, assets, links, previous, used, review);
+
+        // Last step, once every source is attached: the evidence engine decides the operational state with the type's own thresholds.
+        var policy = input.Evidence ?? EvidencePolicy.FromWindow(input.ActivityWindow);
+        foreach (var asset in assets)
+        {
+            EvidenceEngine.Apply(asset, input.Now, policy);
+        }
+
         return new ReconcileResult(assets, links, review);
     }
 

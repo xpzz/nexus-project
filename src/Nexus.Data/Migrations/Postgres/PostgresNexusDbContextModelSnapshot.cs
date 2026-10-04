@@ -87,6 +87,16 @@ namespace Nexus.Data.Migrations.Postgres
                         .HasMaxLength(16)
                         .HasColumnType("character varying(16)");
 
+                    b.Property<string>("ActivityExplanation")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ActivityLevel")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("ActivityScore")
+                        .HasColumnType("integer");
+
                     b.Property<bool>("AdByNameOnly")
                         .HasColumnType("boolean");
 
@@ -95,6 +105,10 @@ namespace Nexus.Data.Migrations.Postgres
 
                     b.Property<DateTimeOffset?>("AdLastLogonAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("AssetType")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.Property<int>("CompliancePolicies")
                         .HasColumnType("integer");
@@ -126,6 +140,9 @@ namespace Nexus.Data.Migrations.Postgres
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
 
+                    b.Property<bool>("DecommissionCandidate")
+                        .HasColumnType("boolean");
+
                     b.Property<string>("Department")
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
@@ -142,6 +159,9 @@ namespace Nexus.Data.Migrations.Postgres
                     b.Property<string>("EntraTrustType")
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)");
+
+                    b.Property<string>("EvidenceJson")
+                        .HasColumnType("text");
 
                     b.Property<bool>("HasMam")
                         .HasColumnType("boolean");
@@ -235,6 +255,10 @@ namespace Nexus.Data.Migrations.Postgres
                         .HasColumnType("character varying(64)");
 
                     b.Property<string>("OperatingSystem")
+                        .HasColumnType("text");
+
+                    b.Property<string>("OperationalState")
+                        .IsRequired()
                         .HasColumnType("text");
 
                     b.Property<string>("OsVersion")

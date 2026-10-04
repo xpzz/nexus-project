@@ -50,7 +50,7 @@ public sealed record JobSummary(string Name, string? Status, DateTimeOffset? Las
 /// Immutable result of one reconciliation read. Everything the screens ask repeatedly (counts per group and rule, lookups, the overview)
 /// is computed once per snapshot, so a page render never walks the whole inventory more than once.
 /// </summary>
-public sealed class InventorySnapshot(IReadOnlyList<AssetView> views, IReadOnlyList<ReviewItem> review, IReadOnlyList<JobSummary> jobs, SourceAvailability sources, DateTimeOffset loadedAt, IntuneSummary? intune = null, int windowDays = 30)
+public sealed class InventorySnapshot(IReadOnlyList<AssetView> views, IReadOnlyList<ReviewItem> review, IReadOnlyList<JobSummary> jobs, SourceAvailability sources, DateTimeOffset loadedAt, IntuneSummary? intune = null, int windowDays = 30, EvidencePolicy? evidence = null)
 {
     private readonly Lazy<Dictionary<Guid, AssetView>> _byId = new(() => views.ToDictionary(v => v.Asset.Id));
     private readonly Lazy<IssueIndex> _issues = new(() => IssueIndex.Build(views));
@@ -62,6 +62,7 @@ public sealed class InventorySnapshot(IReadOnlyList<AssetView> views, IReadOnlyL
     public DateTimeOffset LoadedAt { get; } = loadedAt;
     public IntuneSummary Intune { get; } = intune ?? IntuneSummary.Empty;
     public int WindowDays { get; } = windowDays;
+    public EvidencePolicy Evidence { get; } = evidence ?? EvidencePolicy.FromWindow(TimeSpan.FromDays(windowDays));
 
     public static InventorySnapshot Empty { get; } = new([], [], [], new SourceAvailability(false, false, false, false), DateTimeOffset.MinValue);
 
@@ -223,8 +224,9 @@ public static class OverviewBuilder
 
 public static class InventorySnapshotLoader
 {
-    public static async Task<InventorySnapshot> LoadAsync(INexusDbFactory dbFactory, TimeProvider clock, CancellationToken cancellationToken, int windowDays = 30)
+    public static async Task<InventorySnapshot> LoadAsync(INexusDbFactory dbFactory, TimeProvider clock, CancellationToken cancellationToken, EvidencePolicy? policy = null)
     {
+        policy ??= EvidencePolicy.FromWindow(TimeSpan.FromDays(30));
         await using var db = dbFactory.Create();
         var sources = await InventoryReports.AvailabilityAsync(db, cancellationToken);
         var assets = await db.Assets.AsNoTracking().ToListAsync(cancellationToken);
@@ -239,7 +241,7 @@ public static class InventorySnapshotLoader
         var mamCount = await db.MamRegistrations.CountAsync(cancellationToken);
         var mamUsers = await db.MamRegistrations.Where(r => r.UserId != null).Select(r => r.UserId).Distinct().CountAsync(cancellationToken);
         var intune = new IntuneSummary(kinds.ToDictionary(k => k.Key, k => k.Count), states.Sum(x => x.Count), states.Where(x => Reconciler.IsFailed(x.State)).Sum(x => x.Count), mamCount, mamUsers, failing);
-        return new InventorySnapshot(assets.Select(a => AssetView.From(a, sources)).ToList(), review, jobs, sources, clock.GetUtcNow(), intune, windowDays);
+        return new InventorySnapshot(assets.Select(a => AssetView.From(a, sources)).ToList(), review, jobs, sources, clock.GetUtcNow(), intune, policy.Default.ProbableDays, policy);
     }
 }
 
@@ -247,7 +249,7 @@ public static class InventorySnapshotLoader
 /// Serves the last snapshot immediately and refreshes it in the background once it is older than a minute (stale-while-revalidate),
 /// so no page waits for the database after the first load. Collections run every 15 to 240 minutes, so a minute of staleness is invisible.
 /// </summary>
-public sealed class InventorySnapshotService(INexusDbFactory dbFactory, TimeProvider clock, Func<int>? windowDays = null)
+public sealed class InventorySnapshotService(INexusDbFactory dbFactory, TimeProvider clock, Func<EvidencePolicy>? policy = null)
 {
     private static readonly TimeSpan Ttl = TimeSpan.FromSeconds(60);
     private readonly SemaphoreSlim _lock = new(1, 1);
@@ -264,7 +266,7 @@ public sealed class InventorySnapshotService(INexusDbFactory dbFactory, TimeProv
             {
                 if (_snapshot.LoadedAt == DateTimeOffset.MinValue)
                 {
-                    _snapshot = await InventorySnapshotLoader.LoadAsync(dbFactory, clock, cancellationToken, windowDays?.Invoke() ?? 30);
+                    _snapshot = await InventorySnapshotLoader.LoadAsync(dbFactory, clock, cancellationToken, policy?.Invoke());
                 }
             }
             finally
@@ -281,7 +283,7 @@ public sealed class InventorySnapshotService(INexusDbFactory dbFactory, TimeProv
             {
                 try
                 {
-                    _snapshot = await InventorySnapshotLoader.LoadAsync(dbFactory, clock, CancellationToken.None, windowDays?.Invoke() ?? 30);
+                    _snapshot = await InventorySnapshotLoader.LoadAsync(dbFactory, clock, CancellationToken.None, policy?.Invoke());
                 }
                 catch (Exception)
                 {

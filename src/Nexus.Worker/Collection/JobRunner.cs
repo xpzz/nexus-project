@@ -147,8 +147,8 @@ public sealed class JobRunner(
             }
         }
 
-        var window = TimeSpan.FromDays(Math.Clamp(settingsProvider.Current.Collection.ActivityWindowDays, 1, 365));
-        var result = await new InventoryReconciler(dbFactory, clock, window).RunAsync(cancellationToken);
+        var policy = EvidencePolicy.From(settingsProvider.Current.Evidence);
+        var result = await new InventoryReconciler(dbFactory, clock, TimeSpan.FromDays(policy.Default.ProbableDays), policy).RunAsync(cancellationToken);
         logger.LogInformation("Reconciliação: {Assets} ativos, {Review} itens para revisão.", result.Assets.Count, result.Review.Count);
         return result.Assets.Count;
     }

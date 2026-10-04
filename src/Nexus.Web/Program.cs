@@ -59,7 +59,7 @@ builder.Services.AddSingleton(new SettingsProvider(paths));
 builder.Services.AddSingleton<INexusDbFactory, SettingsDbFactory>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton(sp => new Nexus.Reconciliation.InventorySnapshotService(sp.GetRequiredService<INexusDbFactory>(), sp.GetRequiredService<TimeProvider>(),
-    () => sp.GetRequiredService<SettingsProvider>().Exists ? Math.Clamp(sp.GetRequiredService<SettingsProvider>().Current.Collection.ActivityWindowDays, 1, 365) : 30));
+    () => sp.GetRequiredService<SettingsProvider>().Exists ? Nexus.Reconciliation.EvidencePolicy.From(sp.GetRequiredService<SettingsProvider>().Current.Evidence) : Nexus.Reconciliation.EvidencePolicy.From(new Nexus.Core.Configuration.EvidenceSettings())));
 builder.Services.AddHostedService<Nexus.Web.Hosting.SnapshotWarmup>();
 
 // Keys live in the data folder (ACL restricted) and are encrypted with DPAPI on Windows,

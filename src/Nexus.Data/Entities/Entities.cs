@@ -418,6 +418,17 @@ public sealed class Asset
     public long? DiskTotalMb { get; set; }
     public long? DiskFreeMb { get; set; }
     public string? CpuName { get; set; }
+    /// <summary>desktop, notebook, server, phone, tablet, mac, shared, kiosk, iot or unknown (see EvidenceEngine).</summary>
+    public string AssetType { get; set; } = "unknown";
+    /// <summary>ConfirmedActive, ProbableActive, NoRecentEvidence, Inactive, Conflicting, Unknown or Decommissioned.</summary>
+    public string OperationalState { get; set; } = "Unknown";
+    /// <summary>Activity from the evidence alone, before identity conflicts and decommission marks override the state.</summary>
+    public string ActivityLevel { get; set; } = "Unknown";
+    public int ActivityScore { get; set; }
+    public string? ActivityExplanation { get; set; }
+    /// <summary>Signals that counted, as JSON: key, label, date, tier and probability.</summary>
+    public string? EvidenceJson { get; set; }
+    public bool DecommissionCandidate { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }
 

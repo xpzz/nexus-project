@@ -6,7 +6,7 @@ using Nexus.Data.Support;
 namespace Nexus.Reconciliation;
 
 /// <summary>Reads the raw tables, reconciles and replaces the derived tables in one transaction.</summary>
-public sealed class InventoryReconciler(INexusDbFactory dbFactory, TimeProvider clock, TimeSpan? activityWindow = null)
+public sealed class InventoryReconciler(INexusDbFactory dbFactory, TimeProvider clock, TimeSpan? activityWindow = null, EvidencePolicy? evidence = null)
 {
     public static readonly TimeSpan DefaultActivityWindow = TimeSpan.FromDays(30);
 
@@ -25,7 +25,8 @@ public sealed class InventoryReconciler(INexusDbFactory dbFactory, TimeProvider 
             await db.MamRegistrations.AsNoTracking().ToListAsync(cancellationToken),
             await db.Jobs.AnyAsync(j => j.Name == "intune.policies" && j.LastSuccessAt != null, cancellationToken),
             await db.XdrEndpoints.AsNoTracking().ToListAsync(cancellationToken),
-            await db.NetskopeClients.AsNoTracking().ToListAsync(cancellationToken));
+            await db.NetskopeClients.AsNoTracking().ToListAsync(cancellationToken),
+            evidence);
 
         var result = Reconciler.Run(input);
 
