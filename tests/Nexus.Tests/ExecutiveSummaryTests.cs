@@ -81,7 +81,9 @@ public class ExecutiveSummaryTests
         Assert.Equal(QueueStatus.Zero, clean["nomgmt"].Status);
         Assert.Equal(QueueStatus.Zero, clean["conflict"].Status);
         Assert.True(clean["sources"].Status == QueueStatus.Zero, clean["sources"].Note);
-        Assert.Equal(QueueStatus.Unavailable, clean["access"].Status);
+        Assert.Equal(QueueStatus.Zero, clean["access"].Status); // sign-ins collected and nothing found
+        var noSignIns = new SourceAvailability(true, true, true, true, SignIns: false);
+        Assert.Equal(QueueStatus.Unavailable, Snapshot([View(Confirmed)], AllGood(), noSignIns).Executive().Queue.Single(i => i.Key == "access").Status);
 
         var noMgmt = View(a => { a.InAd = true; a.AdLastLogonAt = Now.AddDays(-2); a.InEntra = true; a.EntraLastSignInAt = Now.AddDays(-2); });
         var with = Snapshot([noMgmt]).Executive().Queue.ToDictionary(i => i.Key);

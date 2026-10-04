@@ -47,7 +47,7 @@ else
         <section class="card">
             <div class="ttl"><h3>Fontes de dados</h3><a href="/operacao">Operações</a></div>
             <p class="sub">Quando cada fonte coletou pela última vez. Dados antigos distorcem a classificação.</p>
-            <div class="tw" style="border:0"><table style="min-width:0"><thead><tr><th>Fonte</th><th>Situação</th><th>Última coleta</th><th>Registros</th></tr></thead><tbody>
+            <div class="tw wrap" style="border:0"><table style="min-width:0"><thead><tr><th>Fonte</th><th>Situação</th><th>Última coleta</th><th>Registros</th></tr></thead><tbody>
                 @foreach (var h in r.Sources)
                 {
                     <tr title="@h.Detail"><td class="nm">@h.Label</td><td><span class="pill @SourcePill(h)"><span aria-hidden="true">@SourceIcon(h)</span> @h.Text</span></td><td class="num">@Fmt.Ago(h.LastSuccessAt, r.AsOf)</td><td class="num">@(h.Records is { } n ? Fmt.Number(n) : "—")</td></tr>

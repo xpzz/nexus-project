@@ -266,3 +266,5 @@ details.pol>summary{display:flex;flex-wrap:wrap;gap:8px;align-items:center;curso
 details.pol>summary::-webkit-details-marker{display:none}
 details.pol[open]>summary{margin-bottom:8px}
 @media (max-width:860px){.split{grid-template-columns:1fr}}
+h1:focus,h1:focus-visible{outline:none}
+.tw.wrap td,.tw.wrap th{white-space:normal}

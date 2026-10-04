@@ -23,7 +23,9 @@ $script:CollectorPermissions = @(
     @{ Name = 'DeviceManagementConfiguration.Read.All'; Optional = $false; Probe = '/deviceManagement/deviceCompliancePolicies?$top=1&$select=id' },
     @{ Name = 'DeviceManagementApps.Read.All'; Optional = $false; Probe = '/deviceAppManagement/mobileApps?$top=1&$select=id' },
     @{ Name = 'DeviceManagementServiceConfig.Read.All'; Optional = $false; Probe = '/deviceManagement/applePushNotificationCertificate' },
-    @{ Name = 'Organization.Read.All'; Optional = $true; Probe = '/organization?$select=id' }
+    @{ Name = 'Organization.Read.All'; Optional = $true; Probe = '/organization?$select=id' },
+    @{ Name = 'Policy.Read.All'; Optional = $true; Probe = '/identity/conditionalAccess/policies?$top=1&$select=id' },
+    @{ Name = 'AuditLog.Read.All'; Optional = $true; Probe = '/auditLogs/signIns?$top=1&$select=id' }
 )
 
 # Funções do aplicativo "Azul Nexus – Web" (SPEC §4.4).

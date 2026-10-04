@@ -189,7 +189,17 @@ public static class ExecutiveSummary
                 "/inventario?pendencia=byodnoprot", n == 0 ? "Nenhum BYOD ativo sem proteção." : "Exigir proteção de apps no Acesso Condicional."));
         }
 
-        items.Add(new("access", "Acesso corporativo observado em dispositivos sem proteção", "Cruza sign-ins do Microsoft 365 com a postura do dispositivo.", QueueStatus.Unavailable, 0, null, "Funcionalidade não disponível: a coleta de sign-ins do Entra ID ainda não foi implementada ou habilitada."));
+        if (!src.SignIns)
+        {
+            items.Add(new("access", "Acesso corporativo observado em dispositivos sem proteção", "Cruza sign-ins do Microsoft 365 com a postura do dispositivo.", QueueStatus.Unavailable, 0, null, "Funcionalidade não disponível: a coleta de sign-ins do Entra ID (job entra.signins) ainda não rodou. Ela exige a permissão AuditLog.Read.All e Entra ID P1."));
+        }
+        else
+        {
+            var gaps = s.Mam().Access;
+            var n = gaps.DevicesWithoutProtection + gaps.MobileAccessWithoutDevice;
+            items.Add(new("access", "Acesso corporativo observado em dispositivos sem proteção", "Aparelhos pessoais ou móveis com sign-in recente no Microsoft 365, sem MDM e sem MAM, e acessos móveis sem aparelho identificado.",
+                n == 0 ? QueueStatus.Zero : QueueStatus.HasItems, n, "/mam#lacunas", n == 0 ? "Nenhum acesso sem proteção nos sign-ins da janela." : $"{gaps.DevicesWithoutProtection} aparelho(s) e {gaps.MobileAccessWithoutDevice} acesso(s) sem aparelho identificado."));
+        }
 
         // 4. Sources whose collection is late or failing.
         var bad = health.Where(h => h.NeedsAttention).ToList();

@@ -15,6 +15,8 @@ public static class GraphPermissions
         new("DeviceManagementApps.Read.All", "Aplicativos e MAM (políticas e registros de proteção)", 2, Probe: "/deviceAppManagement/mobileApps?$top=1&$select=id"),
         new("DeviceManagementServiceConfig.Read.All", "Enrollment, Autopilot, APNs, ADE e VPP", 2, Probe: "/deviceManagement/applePushNotificationCertificate"),
         new("Organization.Read.All", "Licenças contratadas, para marcar a disponibilidade dos KPIs", 2, Optional: true, Probe: "/organization?$select=id"),
+        new("Policy.Read.All", "Políticas de Acesso Condicional (exige Entra ID P1)", 3, Optional: true, Probe: "/identity/conditionalAccess/policies?$top=1&$select=id"),
+        new("AuditLog.Read.All", "Sign-ins do Microsoft 365 por dispositivo (exige Entra ID P1)", 3, Optional: true, Probe: "/auditLogs/signIns?$top=1&$select=id"),
     ];
 
     /// <summary>Permissions required by the active modules, i.e. up to the given phase.</summary>
