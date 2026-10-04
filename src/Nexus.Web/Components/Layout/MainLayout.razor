@@ -2,6 +2,7 @@
 @inject InventorySnapshotService Inventory
 @inject TimeProvider Clock
 
+<a class="skip" href="#conteudo">Ir para o conteúdo</a>
 <div class="app">
     <aside class="side">
         <a class="brand" href="/painel"><BrandMark Size="34" /><div><b>Azul Nexus</b><span>Saúde e inventário do parque</span></div></a>
@@ -40,9 +41,9 @@
                     <a class="src" href="/operacao" title="@chip.Detail"><i class="dot @chip.Dot"></i>@chip.Name · @chip.Text</a>
                 }
             </div>
-            <button type="button" id="theme">Tema</button>
+            <div class="themesw" role="group" aria-label="Tema da interface"><button type="button" data-theme-set="system" aria-pressed="false" title="Seguir o tema do sistema">Sistema</button><button type="button" data-theme-set="light" aria-pressed="false">Claro</button><button type="button" data-theme-set="dark" aria-pressed="false">Escuro</button></div>
         </header>
-        <main class="page">
+        <main class="page" id="conteudo" tabindex="-1">
             @Body
         </main>
     </div>
