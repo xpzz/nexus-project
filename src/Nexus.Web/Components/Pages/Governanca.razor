@@ -1,0 +1,85 @@
+@page "/governanca"
+@inject InventorySnapshotService Inventory
+
+<PageTitle>Governança Microsoft · Azul Nexus</PageTitle>
+
+<div class="ph">
+    <div><h1>Governança Microsoft</h1><p>Dispositivos conectados ao ecossistema Microsoft e com potencial acesso a dados corporativos. Registrado, gerenciado, compliant, protegido, com acesso permitido, com agente e ativo são conceitos diferentes: nenhum implica o outro.</p></div>
+    @if (_snapshot is not null) { <span class="asof">Dados de @_snapshot.LoadedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</span> }
+</div>
+
+@if (_snapshot is { HasData: true })
+{
+    var r = _snapshot.Executive();
+    <section class="card">
+        <h3>Os sete conceitos, separados</h3>
+        <p class="sub">Cada linha usa a própria população como denominador. "Sem evidência" significa que a fonte necessária ainda não foi coletada, não que o resultado é zero.</p>
+        <div class="tw" style="border:0"><table style="min-width:0"><thead><tr><th>Conceito</th><th class="r">Quantidade</th><th class="r">Percentual</th><th>População</th></tr></thead><tbody>
+            @foreach (var g in r.Governance)
+            {
+                <tr><td class="nm">@g.Concept<small class="sm">@g.Meaning</small></td>
+                    @if (g.Unavailable is not null) { <td colspan="3"><span class="pill m"><span aria-hidden="true">?</span> @g.Unavailable</span></td> }
+                    else { <td class="num r">@if (g.Link is not null){<a href="@g.Link">@Fmt.Number(g.Count)</a>}else{@Fmt.Number(g.Count)}</td><td class="num r">@(g.Percent is { } p ? Fmt.Pct(p) : "—")</td><td>@g.Population (@Fmt.Number(g.Denominator))</td> }
+                </tr>
+            }
+        </tbody></table></div>
+    </section>
+
+    <section class="card">
+        <h3>Lacunas de governança</h3>
+        <p class="sub">Ativos recentes (confirmados ou prováveis) com cobertura incompleta. Cada lista abre o inventário já filtrado.</p>
+        <div class="tw" style="border:0"><table style="min-width:0"><thead><tr><th>Situação</th><th class="r">Ativos</th><th>Por que importa</th><th></th></tr></thead><tbody>
+            @foreach (var gap in Gaps())
+            {
+                <tr><td class="nm">@gap.Title</td><td class="num r">@Fmt.Number(gap.Count)</td><td class="note-cell">@gap.Why</td><td>@if (gap.Count > 0){<a class="button" href="@gap.Link">Ver lista</a>}else{<span class="pill ok"><span aria-hidden="true">✔</span> nenhum</span>}</td></tr>
+            }
+        </tbody></table></div>
+    </section>
+
+    <div class="grid g2">
+        <section class="card">
+            <h3>Conformidade por canal de gerenciamento</h3>
+            <p class="sub">Tenant attach e Defender não contam como MDM.</p>
+            <div class="tw" style="border:0"><table style="min-width:0"><thead><tr><th>Canal</th><th class="r">Ativos</th><th class="r">Conforme</th><th class="r">Não conforme</th></tr></thead><tbody>
+                @foreach (var g in _snapshot.Views.Where(v => v.Asset.InIntune && OperationalStates.IsActive(v.Asset.ActivityLevel)).GroupBy(v => v.Asset.IntuneChannel).OrderByDescending(g => g.Count()))
+                {
+                    var compliant = g.Count(v => string.Equals(v.Asset.ComplianceState, "compliant", StringComparison.OrdinalIgnoreCase));
+                    <tr><td class="nm">@Channel(g.Key)</td><td class="num r">@Fmt.Number(g.Count())</td><td class="num r">@Fmt.Number(compliant)</td><td class="num r">@Fmt.Number(g.Count() - compliant)</td></tr>
+                }
+            </tbody></table></div>
+        </section>
+        <section class="card">
+            <h3>Acesso Condicional</h3>
+            <p class="sub">Quais dispositivos têm o acesso permitido ou bloqueado pelas políticas de Acesso Condicional.</p>
+            <p><span class="pill m"><span aria-hidden="true">?</span> Funcionalidade não disponível</span></p>
+            <p class="hint">A coleta de políticas de Acesso Condicional e de sign-ins do Entra ID ainda não está habilitada neste ambiente. Ela exige as permissões <code>Policy.Read.All</code> e <code>AuditLog.Read.All</code> no aplicativo coletor e uma licença do Entra ID P1. Até lá, o Nexus não afirma que um dispositivo tem acesso permitido.</p>
+        </section>
+    </div>
+
+    <div class="actions"><a class="button" href="/intune">Políticas do Intune</a><a class="button" href="/pendencias">Pendências de gestão</a><a class="button" href="/governanca/funis">Funis do SCCM e do Intune</a><a class="button" href="/mam">Proteção de aplicativos</a></div>
+}
+else if (_snapshot is not null)
+{
+    <div class="card"><p class="hint">Ainda não há ativos reconciliados.</p></div>
+}
+
+@code {
+    private InventorySnapshot? _snapshot;
+
+    protected override async Task OnInitializedAsync() => _snapshot = await Inventory.GetAsync();
+
+    private static string Channel(string c) => c switch { "Mdm" => "MDM (Intune)", "TenantAttach" => "Tenant attach (não é MDM)", "SecurityManagement" => "Defender (não é MDM)", "None" => "Sem canal", _ => "Outro" };
+
+    private record Gap(string Title, int Count, string Why, string Link);
+
+    private IEnumerable<Gap> Gaps()
+    {
+        var active = _snapshot!.Views.Where(v => OperationalStates.IsActive(v.Asset.ActivityLevel)).ToList();
+        const string recent = "oper=ConfirmedActive,ProbableActive";
+        yield return new("Registrados no Entra e sem MDM", active.Count(v => v.Asset.InEntra && v.Asset.IntuneChannel != "Mdm" && v.Asset.AssetType is not AssetTypes.Server), "O dispositivo existe no Entra ID e nenhuma política de MDM o governa.", $"/inventario?{recent}&flag=entra&gestao={Uri.EscapeDataString(Management.None)}");
+        yield return new("Com MDM e não compliant", active.Count(v => InventoryQuery.Flags["naoconforme"].Test(v)), "O Intune considera o dispositivo fora da política de conformidade.", $"/inventario?{recent}&flag=naoconforme");
+        yield return new("Sem gerenciamento identificado", active.Count(v => v.Management == Management.None && v.Asset.Ownership == "Corporate"), "Corporativos em uso que não aparecem no SCCM nem no Intune MDM.", $"/inventario?{recent}&gestao={Uri.EscapeDataString(Management.None)}&propriedade=Corporativo");
+        yield return new("BYOD sem MDM e sem MAM", active.Count(v => v.Issues.Contains("byodnoprot")), "Aparelho pessoal sem nenhuma proteção comprovada.", "/inventario?pendencia=byodnoprot");
+        yield return new("Windows corporativo sem agente de segurança", active.Count(v => v.Asset.Ownership == "Corporate" && v.Asset.Platform is "WindowsClient" or "WindowsServer" && !v.Asset.InXdr), "Sem Cortex XDR conectado. Só vale quando a fonte foi coletada.", "/inventario?funil=xdr-sem-agente");
+    }
+}

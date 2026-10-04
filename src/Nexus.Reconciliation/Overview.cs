@@ -74,10 +74,13 @@ public sealed class InventorySnapshot(IReadOnlyList<AssetView> views, IReadOnlyL
 
     public OverviewReport Overview() => _overviewCache ??= OverviewBuilder.Build(this);
 
+    public ExecutiveReport Executive() => _executiveCache ??= ExecutiveSummary.Build(this);
+
     public SourceComparisonReport Comparison() => _comparisonCache ??= SourceComparison.Build(Views, Sources, LoadedAt, WindowDays);
 
     private OverviewReport? _overviewCache;
     private SourceComparisonReport? _comparisonCache;
+    private ExecutiveReport? _executiveCache;
 }
 
 /// <summary>Counts per group, per rule and per rule × group, from a single pass.</summary>

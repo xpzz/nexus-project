@@ -58,6 +58,28 @@ public static class InventoryEndpoints
             return Results.Redirect("/inventario");
         });
 
+        // Manual collection by connector. Needs the integration administrator role; the Worker still honors pauses and CPU limits.
+        app.MapPost("/operacao/coletar", async (HttpContext http, CurrentAccess access, INexusDbFactory dbFactory, CancellationToken ct) =>
+        {
+            if (!access.CanOperate)
+            {
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            }
+
+            var job = (await http.Request.ReadFormAsync(ct))["job"].ToString();
+            var allowed = SourceHealthBuilder.Sources.SelectMany(s => s.Jobs).Concat(["inventory.reconcile", "all"]).ToHashSet(StringComparer.Ordinal);
+            if (!allowed.Contains(job))
+            {
+                return Results.BadRequest("Coleta desconhecida.");
+            }
+
+            await using var db = dbFactory.Create();
+            await CommandQueue.EnqueueAsync(db, CommandTypes.CollectNow, job, access.Actor, ct);
+            Audit.Record(db, access.Actor, "collection.requested", job);
+            await db.SaveChangesAsync(ct);
+            return Results.Redirect("/operacao?message=" + Uri.EscapeDataString($"Coleta de {(job == "all" ? "todas as fontes" : SourceHealthBuilder.JobLabel(job))} solicitada. O Worker a executa assim que puder."));
+        });
+
         app.MapGet("/inventario/exportar.csv", async (HttpContext http, CurrentAccess access, InventorySnapshotService inventory, INexusDbFactory dbFactory, CancellationToken ct) =>
         {
             if (!access.CanExport)

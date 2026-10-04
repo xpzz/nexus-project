@@ -7,25 +7,30 @@
     <aside class="side">
         <a class="brand" href="/painel"><BrandMark Size="34" /><div><b>Azul Nexus</b><span>Saúde e inventário do parque</span></div></a>
         <nav class="nav" aria-label="Principal">
-            <h6>Painel</h6>
-            <NavLink href="/painel" Match="NavLinkMatch.All">Visão geral</NavLink>
-            <h6>Parque</h6>
-            <NavLink href="/parque/computadores">Computadores<i>@Count(Groups.Computers)</i></NavLink>
-            <NavLink href="/parque/servidores">Servidores<i>@Count(Groups.Servers)</i></NavLink>
-            <NavLink href="/parque/celulares">Celulares corp.<i>@Count(Groups.CorpMobile)</i></NavLink>
-            <NavLink href="/byod">BYOD<i>@(Count(Groups.ByodMobile) + Count(Groups.ByodComputers))</i></NavLink>
-            <NavLink href="/parque/externos">Externos<i>@Count(Groups.External)</i></NavLink>
-            <NavLink href="/parque/sem-gestao">Sem gestão<i>@_snapshot.Issues.Rule("nomgr")</i></NavLink>
-            <NavLink href="/inventario" Match="NavLinkMatch.All">Inventário completo<i>@_snapshot.Views.Count</i></NavLink>
-            <h6>Operação</h6>
-            <NavLink href="/operacao">SCCM e Intune</NavLink>
-            <NavLink href="/intune">Políticas e MAM<i>@_snapshot.Intune.Policies</i></NavLink>
+            <h6>Visão geral</h6>
+            <NavLink href="/painel" Match="NavLinkMatch.All">Visão executiva</NavLink>
+            <h6>Parque ativo</h6>
+            <NavLink href="/parque-ativo">Estado dos ativos<i>@_snapshot.Overview().Active</i></NavLink>
             <NavLink href="/comparativo">Comparar fontes</NavLink>
-            <NavLink href="/atividade">Pool ativo<i>@_snapshot.Overview().Pool.Pool</i></NavLink>
-            <NavLink href="/pendencias">Pendências<i>@_snapshot.Issues.WithPending</i></NavLink>
-            <h6>Configuração</h6>
-            <NavLink href="/assistente">Assistente</NavLink>
+            <h6>Inventário</h6>
+            <NavLink href="/inventario" Match="NavLinkMatch.All">Todos os ativos<i>@_snapshot.Views.Count</i></NavLink>
+            <a href="/inventario?tipo=notebook,desktop,mac">Computadores<i>@TypeCount(AssetTypes.Notebook, AssetTypes.Desktop, AssetTypes.Mac)</i></a>
+            <a href="/inventario?tipo=server">Servidores<i>@TypeCount(AssetTypes.Server)</i></a>
+            <a href="/inventario?tipo=phone,tablet">Celulares e tablets<i>@TypeCount(AssetTypes.Phone, AssetTypes.Tablet)</i></a>
+            <h6>Governança Microsoft</h6>
+            <NavLink href="/governanca" Match="NavLinkMatch.All">Entra, MDM e conformidade</NavLink>
+            <NavLink href="/intune">Políticas do Intune<i>@_snapshot.Intune.Policies</i></NavLink>
+            <NavLink href="/pendencias">Pendências de gestão<i>@_snapshot.Issues.WithPending</i></NavLink>
+            <NavLink href="/governanca/funis">Funis SCCM e Intune</NavLink>
+            <h6>MAM e BYOD</h6>
+            <NavLink href="/mam" Match="NavLinkMatch.All">Proteção de aplicativos</NavLink>
+            <NavLink href="/byod">BYOD<i>@(Count(Groups.ByodMobile) + Count(Groups.ByodComputers))</i></NavLink>
+            <h6>Qualidade dos dados</h6>
+            <NavLink href="/qualidade">Duplicidades e lacunas<i>@_snapshot.Review.Count</i></NavLink>
+            <h6>Operações</h6>
+            <NavLink href="/operacao">Fontes e coletas</NavLink>
             <NavLink href="/saude">Saúde do Nexus</NavLink>
+            <NavLink href="/assistente">Assistente</NavLink>
         </nav>
         <div class="sidefoot">Somente leitura. Nenhuma ação é executada nas ferramentas de origem.</div>
     </aside>
@@ -38,7 +43,7 @@
             <div class="chips">
                 @foreach (var chip in Chips())
                 {
-                    <a class="src" href="/operacao" title="@chip.Detail"><i class="dot @chip.Dot"></i>@chip.Name · @chip.Text</a>
+                    <a class="src" href="/operacao" title="@chip.Detail"><i class="dot @chip.Dot" aria-hidden="true"></i>@chip.Name · @chip.Text</a>
                 }
             </div>
             <div class="themesw" role="group" aria-label="Tema da interface"><button type="button" data-theme-set="system" aria-pressed="false" title="Seguir o tema do sistema">Sistema</button><button type="button" data-theme-set="light" aria-pressed="false">Claro</button><button type="button" data-theme-set="dark" aria-pressed="false">Escuro</button></div>
@@ -70,49 +75,16 @@
 
     private int Count(string group) => _snapshot.Issues.Group(group);
 
-    private static readonly (string Name, string[] Jobs)[] SourceGroups =
-    [
-        ("SCCM", ["sccm.devices"]),
-        ("Active Directory", ["ad.computers"]),
-        ("Intune", ["intune.devices", "intune.policies", "intune.mam"]),
-        ("Entra ID", ["entra.devices", "entra.users"]),
-        ("Cortex XDR", ["xdr.endpoints"]),
-        ("Netskope", ["netskope.clients"]),
-    ];
+    private int TypeCount(params string[] types) => _snapshot.Views.Count(v => types.Contains(v.Asset.AssetType));
 
-    /// <summary>One chip per source: the worst of its collections decides the color; the oldest success decides the age.</summary>
+    /// <summary>One chip per source, from the same builder the executive and operations pages use.</summary>
     private IEnumerable<(string Name, string Text, string Dot, string Detail)> Chips()
     {
         var now = Clock.GetUtcNow();
-        foreach (var (name, jobNames) in SourceGroups)
+        foreach (var h in SourceHealthBuilder.Build(_snapshot.Jobs, now))
         {
-            var jobs = _snapshot.Jobs.Where(j => jobNames.Contains(j.Name)).ToList();
-            if (name is "Cortex XDR" or "Netskope" && jobs.Count == 0)
-            {
-                continue; // optional source, not configured: no chip
-            }
-
-            if (jobs.Count == 0 || jobs.All(j => j.LastSuccessAt is null))
-            {
-                yield return (name, "sem coleta", "m", jobs.FirstOrDefault()?.Error ?? "Ainda não coletou.");
-                continue;
-            }
-
-            var failed = jobs.Where(j => j.Status is "Falhou").ToList();
-            var never = jobs.Where(j => j.LastSuccessAt is null).ToList();
-            var oldest = jobs.Where(j => j.LastSuccessAt is not null).Min(j => j.LastSuccessAt);
-            if (failed.Count > 0)
-            {
-                yield return (name, "atrasada", "w", string.Join(" | ", failed.Select(j => $"{Fmt.JobLabel(j.Name)}: {j.Error}")));
-            }
-            else if (never.Count > 0)
-            {
-                yield return (name, "parcial", "w", "Ainda sem coleta de: " + string.Join(", ", never.Select(j => Fmt.JobLabel(j.Name))));
-            }
-            else
-            {
-                yield return (name, Fmt.Ago(oldest, now), "", "Em dia");
-            }
+            var dot = h.Status switch { SourceHealth.Ok => "", SourceHealth.Failed => "b", SourceHealth.Late or SourceHealth.Partial => "w", _ => "m" };
+            yield return (h.Label, h.Status == SourceHealth.Ok ? Fmt.Ago(h.LastSuccessAt, now) : h.Text, dot, h.Detail);
         }
     }
 }

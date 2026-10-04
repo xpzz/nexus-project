@@ -56,7 +56,8 @@ public static class SourceHealthBuilder
             }
 
             var succeeded = jobs.Where(j => j.LastSuccessAt is not null).ToList();
-            var records = succeeded.Count == 0 ? (int?)null : succeeded.Sum(j => j.Records ?? 0);
+            // Records of the device collection only: summing users, policies and MAM into one number would suggest a device count that does not exist.
+            var records = jobs.FirstOrDefault(j => j.Name == names[0] && j.LastSuccessAt is not null)?.Records;
             if (succeeded.Count == 0)
             {
                 var error = jobs.FirstOrDefault(j => !string.IsNullOrEmpty(j.Error))?.Error;

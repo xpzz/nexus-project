@@ -1,0 +1,21 @@
+@page "/mam"
+@inject InventorySnapshotService Inventory
+
+<PageTitle>Proteção de aplicativos · Azul Nexus</PageTitle>
+
+<div class="ph">
+    <div><h1>Proteção de aplicativos (MAM)</h1><p>MAM protege os dados corporativos dentro dos aplicativos compatíveis com o Intune SDK. Não protege o aparelho inteiro nem os aplicativos pessoais.</p></div>
+    @if (_snapshot is not null) { <span class="asof">Dados de @_snapshot.LoadedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</span> }
+</div>
+
+<div class="note"><b>O que esta proteção cobre.</b> Um aparelho com MAM tem proteção apenas nos aplicativos corporativos registrados, e só enquanto a política se aplica. Cópia para aplicativos pessoais, backup e navegador pessoal ficam fora do alcance. Por isso o Nexus nunca soma "tem MAM" a "dispositivo protegido".</div>
+
+@if (_snapshot is { HasData: true })
+{
+    <p class="hint">Detalhes por política, controles, navegadores e exceções chegam nas próximas seções desta página.</p>
+}
+@code {
+    private InventorySnapshot? _snapshot;
+
+    protected override async Task OnInitializedAsync() => _snapshot = await Inventory.GetAsync();
+}

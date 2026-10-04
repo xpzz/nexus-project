@@ -1,0 +1,104 @@
+@page "/parque-ativo"
+@inject InventorySnapshotService Inventory
+
+<PageTitle>Parque ativo · Azul Nexus</PageTitle>
+
+<div class="ph">
+    <div><h1>Parque ativo</h1><p>Quais equipamentos estão efetivamente em uso. A decisão vem de sinais recentes e independentes de cada fonte, nunca da simples existência de um registro no AD, no Entra ID ou no SCCM.</p></div>
+    @if (_snapshot is not null) { <span class="asof">Dados de @_snapshot.LoadedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</span> }
+</div>
+
+@if (_snapshot is { HasData: true })
+{
+    var r = _report!;
+    <section class="kstrip" aria-label="Estados operacionais">
+        @foreach (var s in OperationalStates.All)
+        {
+            <a class="card xkpi" href="/inventario?oper=@s">
+                <div class="l"><span><span aria-hidden="true">@OperationalStates.Icon(s)</span> @OperationalStates.Title(s)</span></div>
+                <div class="v">@Fmt.Number(r.States[s])<em>@Fmt.Pct(Math.Round(100.0 * r.States[s] / Math.Max(1, r.UniqueAssets), 1)) dos @Fmt.Number(r.UniqueAssets) ativos únicos</em></div>
+                <p class="def">@OperationalStates.Explain(s)</p>
+            </a>
+        }
+    </section>
+
+    <section class="card">
+        <h3>Como a decisão é tomada</h3>
+        <p class="sub">Cada fonte que reportou dentro das janelas contribui com a sua confiabilidade multiplicada pela frescura da data. O score é a chance de ao menos um sinal estar certo. Fontes de identidade (AD, Entra ID) pesam menos que telemetria do equipamento.</p>
+        <div class="tw" style="border:0"><table style="min-width:0"><thead><tr><th>Fonte</th><th>Natureza</th><th class="r">Confiabilidade configurada</th><th class="r">Conhece</th><th class="r">Reportou nas janelas</th></tr></thead><tbody>
+            @foreach (var s in _comparison!.Sources)
+            {
+                <tr><td class="nm">@s.Label</td><td>@(s.Key is "ad" ? "identidade" : "telemetria")</td><td class="num r">@Fmt.Pct(Math.Round(100 * _snapshot.Evidence.ReliabilityOf(s.Key)))</td>
+                    <td class="num r">@(s.Enabled ? Fmt.Number(s.Known) : "—")</td><td class="num r">@(s.Enabled ? Fmt.Number(s.Reporting) : "aguardando coleta")</td></tr>
+            }
+        </tbody></table></div>
+        <p class="sub" style="margin-top:8px"><a href="/comparativo">Comparar as fontes lado a lado</a>. Entra ID e Intune MAM entram na decisão com as confiabilidades <code>@string.Join(", ", _snapshot.Evidence.Reliability.Where(k => k.Key is "entra" or "mam").Select(k => $"{k.Key} {k.Value:0.##}"))</code>.</p>
+    </section>
+
+    <section class="card">
+        <h3>Janelas de atividade por tipo de ativo</h3>
+        <p class="sub">Configuráveis em <code>nexus.json</code> (seção <code>Evidence</code>), sem datas fixas no código. Aparelhos móveis, quiosques e dispositivos compartilhados se conectam com menos frequência e têm janelas maiores.</p>
+        <div class="tw" style="border:0"><table style="min-width:0"><thead><tr><th>Tipo</th><th class="r">Ativos</th><th class="r">Confirmado até</th><th class="r">Provável até</th><th class="r">Observação até</th><th class="r">Candidato à inativação após</th></tr></thead><tbody>
+            @foreach (var t in AssetTypes.All)
+            {
+                var th = _snapshot.Evidence.For(t);
+                <tr><td class="nm"><a href="/inventario?tipo=@t">@AssetTypes.Title(t)</a></td><td class="num r">@Fmt.Number(r.Types[t])</td><td class="num r">@th.ConfirmedDays dias</td><td class="num r">@th.ProbableDays dias</td><td class="num r">@th.NoRecentDays dias</td><td class="num r">@th.DecommissionDays dias</td></tr>
+            }
+        </tbody></table></div>
+    </section>
+
+    <section class="card">
+        <h3>Estado por tipo de ativo</h3>
+        <p class="sub">Clique em uma célula para ver os equipamentos. Os tipos vêm do hardware informado pelas fontes e, quando ele não diz, de prefixos de nome configurados. "Tipo não identificado" não é erro: o dado ainda não existe nas fontes coletadas.</p>
+        <div class="tw" style="border:0"><table class="matrix" style="min-width:760px"><thead><tr><th>Tipo</th>@foreach (var s in OperationalStates.All){<th>@OperationalStates.Title(s)</th>}</tr></thead><tbody>
+            @foreach (var t in AssetTypes.All.Where(t => _byTypeState.Keys.Any(k => k.Type == t)))
+            {
+                <tr><td class="nm">@AssetTypes.Title(t)</td>
+                    @foreach (var s in OperationalStates.All)
+                    {
+                        var n = _byTypeState.GetValueOrDefault((t, s));
+                        <td class="num">@if (n > 0){<a href="/inventario?tipo=@t&oper=@s">@Fmt.Number(n)</a>}else{<span class="sm">0</span>}</td>
+                    }
+                </tr>
+            }
+        </tbody></table></div>
+    </section>
+
+    <section class="card">
+        <div class="ttl"><h3>Candidatos à inativação</h3><a href="/inventario?flag=candidato">Ver todos (@Fmt.Number(_candidates.Count))</a></div>
+        <p class="sub">Sem nenhum relato há mais tempo que o limite de descomissionamento do tipo. Confirme se o equipamento ainda existe antes de baixar.</p>
+        <div class="list">
+            @foreach (var v in _candidates.Take(8))
+            {
+                <div class="row"><div class="t"><b><a href="/dispositivo/@v.Asset.Id" style="color:inherit">@v.Asset.Name</a></b><span>@v.Asset.ActivityExplanation</span></div><span class="pill m">@AssetTypes.Title(v.Asset.AssetType)</span></div>
+            }
+            @if (_candidates.Count == 0) { <div class="row"><span class="pill ok"><span aria-hidden="true">✔</span> Nenhum candidato</span></div> }
+        </div>
+    </section>
+}
+else if (_snapshot is not null)
+{
+    <div class="card"><p class="hint">Ainda não há ativos reconciliados. Peça uma coleta em <a href="/operacao">Operações</a>.</p></div>
+}
+
+@code {
+    private InventorySnapshot? _snapshot;
+    private ExecutiveReport? _report;
+    private SourceComparisonReport? _comparison;
+    private Dictionary<(string Type, string State), int> _byTypeState = [];
+    private List<AssetView> _candidates = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        _snapshot = await Inventory.GetAsync();
+        if (!_snapshot.HasData)
+        {
+            return;
+        }
+
+        _report = _snapshot.Executive();
+        _comparison = _snapshot.Comparison();
+        _byTypeState = _snapshot.Views.GroupBy(v => (v.Asset.AssetType, v.Asset.OperationalState)).ToDictionary(g => g.Key, g => g.Count());
+        _candidates = _snapshot.Views.Where(v => v.Asset.DecommissionCandidate).OrderBy(v => v.Asset.LastActivityAt ?? DateTimeOffset.MinValue).ToList();
+    }
+}

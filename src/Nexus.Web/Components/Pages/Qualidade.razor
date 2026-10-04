@@ -1,0 +1,92 @@
+@page "/qualidade"
+@inject InventorySnapshotService Inventory
+
+<PageTitle>Qualidade dos dados · Azul Nexus</PageTitle>
+
+<div class="ph">
+    <div><h1>Qualidade dos dados</h1><p>Duplicidades, conflitos de identidade e registros incompletos. Nada aqui é mesclado automaticamente: o nome sozinho nunca liga registros de gerenciamento.</p></div>
+    @if (_snapshot is not null) { <span class="asof">Dados de @_snapshot.LoadedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</span> }
+</div>
+
+@if (_snapshot is { HasData: true })
+{
+    var total = _snapshot.Views.Count;
+    <section class="card">
+        <h3>Lacunas e inconsistências</h3>
+        <p class="sub">Percentuais sobre os @Fmt.Number(total) ativos únicos reconciliados.</p>
+        <div class="tw" style="border:0"><table style="min-width:0"><thead><tr><th>Verificação</th><th class="r">Ativos</th><th class="r">Percentual</th><th>O que significa</th><th></th></tr></thead><tbody>
+            @foreach (var c in Checks())
+            {
+                <tr>
+                    <td class="nm">@c.Title</td>
+                    <td class="num r">@Fmt.Number(c.Count)</td>
+                    <td class="num r">@Fmt.Pct(Math.Round(100.0 * c.Count / Math.Max(1, total), 1))</td>
+                    <td class="note-cell">@c.Meaning</td>
+                    <td>@if (c.Count > 0){<a class="button" href="@c.Link">Ver lista</a>}else{<span class="pill ok"><span aria-hidden="true">✔</span> nenhum</span>}</td>
+                </tr>
+            }
+        </tbody></table></div>
+    </section>
+
+    <section class="card">
+        <h3>Encontrados em uma única fonte</h3>
+        <p class="sub">Equipamentos que só uma fonte conhece. Para as fontes de gerenciamento é normal em parte do parque; para AD e Entra ID costuma ser registro esquecido.</p>
+        <div class="tw" style="border:0"><table style="min-width:0"><thead><tr><th>Fonte</th><th class="r">Só nesta fonte</th></tr></thead><tbody>
+            @foreach (var s in _snapshot.Comparison().Sources.Where(s => s.Enabled))
+            {
+                <tr><td class="nm">@s.Label</td><td class="num r">@if (s.OnlyHere > 0){<a href="@Fmt.Inv(funil: "so:" + s.Key)">@Fmt.Number(s.OnlyHere)</a>}else{<span>0</span>}</td></tr>
+            }
+        </tbody></table></div>
+    </section>
+
+    <section class="card">
+        <h3>Fila de reconciliação</h3>
+        <p class="sub">Casos ambíguos que o Nexus não resolveu sozinho. Os registros envolvidos continuam separados.</p>
+        @if (_snapshot.Review.Count == 0)
+        {
+            <p><span class="pill ok"><span aria-hidden="true">✔</span> Nenhum item para revisar</span></p>
+        }
+        else
+        {
+            <div class="tw" style="border:0"><table style="min-width:0"><thead><tr><th>Tipo</th><th class="r">Itens</th><th>Exemplo</th></tr></thead><tbody>
+                @foreach (var g in _snapshot.Review.GroupBy(r => r.Kind).OrderByDescending(g => g.Count()))
+                {
+                    <tr><td class="nm">@Fmt.ReviewKind(g.Key)</td><td class="num r">@Fmt.Number(g.Count())</td><td class="note-cell">@g.First().Detail</td></tr>
+                }
+            </tbody></table></div>
+            <details style="margin-top:10px"><summary>Ver os itens (primeiros 100)</summary>
+                <div class="list">
+                    @foreach (var r in _snapshot.Review.Take(100))
+                    {
+                        <div class="row"><div class="t"><b>@Fmt.ReviewKind(r.Kind)</b><span>@r.Detail</span></div><span class="asof">@r.Sources</span></div>
+                    }
+                </div>
+            </details>
+        }
+    </section>
+}
+else if (_snapshot is not null)
+{
+    <div class="card"><p class="hint">Ainda não há ativos reconciliados.</p></div>
+}
+
+@code {
+    private InventorySnapshot? _snapshot;
+
+    protected override async Task OnInitializedAsync() => _snapshot = await Inventory.GetAsync();
+
+    private record Check(string Title, int Count, string Meaning, string Link);
+
+    private IEnumerable<Check> Checks()
+    {
+        var v = _snapshot!.Views;
+        int N(string flag) => v.Count(x => InventoryQuery.Flags[flag].Test(x));
+        yield return new("Conflitos de identidade", v.Count(x => x.Asset.OperationalState == OperationalStates.Conflicting), "Registros que podem ser o mesmo equipamento e não foram mesclados (serial duplicado, clone, nome em mais de um objeto, reenrollment).", "/inventario?oper=Conflicting");
+        yield return new("Sem serial válido", N("semserial"), "Sem serial, a ligação entre SCCM e Intune fica mais fraca. Seriais genéricos do fabricante também são descartados.", "/inventario?flag=semserial");
+        yield return new("Sem usuário associado", N("semusuario"), "Nenhuma fonte indica quem usa o equipamento: não dá para saber de quem cobrar nem a área.", "/inventario?flag=semusuario");
+        yield return new("Encontrados em uma única fonte", N("fonteunica"), "Só uma ferramenta conhece o equipamento; falta evidência independente.", "/inventario?flag=fonteunica");
+        yield return new("Identidade só por nome ou com confiança baixa", N("identidadefraca"), "O vínculo veio do nome do computador (apoio) ou de evidência fraca.", "/inventario?flag=identidadefraca");
+        yield return new("Reconciliação a revisar", N("revisao"), "Itens da fila de reconciliação abaixo.", "/inventario?flag=revisao");
+        yield return new("Candidatos à inativação", N("candidato"), "Sem relato há mais tempo que o limite do tipo.", "/inventario?flag=candidato");
+    }
+}
