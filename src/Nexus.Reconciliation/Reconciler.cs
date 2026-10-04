@@ -13,7 +13,8 @@ public sealed record ReconcileInput(
     IReadOnlyList<EntraUserRecord>? Users = null,
     IReadOnlyList<IntuneDevicePolicyState>? PolicyStates = null,
     IReadOnlyList<MamRegistrationRecord>? Mam = null,
-    bool PoliciesCollected = false);
+    bool PoliciesCollected = false,
+    IReadOnlyList<XdrEndpointRecord>? Xdr = null);
 
 public sealed record ReviewDraft(string Kind, string Detail, IReadOnlyList<string> Sources);
 
@@ -27,7 +28,7 @@ public sealed record ReconcileResult(IReadOnlyList<Asset> Assets, IReadOnlyList<
 /// </summary>
 public static class Reconciler
 {
-    public const string Sccm = "sccm", Intune = "intune", Entra = "entra", Ad = "ad";
+    public const string Sccm = "sccm", Intune = "intune", Entra = "entra", Ad = "ad", Xdr = "xdr";
 
     private sealed class Node(string source, string key, object record)
     {
@@ -44,6 +45,7 @@ public static class Reconciler
         nodes.AddRange(input.Intune.Select(r => new Node(Intune, r.Id, r)));
         nodes.AddRange(input.Entra.Select(r => new Node(Entra, r.Id, r)));
         nodes.AddRange(input.Ad.Select(r => new Node(Ad, r.ObjectGuid.ToString(), r)));
+        nodes.AddRange((input.Xdr ?? []).Select(r => new Node(Xdr, r.AgentId, r)));
 
         var parent = nodes.ToDictionary(n => n.Ref, n => n.Ref);
         var evidenceOf = nodes.ToDictionary(n => n.Ref, _ => ("none", "High", (string?)null));
@@ -82,7 +84,7 @@ public static class Reconciler
         }
 
         // 1. Entra device id: SCCM AADDeviceID = Intune azureADDeviceId = Entra deviceId.
-        foreach (var group in nodes.Where(n => n.Source != Ad && AadId(n) is not null).GroupBy(n => AadId(n)!.Value))
+        foreach (var group in nodes.Where(n => n.Source is Sccm or Intune or Entra && AadId(n) is not null).GroupBy(n => AadId(n)!.Value))
         {
             var members = group.ToList();
             for (var i = 1; i < members.Count; i++)
@@ -151,27 +153,64 @@ public static class Reconciler
             }
         }
 
-        // 4. AD attaches by name only when exactly one management component and one AD object carry that name.
-        var adByName = nodes.Where(n => n.Source == Ad).GroupBy(n => NameKey(((AdComputerRecord)n.Record).Name)).ToDictionary(g => g.Key, g => g.ToList());
-        var mgmtByName = nodes.Where(n => n.Source != Ad && NameKey(NameOf(n)) is { Length: > 0 })
+        // 4. Supporting sources (AD, XDR) attach by name only: to exactly one management component, and only when the name is not ambiguous.
+        //    Several agents of one host name (a reinstall) all attach to that single asset and raise an informational review.
+        var mgmtByName = nodes.Where(n => n.Source is Sccm or Intune or Entra && NameKey(NameOf(n)) is { Length: > 0 })
             .GroupBy(n => NameKey(NameOf(n)))
             .ToDictionary(g => g.Key, g => g.GroupBy(n => Find(n.Ref)).Select(c => c.ToList()).ToList());
-        foreach (var (name, adNodes) in adByName)
+        var supportByName = nodes.Where(n => n.Source is Ad or Xdr && NameKey(NameOf(n)) is { Length: > 0 }).GroupBy(n => NameKey(NameOf(n)));
+        const string nameReason = "Só o nome coincide (evidência de apoio, não identifica o dispositivo).";
+        foreach (var group in supportByName)
         {
-            if (name.Length == 0 || !mgmtByName.TryGetValue(name, out var comps))
+            var ads = group.Where(n => n.Source == Ad).ToList();
+            var xdrs = group.Where(n => n.Source == Xdr).ToList();
+            if (mgmtByName.TryGetValue(group.Key, out var comps))
             {
+                if (comps.Count == 1)
+                {
+                    if (ads.Count == 1)
+                    {
+                        Union(comps[0][0], ads[0], "name", "Low", nameReason);
+                    }
+                    else if (ads.Count > 1)
+                    {
+                        review.Add(new ReviewDraft("AmbiguousName", $"O nome {group.Key} coincide com {ads.Count} objetos do AD e 1 dispositivo de gerenciamento. O AD não foi associado.",
+                            ads.Concat(comps[0]).Select(n => n.Ref).ToList()));
+                    }
+
+                    foreach (var x in xdrs)
+                    {
+                        Union(comps[0][0], x, "name", "Low", nameReason);
+                    }
+                }
+                else
+                {
+                    review.Add(new ReviewDraft("AmbiguousName",
+                        $"O nome {group.Key} coincide com {ads.Count} objeto(s) do AD, {xdrs.Count} agente(s) do XDR e {comps.Count} dispositivo(s) de gerenciamento. Nada foi associado.",
+                        ads.Concat(xdrs).Concat(comps.SelectMany(c => c)).Select(n => n.Ref).ToList()));
+                }
+
                 continue;
             }
 
-            if (adNodes.Count == 1 && comps.Count == 1)
+            // No management record with this name: the AD object and the XDR agents describe the same host.
+            if (ads.Count == 1)
             {
-                Union(comps[0][0], adNodes[0], "name", "Low", "Só o nome coincide (evidência de apoio, não identifica o dispositivo).");
+                foreach (var x in xdrs)
+                {
+                    Union(ads[0], x, "name", "Low", nameReason);
+                }
             }
-            else
+            else if (ads.Count > 1 && xdrs.Count > 0)
             {
-                review.Add(new ReviewDraft("AmbiguousName",
-                    $"O nome {name} coincide com {adNodes.Count} objeto(s) do AD e {comps.Count} dispositivo(s) de gerenciamento. O AD não foi associado.",
-                    adNodes.Concat(comps.SelectMany(c => c)).Select(n => n.Ref).ToList()));
+                review.Add(new ReviewDraft("AmbiguousName", $"O nome {group.Key} coincide com {ads.Count} objetos do AD e {xdrs.Count} agente(s) do XDR. Nada foi associado.", ads.Concat(xdrs).Select(n => n.Ref).ToList()));
+            }
+            else if (ads.Count == 0)
+            {
+                for (var i = 1; i < xdrs.Count; i++)
+                {
+                    Union(xdrs[0], xdrs[i], "name", "Low", nameReason);
+                }
             }
         }
 
@@ -191,6 +230,13 @@ public static class Reconciler
             review.Add(new ReviewDraft("MultipleIntuneRecords",
                 $"{c.Count(n => n.Source == Intune)} registros do Intune para o mesmo equipamento (reenrollment ou registro antigo). Contado como um dispositivo.",
                 c.Where(n => n.Source == Intune).Select(n => n.Ref).ToList()));
+        }
+
+        foreach (var c in components.Where(c => c.Count(n => n.Source == Xdr) > 1))
+        {
+            review.Add(new ReviewDraft("MultipleXdrRecords",
+                $"{c.Count(n => n.Source == Xdr)} agentes do XDR com o mesmo nome (reinstalação ou agente antigo). Contado como um dispositivo.",
+                c.Where(n => n.Source == Xdr).Select(n => n.Ref).ToList()));
         }
 
         var flagged = review.SelectMany(r => r.Sources).ToHashSet();
@@ -232,16 +278,19 @@ public static class Reconciler
         var entra = c.Where(n => n.Source == Entra).Select(n => (EntraDeviceRecord)n.Record)
             .OrderByDescending(r => r.LastSignInAt ?? DateTimeOffset.MinValue).ToList();
         var ad = c.Where(n => n.Source == Ad).Select(n => (AdComputerRecord)n.Record).ToList();
+        var xdr = c.Where(n => n.Source == Xdr).Select(n => (XdrEndpointRecord)n.Record)
+            .OrderByDescending(r => IsXdrConnected(r.AgentStatus)).ThenByDescending(r => r.LastSeenAt ?? DateTimeOffset.MinValue).ToList();
 
         var primarySccm = sccm.FirstOrDefault();
         var primaryIntune = intune.FirstOrDefault();
         var primaryEntra = entra.FirstOrDefault();
         var primaryAd = ad.FirstOrDefault();
+        var primaryXdr = xdr.FirstOrDefault();
 
         var asset = new Asset
         {
             Id = id,
-            Name = primarySccm?.Name ?? primaryIntune?.DeviceName ?? primaryEntra?.DisplayName ?? primaryAd?.Name ?? "(sem nome)",
+            Name = primarySccm?.Name ?? primaryIntune?.DeviceName ?? primaryEntra?.DisplayName ?? primaryAd?.Name ?? ShortName(primaryXdr?.HostName) ?? "(sem nome)",
             Serial = sccm.Select(r => ValidSerial(r.Serial)).Concat(intune.Select(r => ValidSerial(r.SerialNumber))).FirstOrDefault(s => s is not null),
             Manufacturer = Pick(sccm.Select(r => r.Manufacturer).Concat(intune.Select(r => r.Manufacturer))),
             Model = Pick(sccm.Select(r => r.Model).Concat(intune.Select(r => r.Model))),
@@ -251,6 +300,13 @@ public static class Reconciler
             InIntune = intune.Count > 0,
             InEntra = entra.Count > 0,
             InAd = ad.Count > 0,
+            InXdr = xdr.Count > 0,
+            XdrByNameOnly = c.Any(n => n.Source == Xdr && evidenceOf[n.Ref].Item1 == "name"),
+            XdrStatus = primaryXdr?.AgentStatus,
+            XdrOperationalStatus = primaryXdr?.OperationalStatus,
+            XdrAgentType = primaryXdr?.AgentType,
+            XdrIp = primaryXdr?.Ip,
+            XdrLastSeenAt = primaryXdr?.LastSeenAt,
             AdEnabled = primaryAd?.Enabled ?? true,
             AdByNameOnly = c.Any(n => n.Source == Ad && evidenceOf[n.Ref].Item1 == "name"),
             ComplianceState = primaryIntune?.ComplianceState,
@@ -278,7 +334,7 @@ public static class Reconciler
         asset.EntraLastSignInAt = primaryEntra?.LastSignInAt;
         asset.AdLastLogonAt = primaryAd?.LastLogonTimestamp;
 
-        asset.LastActivityAt = new[] { asset.SccmLastSeenAt, asset.IntuneLastSyncAt, asset.EntraLastSignInAt, asset.AdLastLogonAt }.Max();
+        asset.LastActivityAt = new[] { asset.SccmLastSeenAt, asset.IntuneLastSyncAt, asset.EntraLastSignInAt, asset.AdLastLogonAt, asset.XdrLastSeenAt }.Max();
         asset.IsActive = asset.LastActivityAt is { } last && input.Now - last <= input.ActivityWindow;
 
         var hasClient = asset.SccmClient;
@@ -287,7 +343,7 @@ public static class Reconciler
 
         ApplyDetails(asset, primarySccm, primaryIntune, ad.FirstOrDefault(), lookups);
 
-        var weakest = c.Where(n => n.Source != Ad).Select(n => evidenceOf[n.Ref].Item2 switch { "Low" => 2, "Medium" => 1, _ => 0 }).DefaultIfEmpty(0).Max();
+        var weakest = c.Where(n => n.Source is Sccm or Intune or Entra).Select(n => evidenceOf[n.Ref].Item2 switch { "Low" => 2, "Medium" => 1, _ => 0 }).DefaultIfEmpty(0).Max();
         asset.Confidence = weakest switch { 2 => "Low", 1 => "Medium", _ => "High" };
         asset.NeedsReview = c.Any(n => flagged.Contains(n.Ref));
         return asset;
@@ -489,7 +545,7 @@ public static class Reconciler
             }
         }
 
-        return asset.InSccm || asset.InAd ? ("Corporate", "domain") : ("Unknown", null);
+        return asset.InSccm || asset.InAd ? ("Corporate", "domain") : asset.InXdr ? ("Corporate", "xdr") : ("Unknown", null);
     }
 
     public static string PlatformOf(string? os)
@@ -571,10 +627,17 @@ public static class Reconciler
         SccmDeviceRecord s => s.Name ?? "",
         IntuneDeviceRecord i => i.DeviceName ?? "",
         EntraDeviceRecord e => e.DisplayName ?? "",
+        AdComputerRecord a => a.Name,
+        XdrEndpointRecord x => x.HostName ?? "",
         _ => "",
     };
 
-    private static string NameKey(string name) => name.Trim().ToLowerInvariant();
+    /// <summary>Host name without the DNS suffix, lower case: "PC-01.corp.example" and "pc-01" are the same name.</summary>
+    private static string NameKey(string name) => name.Trim().Split('.')[0].ToLowerInvariant();
+
+    private static string? ShortName(string? host) => string.IsNullOrWhiteSpace(host) ? null : host.Trim().Split('.')[0];
+
+    public static bool IsXdrConnected(string? status) => string.Equals(status?.Trim(), "CONNECTED", StringComparison.OrdinalIgnoreCase);
 
     private static readonly string[] InvalidSerialFragments =
         ["to be filled", "default string", "system serial", "serial number", "not specified", "not applicable", "o.e.m", "none", "unknown", "n/a", "chassis"];

@@ -23,7 +23,8 @@ public sealed class InventoryReconciler(INexusDbFactory dbFactory, TimeProvider 
             await db.EntraUsers.AsNoTracking().ToListAsync(cancellationToken),
             await db.IntuneDevicePolicyStates.AsNoTracking().Select(p => new IntuneDevicePolicyState { IntuneDeviceId = p.IntuneDeviceId, Kind = p.Kind, State = p.State }).ToListAsync(cancellationToken),
             await db.MamRegistrations.AsNoTracking().ToListAsync(cancellationToken),
-            await db.Jobs.AnyAsync(j => j.Name == "intune.policies" && j.LastSuccessAt != null, cancellationToken));
+            await db.Jobs.AnyAsync(j => j.Name == "intune.policies" && j.LastSuccessAt != null, cancellationToken),
+            await db.XdrEndpoints.AsNoTracking().ToListAsync(cancellationToken));
 
         var result = Reconciler.Run(input);
 
@@ -67,7 +68,7 @@ public static class InventoryReports
     {
         var ok = (await db.Jobs.AsNoTracking().Where(j => j.LastSuccessAt != null).Select(j => j.Name).ToListAsync(cancellationToken)).ToHashSet();
         return new SourceAvailability(ok.Contains("sccm.devices"), ok.Contains("intune.devices"), ok.Contains("entra.devices"), ok.Contains("ad.computers"),
-            ok.Contains("intune.policies"), ok.Contains("intune.mam"), ok.Contains("entra.users"));
+            ok.Contains("intune.policies"), ok.Contains("intune.mam"), ok.Contains("entra.users"), ok.Contains("xdr.endpoints"));
     }
 
     public static async Task<KpiReport> BuildAsync(NexusDbContext db, CancellationToken cancellationToken) =>

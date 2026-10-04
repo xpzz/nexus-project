@@ -9,6 +9,7 @@ public sealed class NexusSettings
     public DatabaseSettings Database { get; set; } = new();
     public SccmSettings Sccm { get; set; } = new();
     public ActiveDirectorySettings ActiveDirectory { get; set; } = new();
+    public XdrSettings Xdr { get; set; } = new();
     public CollectionSettings Collection { get; set; } = new();
     public WebSettings Web { get; set; } = new();
     public bool DemoMode { get; set; }
@@ -57,6 +58,21 @@ public sealed class SccmSettings
     public int SlowQueryThresholdSeconds { get; set; } = 60;
 }
 
+/// <summary>
+/// Cortex XDR endpoints, read from the SQL table that the site's own PowerShell routine fills from the XDR API.
+/// The Nexus never holds the XDR API key: it only reads that table (read-only intent, integrated security).
+/// </summary>
+public sealed class XdrSettings
+{
+    public SourceMode Mode { get; set; } = SourceMode.Disabled;
+    public string SqlServer { get; set; } = "";
+    public string Database { get; set; } = "cortex_db";
+    /// <summary>Table (optionally "schema.table"; schema defaults to dbo).</summary>
+    public string Table { get; set; } = "API_Cortex_getAllEndpoints";
+    public bool TrustServerCertificate { get; set; }
+    public int CommandTimeoutSeconds { get; set; } = 60;
+}
+
 public sealed class ActiveDirectorySettings
 {
     public SourceMode Mode { get; set; } = SourceMode.Disabled;
@@ -78,6 +94,7 @@ public sealed class CollectionSettings
     public int PoliciesIntervalMinutes { get; set; } = 240;
     public int MamIntervalMinutes { get; set; } = 120;
     public int UsersIntervalMinutes { get; set; } = 240;
+    public int XdrIntervalMinutes { get; set; } = 60;
     public int MaxCpuPercent { get; set; } = 25;
     public int MaxMemoryMegabytes { get; set; } = 1024;
     /// <summary>Server CPU above this value postpones collections.</summary>

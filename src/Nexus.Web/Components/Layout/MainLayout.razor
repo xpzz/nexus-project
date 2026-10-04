@@ -73,6 +73,7 @@
         ("Active Directory", ["ad.computers"]),
         ("Intune", ["intune.devices", "intune.policies", "intune.mam"]),
         ("Entra ID", ["entra.devices", "entra.users"]),
+        ("Cortex XDR", ["xdr.endpoints"]),
     ];
 
     /// <summary>One chip per source: the worst of its collections decides the color; the oldest success decides the age.</summary>
@@ -82,6 +83,11 @@
         foreach (var (name, jobNames) in SourceGroups)
         {
             var jobs = _snapshot.Jobs.Where(j => jobNames.Contains(j.Name)).ToList();
+            if (name == "Cortex XDR" && jobs.Count == 0)
+            {
+                continue; // optional source, not configured: no chip
+            }
+
             if (jobs.Count == 0 || jobs.All(j => j.LastSuccessAt is null))
             {
                 yield return (name, "sem coleta", "m", jobs.FirstOrDefault()?.Error ?? "Ainda não coletou.");

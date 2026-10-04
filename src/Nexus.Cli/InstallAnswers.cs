@@ -56,6 +56,11 @@ public sealed class InstallAnswers
         current.Sccm.Database = Sccm.Database;
         current.Sccm.TrustServerCertificate = Sccm.TrustServerCertificate;
 
+        if (DemoMode)
+        {
+            current.Xdr.Mode = SourceMode.Simulated;
+        }
+
         current.ActiveDirectory.Mode = DemoMode ? SourceMode.Simulated : ActiveDirectory.Mode;
         current.ActiveDirectory.Domain = DemoMode && ActiveDirectory.Domain.Length == 0 ? Nexus.Simulation.SyntheticEstate.Domain : ActiveDirectory.Domain;
         current.ActiveDirectory.Server = ActiveDirectory.Server;

@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Nexus.Cli;
 using Nexus.Collectors.Sccm;
+using Nexus.Collectors.Xdr;
 using Nexus.Core;
 using Nexus.Core.Configuration;
 using Nexus.Core.Errors;
@@ -141,6 +142,80 @@ sccmGrant.SetAction(async (parse, ct) =>
 });
 root.Subcommands.Add(sccmGrant);
 
+// xdr-configure / xdr-grant-script / xdr-grant
+var xdrServerOption = new Option<string>("--server") { Description = "Servidor SQL onde a rotina do Cortex XDR grava os endpoints." };
+var xdrDatabaseOption = new Option<string>("--database") { Description = "Banco da tabela (padrão cortex_db)." };
+var xdrTableOption = new Option<string>("--table") { Description = "Tabela, opcionalmente esquema.tabela (padrão API_Cortex_getAllEndpoints)." };
+var xdrTrustOption = new Option<bool>("--trust-server-certificate") { Description = "Aceita o certificado do servidor SQL sem validar a cadeia." };
+var xdrOffOption = new Option<bool>("--off") { Description = "Desliga a coleta do Cortex XDR." };
+var xdrConfigure = new Command("xdr-configure", "Configura a leitura da tabela de endpoints do Cortex XDR (o Nexus não guarda a chave da API do XDR).") { xdrServerOption, xdrDatabaseOption, xdrTableOption, xdrTrustOption, xdrOffOption };
+xdrConfigure.SetAction(parse =>
+{
+    if (!RequireConfig(out var settings)) return 3;
+    if (parse.GetValue(xdrOffOption))
+    {
+        settings.Xdr.Mode = SourceMode.Disabled;
+        store.Save(settings);
+        Console.WriteLine("Coleta do Cortex XDR desligada.");
+        return 0;
+    }
+
+    var server = parse.GetValue(xdrServerOption) ?? settings.Xdr.SqlServer;
+    if (string.IsNullOrWhiteSpace(server))
+    {
+        Console.Error.WriteLine("Informe o servidor SQL com --server.");
+        return 3;
+    }
+
+    try
+    {
+        settings.Xdr.SqlServer = server;
+        settings.Xdr.Database = XdrIdentifiers.Database(parse.GetValue(xdrDatabaseOption) ?? settings.Xdr.Database);
+        var table = parse.GetValue(xdrTableOption) ?? settings.Xdr.Table;
+        XdrIdentifiers.QuotedTable(table);
+        settings.Xdr.Table = table;
+    }
+    catch (ArgumentException ex)
+    {
+        Console.Error.WriteLine(ex.Message);
+        return 3;
+    }
+
+    settings.Xdr.TrustServerCertificate = parse.GetValue(xdrTrustOption) || settings.Xdr.TrustServerCertificate;
+    settings.Xdr.Mode = settings.DemoMode ? SourceMode.Simulated : SourceMode.Live;
+    store.Save(settings);
+    Console.WriteLine($"Cortex XDR: {settings.Xdr.SqlServer} / {settings.Xdr.Database} / {settings.Xdr.Table}. A coleta roda a cada {settings.Collection.XdrIntervalMinutes} minutos; use 'nexusctl collect xdr' para testar agora.");
+    return 0;
+});
+root.Subcommands.Add(xdrConfigure);
+
+var xdrGrantScript = new Command("xdr-grant-script", "Gera o T-SQL de leitura da tabela do XDR para o DBA (papel dedicado, reversível).") { sccmAccountOption, revokeOption, outputOption };
+xdrGrantScript.SetAction(async (parse, ct) =>
+{
+    if (!RequireConfig(out var settings)) return 3;
+    var account = parse.GetValue(sccmAccountOption)!;
+    var script = parse.GetValue(revokeOption)
+        ? XdrGrantScript.Revoke(settings.Xdr.Database, account)
+        : XdrGrantScript.Grant(settings.Xdr.Database, settings.Xdr.Table, account);
+    await Write(parse.GetValue(outputOption), script, ct);
+    return 0;
+});
+root.Subcommands.Add(xdrGrantScript);
+
+var xdrGrant = new Command("xdr-grant", "Aplica a concessão de leitura da tabela do XDR com a identidade de quem executa.") { sccmAccountOption };
+xdrGrant.SetAction(async (parse, ct) =>
+{
+    if (!RequireConfig(out var settings)) return 3;
+    var script = XdrGrantScript.Grant(settings.Xdr.Database, settings.Xdr.Table, parse.GetValue(sccmAccountOption)!);
+    var connection = new SqlConnectionStringBuilder(XdrConnectionFactory.BuildConnectionString(settings.Xdr))
+    {
+        InitialCatalog = "master",
+        ApplicationIntent = ApplicationIntent.ReadWrite,
+    }.ConnectionString;
+    return await ApplyBatches(connection, script, ct);
+});
+root.Subcommands.Add(xdrGrant);
+
 // test
 var timeoutOption = new Option<int>("--timeout") { Description = "Segundos de espera pelo Worker.", DefaultValueFactory = _ => 120 };
 var jsonOption = new Option<bool>("--json") { Description = "Saída em JSON." };
@@ -179,13 +254,13 @@ test.SetAction(async (parse, ct) =>
 root.Subcommands.Add(test);
 
 // collect [all|sccm|ad]
-var sourceArgument = new Argument<string>("fonte") { Description = "all, sccm, ad, intune, entra ou inventory.", DefaultValueFactory = _ => "all" };
+var sourceArgument = new Argument<string>("fonte") { Description = "all, sccm, ad, intune, entra, xdr ou inventory.", DefaultValueFactory = _ => "all" };
 var waitOption = new Option<bool>("--wait") { Description = "Aguarda o fim da coleta." };
 var collect = new Command("collect", "Pede ao Worker uma coleta agora (respeita pausas e limites).") { sourceArgument, waitOption, timeoutOption };
 collect.SetAction(async (parse, ct) =>
 {
     if (!RequireConfig(out var settings)) return 3;
-    var source = parse.GetValue(sourceArgument) switch { "sccm" => "sccm", "ad" => "ad", "intune" => "intune", "entra" => "entra", "inventory" => "inventory", _ => "all" };
+    var source = parse.GetValue(sourceArgument) switch { "sccm" => "sccm", "ad" => "ad", "intune" => "intune", "entra" => "entra", "xdr" => "xdr", "inventory" => "inventory", _ => "all" };
     var command = await Enqueue(settings, CommandTypes.CollectNow, source, ct);
     if (!parse.GetValue(waitOption))
     {

@@ -22,6 +22,7 @@ public abstract class NexusDbContext(DbContextOptions options) : DbContext(optio
     public DbSet<AssetLink> AssetLinks => Set<AssetLink>();
     public DbSet<ReviewItem> ReviewItems => Set<ReviewItem>();
     public DbSet<EntraUserRecord> EntraUsers => Set<EntraUserRecord>();
+    public DbSet<XdrEndpointRecord> XdrEndpoints => Set<XdrEndpointRecord>();
     public DbSet<IntunePolicyRecord> IntunePolicies => Set<IntunePolicyRecord>();
     public DbSet<IntuneDevicePolicyState> IntuneDevicePolicyStates => Set<IntuneDevicePolicyState>();
     public DbSet<MamRegistrationRecord> MamRegistrations => Set<MamRegistrationRecord>();
@@ -115,6 +116,20 @@ public abstract class NexusDbContext(DbContextOptions options) : DbContext(optio
             e.Property(x => x.DeviceRegistrationState).HasMaxLength(64);
             e.HasIndex(x => x.AzureAdDeviceId);
             e.HasIndex(x => x.UserId);
+        });
+
+        model.Entity<XdrEndpointRecord>(e =>
+        {
+            e.ToTable("xdr_endpoints");
+            e.HasKey(x => x.AgentId);
+            e.Property(x => x.AgentId).HasMaxLength(128).ValueGeneratedNever();
+            e.Property(x => x.HostName).HasMaxLength(256);
+            e.Property(x => x.AgentStatus).HasMaxLength(64);
+            e.Property(x => x.OperationalStatus).HasMaxLength(64);
+            e.Property(x => x.AgentType).HasMaxLength(64);
+            e.Property(x => x.Ip).HasMaxLength(256);
+            e.Property(x => x.Users).HasMaxLength(512);
+            e.HasIndex(x => x.HostName);
         });
 
         model.Entity<EntraUserRecord>(e =>
@@ -225,6 +240,10 @@ public abstract class NexusDbContext(DbContextOptions options) : DbContext(optio
             e.Property(x => x.Coverage).HasMaxLength(16);
             e.Property(x => x.Confidence).HasMaxLength(8);
             e.Property(x => x.IntuneUserId).HasMaxLength(64);
+            e.Property(x => x.XdrStatus).HasMaxLength(64);
+            e.Property(x => x.XdrOperationalStatus).HasMaxLength(64);
+            e.Property(x => x.XdrAgentType).HasMaxLength(64);
+            e.Property(x => x.XdrIp).HasMaxLength(256);
             e.Property(x => x.MamPolicies).HasMaxLength(1024);
             e.Property(x => x.SccmClientVersion).HasMaxLength(32);
             e.Property(x => x.CpuName).HasMaxLength(256);

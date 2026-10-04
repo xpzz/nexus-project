@@ -18,6 +18,7 @@ public enum Needs
     Policies,
     Mam,
     Users,
+    Xdr,
     /// <summary>Not collected by any job yet.</summary>
     Uncollected,
 }
@@ -32,6 +33,7 @@ public sealed record Rule(string Id, string Title, Priority Priority, string Own
         Needs.Policies => sources.Policies,
         Needs.Mam => sources.Mam,
         Needs.Users => sources.Users,
+        Needs.Xdr => sources.Xdr,
         _ => false,
     };
 
@@ -42,6 +44,7 @@ public sealed record Rule(string Id, string Title, Priority Priority, string Own
         Needs.Policies => "Políticas do Intune ainda sem coleta (job intune.policies)",
         Needs.Mam => "Proteção de aplicativos (MAM) ainda sem coleta (job intune.mam)",
         Needs.Users => "Usuários do Entra ID ainda sem coleta (job entra.users)",
+        Needs.Xdr => "Cortex XDR não configurado ou sem coleta (nexusctl xdr-configure)",
         _ => MissingData ?? "Dado ainda não coletado",
     };
 
@@ -107,6 +110,7 @@ public static class HealthModel
     [
         new("byodnoprot", "BYOD sem proteção comprovada (sem MDM nem MAM)", Priority.Critical, "Segurança", "Exigir proteção de apps no Acesso Condicional", Needs.Mam),
         new("rooted", "Root ou jailbreak detectado", Priority.Critical, "Segurança", "Bloquear acesso e notificar o usuário", Needs.Intune),
+        new("noxdr", "Sem agente Cortex XDR (Windows corporativo ativo)", Priority.High, "Segurança", "Instalar o agente Cortex XDR", Needs.Xdr),
         new("noclient", "Cliente SCCM ausente (Windows corporativo ativo)", Priority.High, "Operações de TI", "Reinstalar via client push"),
         new("nomdm", "Windows corporativo sem Intune MDM", Priority.High, "Endpoint", "Habilitar auto-enrollment da co-gestão"),
         new("nobitlocker", "BitLocker desligado", Priority.High, "Segurança", "Aplicar perfil de criptografia", Needs.Intune),
@@ -117,6 +121,7 @@ public static class HealthModel
         new("cleval", "Falha na avaliação do cliente SCCM", Priority.Medium, "Operações de TI", "Executar reparo do cliente", Needs.Uncollected, "Avaliação do cliente SCCM ainda não é coletada"),
         new("patch", "Atualizações atrasadas (> 60 dias)", Priority.Medium, "Endpoint", "Verificar anel e janela de manutenção", Needs.Uncollected, "Estado de atualizações ainda não é coletado"),
         new("nopolicy", "Conforme sem política atribuída", Priority.Medium, "Endpoint", "Revisar atribuição de grupos", Needs.Policies),
+        new("xdroff", "Agente XDR sem conexão ou sem reportar", Priority.Medium, "Segurança", "Reiniciar o serviço do agente ou reinstalar", Needs.Xdr),
         new("stalecomm", "SCCM mudo, Intune ativo", Priority.Medium, "Operações de TI", "Investigar saúde do cliente"),
         new("oslow", "Sistema abaixo do mínimo", Priority.Medium, "Endpoint", "Notificar o usuário para atualizar", Needs.Uncollected, "Versão mínima exigida ainda não é configurada"),
         new("userdis", "Equipamento de usuário desabilitado", Priority.Medium, "RH + TI", "Validar devolução ou baixa", Needs.Users),
@@ -221,6 +226,16 @@ public static class HealthModel
             issues.Add("stalecomm");
         }
 
+        if (sources.Xdr && corporate && a.IsActive && windows && group is Groups.Computers or Groups.Servers && !a.InXdr && (a.InSccm || a.InIntune || a.InAd))
+        {
+            issues.Add("noxdr");
+        }
+
+        if (sources.Xdr && a is { InXdr: true, IsActive: true } && XdrOff(a))
+        {
+            issues.Add("xdroff");
+        }
+
         if (sources.Intune && a is { IsActive: true, JailBroken: true })
         {
             issues.Add("rooted");
@@ -265,6 +280,21 @@ public static class HealthModel
         }
 
         return issues;
+    }
+
+    /// <summary>
+    /// The agent is not connected, or the other tools saw the device more than a week after the agent last did
+    /// (the XDR last_seen is what separates a live agent from a stale record).
+    /// </summary>
+    public static bool XdrOff(Asset a)
+    {
+        if (!Reconciler.IsXdrConnected(a.XdrStatus))
+        {
+            return true;
+        }
+
+        var others = new[] { a.SccmLastSeenAt, a.IntuneLastSyncAt, a.EntraLastSignInAt, a.AdLastLogonAt }.Max();
+        return a.XdrLastSeenAt is { } seen && others is { } latest && latest - seen > TimeSpan.FromDays(7);
     }
 
     public static int Score(IEnumerable<string> issues) => Math.Max(0, 100 - issues.Select(RuleOf).Where(r => r.Id != "stale").Sum(r => r.Weight));

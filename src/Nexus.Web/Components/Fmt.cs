@@ -89,6 +89,7 @@ public static class Fmt
     {
         "sccm.devices" => "SCCM",
         "ad.computers" => "Active Directory",
+        "xdr.endpoints" => "Cortex XDR",
         "intune.mam" => "Intune · proteção de apps (MAM)",
         "intune.policies" => "Intune · políticas e perfis",
         "entra.users" => "Entra ID · usuários",
@@ -105,6 +106,8 @@ public static class Fmt
         "CloneSuspect" => "Possível clone de máquina virtual",
         "AmbiguousName" => "Nome ambíguo no AD",
         "MultipleIntuneRecords" => "Reenrollment ou registro antigo no Intune",
+        "MultipleXdrRecords" => "Mais de um agente do XDR com o mesmo nome",
+        "MamAmbiguous" => "Proteção de apps sem dispositivo único",
         _ => kind,
     };
 }

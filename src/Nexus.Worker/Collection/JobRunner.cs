@@ -3,6 +3,7 @@ using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Nexus.Collectors.Graph;
 using Nexus.Collectors.Sccm;
+using Nexus.Collectors.Xdr;
 using Nexus.Core.Configuration;
 using Nexus.Data;
 using Nexus.Data.Entities;
@@ -16,13 +17,14 @@ public static class JobNames
     public const string ActiveDirectory = "ad.computers";
     public const string Intune = "intune.devices";
     public const string Entra = "entra.devices";
+    public const string Xdr = "xdr.endpoints";
     public const string Mam = "intune.mam";
     public const string Users = "entra.users";
     public const string Policies = "intune.policies";
     public const string Reconcile = "inventory.reconcile";
     // Order matters: users are resolved from the devices and MAM registrations collected just before.
-    public static readonly string[] All = [Sccm, ActiveDirectory, Intune, Entra, Mam, Users, Policies, Reconcile];
-    public static readonly string[] Collections = [Sccm, ActiveDirectory, Intune, Entra, Mam, Users, Policies];
+    public static readonly string[] All = [Sccm, ActiveDirectory, Intune, Entra, Xdr, Mam, Users, Policies, Reconcile];
+    public static readonly string[] Collections = [Sccm, ActiveDirectory, Intune, Entra, Xdr, Mam, Users, Policies];
 }
 
 public sealed record JobOutcome(string Status, int? Records, string? Message);
@@ -53,6 +55,7 @@ public sealed class JobRunner(
         JobNames.Sccm => TimeSpan.FromMinutes(settings.Collection.SccmIntervalMinutes),
         JobNames.ActiveDirectory => TimeSpan.FromMinutes(settings.Collection.ActiveDirectoryIntervalMinutes),
         JobNames.Intune or JobNames.Entra => TimeSpan.FromMinutes(settings.Collection.GraphIntervalMinutes),
+        JobNames.Xdr => TimeSpan.FromMinutes(settings.Collection.XdrIntervalMinutes),
         JobNames.Mam => TimeSpan.FromMinutes(settings.Collection.MamIntervalMinutes),
         JobNames.Users => TimeSpan.FromMinutes(settings.Collection.UsersIntervalMinutes),
         JobNames.Policies => TimeSpan.FromMinutes(settings.Collection.PoliciesIntervalMinutes),
@@ -103,6 +106,7 @@ public sealed class JobRunner(
                 JobNames.ActiveDirectory => await CollectDirectoryAsync(settings, now, cancellationToken),
                 JobNames.Intune => await CollectIntuneAsync(settings, now, cancellationToken),
                 JobNames.Entra => await CollectEntraAsync(settings, now, cancellationToken),
+                JobNames.Xdr => await CollectXdrAsync(settings, now, cancellationToken),
                 JobNames.Mam => await CollectMamAsync(settings, now, cancellationToken),
                 JobNames.Users => await CollectUsersAsync(settings, now, cancellationToken),
                 JobNames.Policies => await CollectPoliciesAsync(settings, now, cancellationToken),
@@ -254,6 +258,28 @@ public sealed class JobRunner(
         }
 
         await ReplaceAsync<AdComputerRecord>(rows.Values.ToList(), cancellationToken);
+        return rows.Count;
+    }
+
+    private async Task<int?> CollectXdrAsync(NexusSettings settings, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var reader = sources.CreateXdrReader(settings.Xdr);
+        if (reader is null)
+        {
+            return null;
+        }
+
+        var rows = new Dictionary<string, XdrEndpointRecord>();
+        await foreach (var e in reader.ReadEndpointsAsync(cancellationToken))
+        {
+            rows[e.AgentId] = new XdrEndpointRecord
+            {
+                AgentId = e.AgentId, HostName = e.HostName, AgentStatus = e.AgentStatus, OperationalStatus = e.OperationalStatus,
+                AgentType = e.AgentType, Ip = e.Ip, LastSeenAt = e.LastSeen, Users = e.Users, CollectedAt = now,
+            };
+        }
+
+        await ReplaceAsync<XdrEndpointRecord>(rows.Values.ToList(), cancellationToken);
         return rows.Count;
     }
 

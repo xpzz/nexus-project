@@ -12,6 +12,7 @@ public class HealthModelTests
         Id = Guid.NewGuid(), Name = "PC", Platform = "WindowsClient", Ownership = "Corporate", OperatingSystem = os, OsVersion = version, IsActive = active, ComplianceState = "compliant",
         Coverage = coverage, InSccm = coverage is "Both" or "OnlySccm", SccmClient = coverage is "Both" or "OnlySccm", SccmHealth = coverage is "Both" or "OnlySccm" ? "Healthy" : "NotApplicable",
         InIntune = coverage is "Both" or "OnlyIntune", IntuneChannel = coverage is "Both" or "OnlyIntune" ? "Mdm" : "None", InAd = true,
+        InXdr = true, XdrStatus = "CONNECTED",
     };
 
     [Fact]

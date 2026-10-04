@@ -4,6 +4,7 @@ using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Nexus.Collectors.ActiveDirectory;
 using Nexus.Collectors.Sccm;
+using Nexus.Collectors.Xdr;
 using Nexus.Core.Configuration;
 using Nexus.Collectors.Graph;
 using Nexus.Core.Errors;
@@ -69,6 +70,15 @@ public sealed class HealthRunner(SettingsProvider settingsProvider, INexusDbFact
         var directory = sources.CreateDirectoryReader(settings.ActiveDirectory) ?? new FakeDirectoryReader([]);
         yield return new DirectoryHealthCheck(settings.ActiveDirectory, directory);
         yield return new GraphAccessCheck(settings, paths, sources);
+        switch (settings.Xdr.Mode)
+        {
+            case SourceMode.Live:
+                yield return new XdrAccessCheck(settings.Xdr, sccmAccount, clock);
+                break;
+            case SourceMode.Simulated:
+                yield return new StaticCheck(XdrAccessCheck.CheckName, HealthStatus.Ok, "Fonte simulada (modo demonstração).");
+                break;
+        }
     }
 
     private async Task<HealthCheckResult> CheckDatabaseAsync(NexusSettings settings, CancellationToken cancellationToken)

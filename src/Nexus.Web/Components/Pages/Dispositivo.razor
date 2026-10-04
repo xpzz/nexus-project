@@ -97,6 +97,11 @@ else
             _intune is null ? [] : [("Canal", ChannelLabel(a.IntuneChannel)), ("Agente", _intune.ManagementAgent ?? "—"), ("Conformidade", _intune.ComplianceState ?? "—"), ("Carência até", _intune.ComplianceGraceExpiresAt?.ToLocalTime().ToString("dd/MM/yyyy") ?? "—"), ("Propriedade", _intune.OwnerType ?? "—"), ("Tipo de inscrição", _intune.EnrollmentType ?? "—"), ("Autopilot", _intune.AutopilotEnrolled switch { true => "sim", false => "não", _ => "—" }), ("Supervisionado", _intune.IsSupervised switch { true => "sim", false => "não", _ => "—" }), ("Registrado em", _intune.EnrolledAt?.ToLocalTime().ToString("dd/MM/yyyy") ?? "—")])
         @SourceCard("Entra ID", _entra is not null, "Sem registro no Entra ID.",
             _entra is null ? [] : [("Associação", TrustLabel(_entra.TrustType)), ("Conta habilitada", _entra.AccountEnabled == false ? "não" : "sim"), ("Propriedade", _entra.Ownership ?? "—")])
+        @if (_snapshotSources.Xdr || a.InXdr)
+        {
+            @SourceCard("Cortex XDR", a.InXdr, "Sem agente do Cortex XDR nesta máquina." + (a.Ownership == "Corporate" && a.Platform is "WindowsClient" or "WindowsServer" ? " Esperado para Windows corporativo." : ""),
+                [("Status do agente", a.XdrStatus ?? "—"), ("Status operacional", a.XdrOperationalStatus ?? "—"), ("Tipo", XdrTypeLabel(a.XdrAgentType)), ("IP", a.XdrIp ?? "—"), ("Último contato", Fmt.Ago(a.XdrLastSeenAt, now)), ("Vínculo", a.XdrByNameOnly ? "só pelo nome (baixa confiança)" : "forte")])
+        }
         @SourceCard("Active Directory", _ad is not null, "Sem objeto no AD.",
             _ad is null ? [] : [("Conta do computador", _ad.Enabled ? "habilitada" : "desabilitada"), ("Vínculo", a.AdByNameOnly ? "só pelo nome (baixa confiança)" : "forte"), ("Caminho", _ad.DistinguishedName)])
     </div>
@@ -196,7 +201,7 @@ else
         <div class="list">
             @foreach (var l in _links)
             {
-                <div class="row"><div class="t"><b>@Fmt.JobLabel(l.Source == "sccm" ? "sccm.devices" : l.Source == "intune" ? "intune.devices" : l.Source == "entra" ? "entra.devices" : l.Source == "mam" ? "intune.mam" : "ad.computers") · @l.SourceKey</b><span>@(l.Reason ?? "Registro de origem do ativo.")</span></div><span class="pill @(l.Confidence == "High" ? "ok" : l.Confidence == "Medium" ? "w" : "m")">confiança @(l.Confidence == "High" ? "alta" : l.Confidence == "Medium" ? "média" : "baixa")</span></div>
+                <div class="row"><div class="t"><b>@Fmt.JobLabel(l.Source == "sccm" ? "sccm.devices" : l.Source == "intune" ? "intune.devices" : l.Source == "entra" ? "entra.devices" : l.Source == "mam" ? "intune.mam" : l.Source == "xdr" ? "xdr.endpoints" : "ad.computers") · @l.SourceKey</b><span>@(l.Reason ?? "Registro de origem do ativo.")</span></div><span class="pill @(l.Confidence == "High" ? "ok" : l.Confidence == "Medium" ? "w" : "m")">confiança @(l.Confidence == "High" ? "alta" : l.Confidence == "Medium" ? "média" : "baixa")</span></div>
             }
         </div>
         @foreach (var r in _review) { <div class="note" style="margin-top:10px"><b>@Fmt.ReviewKind(r.Kind):</b> @r.Detail</div> }
@@ -293,6 +298,7 @@ else
         if (a.InIntune) yield return new("Intune", "Última sincronização", a.IntuneLastSyncAt);
         if (a.InEntra) yield return new("Entra ID", "Último login", a.EntraLastSignInAt);
         if (a.InAd) yield return new("Active Directory", "Último logon", a.AdLastLogonAt);
+        if (a.InXdr) yield return new("Cortex XDR", "Último contato do agente", a.XdrLastSeenAt);
         if (a.HasMam) yield return new("Intune MAM", "Última sincronização de app", a.MamLastSyncAt);
     }
 
@@ -303,6 +309,8 @@ else
         "compliant" => "Conforme", "remediated" => "Remediado", "succeeded" => "Aplicado", "nonCompliant" => "Não conforme", "error" => "Erro", "conflict" => "Conflito",
         "pending" => "Pendente", "notApplicable" => "Não se aplica", "notAssigned" => "Sem atribuição", "failed" => "Falhou", _ => state,
     };
+
+    private static string XdrTypeLabel(string? t) => t switch { "AGENT_TYPE_SERVER" => "Servidor", "AGENT_TYPE_WORKSTATION" => "Estação de trabalho", null => "—", _ => t };
 
     private static string ChannelLabel(string c) => c switch { "Mdm" => "MDM", "TenantAttach" => "Tenant attach (não é MDM)", "SecurityManagement" => "Defender (não é MDM)", _ => "Outro" };
     private static string TrustLabel(string? t) => t switch { "ServerAd" => "Híbrido", "AzureAd" => "Ingressado", "Workplace" => "Registrado", _ => t ?? "—" };

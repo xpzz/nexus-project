@@ -165,6 +165,20 @@ public sealed class IntuneDeviceRecord
     public DateTimeOffset CollectedAt { get; set; }
 }
 
+/// <summary>Cortex XDR endpoint as read from the site's table in the last successful collection.</summary>
+public sealed class XdrEndpointRecord
+{
+    public string AgentId { get; set; } = "";
+    public string? HostName { get; set; }
+    public string? AgentStatus { get; set; }
+    public string? OperationalStatus { get; set; }
+    public string? AgentType { get; set; }
+    public string? Ip { get; set; }
+    public DateTimeOffset? LastSeenAt { get; set; }
+    public string? Users { get; set; }
+    public DateTimeOffset CollectedAt { get; set; }
+}
+
 /// <summary>Entra user behind a device or a MAM registration: department and whether the account is enabled.</summary>
 public sealed class EntraUserRecord
 {
@@ -340,6 +354,14 @@ public sealed class Asset
     public string Confidence { get; set; } = "High";
     public bool NeedsReview { get; set; }
 
+    public bool InXdr { get; set; }
+    /// <summary>The XDR record was attached by name only (supporting evidence, low confidence).</summary>
+    public bool XdrByNameOnly { get; set; }
+    public string? XdrStatus { get; set; }
+    public string? XdrOperationalStatus { get; set; }
+    public string? XdrAgentType { get; set; }
+    public string? XdrIp { get; set; }
+    public DateTimeOffset? XdrLastSeenAt { get; set; }
     public string? IntuneUserId { get; set; }
     public bool? UserEnabled { get; set; }
     public bool? IsEncrypted { get; set; }

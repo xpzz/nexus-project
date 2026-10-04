@@ -4,6 +4,7 @@ using Microsoft.Extensions.Time.Testing;
 using Nexus.Collectors.ActiveDirectory;
 using Nexus.Collectors.Graph;
 using Nexus.Collectors.Sccm;
+using Nexus.Collectors.Xdr;
 using Nexus.Core;
 using Nexus.Core.Configuration;
 using Nexus.Data.Support;
@@ -24,6 +25,20 @@ public sealed class SwitchableSources(SyntheticEstate estate) : ISourceFactory
     public bool FailDirectory { get; set; }
     public bool FailGraph { get; set; }
     public bool GraphEnabled { get; set; } = true;
+    public bool XdrEnabled { get; set; } = true;
+    public bool FailXdr { get; set; }
+
+    public IXdrReader? CreateXdrReader(XdrSettings settings)
+    {
+        if (!XdrEnabled)
+        {
+            return null;
+        }
+
+        var reader = (FakeXdrReader)estate.CreateXdrReader();
+        reader.FailWithUnreachable = FailXdr;
+        return reader;
+    }
 
     public IGraphReader? CreateGraphReader(NexusSettings settings)
     {

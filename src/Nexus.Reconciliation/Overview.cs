@@ -139,6 +139,8 @@ public static class OverviewBuilder
             Make("gestao", "Cobertura de gestão", anyMgmt, corporate.Count(v => v.Management != Management.None), corporate.Count, 98, "corporativos ativos com alguma gestão", "SCCM ou Intune ainda sem coleta"),
             Make("conformidade", "Conformidade Intune", src.Intune, mdm.Count(v => string.Equals(v.Asset.ComplianceState, "compliant", StringComparison.OrdinalIgnoreCase)), mdm.Count, 95, "dispositivos MDM ativos conformes", "Intune ainda sem coleta"),
             Make("patch", "Patch em até 30 dias", false, 0, 0, 90, "", "Estado de atualizações ainda não é coletado"),
+            Make("edr", "Cobertura de EDR (Cortex XDR)", src.Xdr && winCorp.Count > 0, winCorp.Count(v => v.Asset.InXdr && Reconciler.IsXdrConnected(v.Asset.XdrStatus)), winCorp.Count, 98,
+                "Windows corporativos ativos com agente XDR conectado", "Cortex XDR não configurado (nexusctl xdr-configure)"),
             Make("cripto", "Criptografia (BitLocker)", src.Intune && winEncryptable.Count > 0, winEncryptable.Count(v => v.Asset.IsEncrypted == true), winEncryptable.Count, 98,
                 "Windows MDM ativos com BitLocker ligado (EDR ainda não é coletado)", "Intune ainda sem estado de criptografia"),
             Make("byod", "BYOD protegido", src.Intune && src.Mam, byod.Count(v => v.Asset.IntuneChannel == "Mdm" || v.Asset.HasMam), byod.Count, 90,

@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using Nexus.Collectors.ActiveDirectory;
 using Nexus.Collectors.Graph;
 using Nexus.Collectors.Sccm;
+using Nexus.Collectors.Xdr;
 
 namespace Nexus.Simulation;
 
@@ -137,6 +138,7 @@ public sealed class SyntheticEstate
         Enrich(seed);
     }
 
+    public List<XdrEndpoint> XdrEndpoints { get; } = [];
     public List<IntunePolicy> Policies { get; } = [];
     public List<DevicePolicyState> PolicyStates { get; } = [];
     public List<MamRegistration> MamRegistrations { get; } = [];
@@ -148,6 +150,8 @@ public sealed class SyntheticEstate
     public List<IntuneManagedDevice> IntuneDevices { get; } = [];
     public List<EntraDevice> EntraDevices { get; } = [];
     public Dictionary<int, string> Serials { get; } = [];
+
+    public IXdrReader CreateXdrReader() => new FakeXdrReader(XdrEndpoints);
 
     public ISccmReader CreateSccmReader() => new InMemorySccmReader(SccmSystems, SoftwareFor);
 
@@ -218,6 +222,56 @@ public sealed class SyntheticEstate
                 DiskFreeMb = (long)(disk * (0.08 + random.NextDouble() * 0.7)),
                 BiosVersion = $"{s.Manufacturer?.Split(' ')[0]} {random.Next(1, 3)}.{random.Next(0, 30)}.{random.Next(0, 9)}",
             };
+        }
+
+        // Cortex XDR: the table holds most corporate Windows machines. Names come short or as FQDN; a few agents are disconnected,
+        // a few machines have two agents (reinstall) and a few exist only in the XDR.
+        var xdrRandom = new Random(seed ^ 0xC0DE);
+        string XdrHost(string name) => xdrRandom.NextDouble() < .2 ? $"{name.ToLowerInvariant()}.corp.azul.sim" : name;
+        void AddXdr(string host, bool server, DateTimeOffset? lastSeen, string status, string? user)
+        {
+            XdrEndpoints.Add(new XdrEndpoint(Convert.ToHexString(BitConverter.GetBytes(HashCode.Combine(seed, host, XdrEndpoints.Count))).ToLowerInvariant().PadRight(32, '0'),
+                host, status, status == "CONNECTED" ? "PROTECTED" : "UNPROTECTED", server ? "AGENT_TYPE_SERVER" : "AGENT_TYPE_WORKSTATION",
+                $"10.{xdrRandom.Next(1, 40)}.{xdrRandom.Next(0, 250)}.{xdrRandom.Next(2, 250)}", lastSeen, user));
+        }
+
+        foreach (var sys in SccmSystems.Where(x => x.Obsolete != true && x.Name is not null && x.OperatingSystem?.Contains("Windows", StringComparison.OrdinalIgnoreCase) == true))
+        {
+            var server = sys.OperatingSystem!.Contains("Server", StringComparison.OrdinalIgnoreCase);
+            if (xdrRandom.NextDouble() > (server ? .93 : .87))
+            {
+                continue; // no agent installed
+            }
+
+            var roll = xdrRandom.NextDouble();
+            var seen = sys.LastActiveAt ?? Now.AddDays(-60);
+            if (roll < .04)
+            {
+                AddXdr(XdrHost(sys.Name!), server, Now.AddDays(-xdrRandom.Next(10, 40)), "DISCONNECTED", server ? null : sys.LastLogonUser);
+            }
+            else if (roll < .06)
+            {
+                AddXdr(XdrHost(sys.Name!), server, Now.AddDays(-xdrRandom.Next(40, 120)), "LOST", server ? null : sys.LastLogonUser);
+            }
+            else
+            {
+                AddXdr(XdrHost(sys.Name!), server, seen.AddMinutes(-xdrRandom.Next(1, 600)), "CONNECTED", server ? null : sys.LastLogonUser);
+            }
+
+            if (xdrRandom.NextDouble() < .01)
+            {
+                AddXdr(sys.Name!, server, Now.AddDays(-xdrRandom.Next(60, 200)), "LOST", null); // old agent after a reinstall
+            }
+        }
+
+        foreach (var ad in AdComputers.Where(a => a.Name.Contains("-OLD-", StringComparison.Ordinal) || xdrRandom.NextDouble() < .02).Take(30))
+        {
+            AddXdr(ad.Name, false, Now.AddDays(-xdrRandom.Next(0, 90)), "CONNECTED", null);
+        }
+
+        for (var k = 1; k <= 8; k++)
+        {
+            AddXdr($"AZ-XDR-ONLY-{k:D2}", k % 3 == 0, Now.AddHours(-xdrRandom.Next(1, 300)), "CONNECTED", $"CORP\\xdr{k}");
         }
 
         // Entra users and Intune device extras.

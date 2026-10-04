@@ -3,6 +3,7 @@ using System.Net.Http;
 using Nexus.Collectors.ActiveDirectory;
 using Nexus.Collectors.Graph;
 using Nexus.Collectors.Sccm;
+using Nexus.Collectors.Xdr;
 using Nexus.Core.Configuration;
 using Nexus.Core.Security;
 using Nexus.Simulation;
@@ -13,6 +14,7 @@ public interface ISourceFactory
 {
     ISccmReader? CreateSccmReader(SccmSettings settings, SccmQueryGate gate);
     IDirectoryReader? CreateDirectoryReader(ActiveDirectorySettings settings);
+    IXdrReader? CreateXdrReader(XdrSettings settings);
 
     /// <summary>
     /// Null when Azure is not configured ("não configurado", never zero). Live uses the collector app with its certificate
@@ -43,6 +45,13 @@ public sealed class SourceFactory(NexusPaths paths) : ISourceFactory
     {
         SourceMode.Live => new LdapDirectoryReader(settings),
         SourceMode.Simulated => _estate.Value.CreateDirectoryReader(),
+        _ => null,
+    };
+
+    public IXdrReader? CreateXdrReader(XdrSettings settings) => settings.Mode switch
+    {
+        SourceMode.Live => new SqlXdrReader(settings),
+        SourceMode.Simulated => _estate.Value.CreateXdrReader(),
         _ => null,
     };
 

@@ -146,6 +146,9 @@ namespace Nexus.Data.Migrations.Postgres
                     b.Property<bool>("InSccm")
                         .HasColumnType("boolean");
 
+                    b.Property<bool>("InXdr")
+                        .HasColumnType("boolean");
+
                     b.Property<string>("IntuneChannel")
                         .IsRequired()
                         .HasMaxLength(24)
@@ -256,6 +259,28 @@ namespace Nexus.Data.Migrations.Postgres
 
                     b.Property<bool?>("UserEnabled")
                         .HasColumnType("boolean");
+
+                    b.Property<string>("XdrAgentType")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<bool>("XdrByNameOnly")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("XdrIp")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<DateTimeOffset?>("XdrLastSeenAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("XdrOperationalStatus")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("XdrStatus")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
 
                     b.HasKey("Id");
 
@@ -1060,6 +1085,49 @@ namespace Nexus.Data.Migrations.Postgres
                     b.HasIndex("Status", "Id");
 
                     b.ToTable("worker_commands", (string)null);
+                });
+
+            modelBuilder.Entity("Nexus.Data.Entities.XdrEndpointRecord", b =>
+                {
+                    b.Property<string>("AgentId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("AgentStatus")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("AgentType")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset>("CollectedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("HostName")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("Ip")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<DateTimeOffset?>("LastSeenAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("OperationalStatus")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Users")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.HasKey("AgentId");
+
+                    b.HasIndex("HostName");
+
+                    b.ToTable("xdr_endpoints", (string)null);
                 });
 #pragma warning restore 612, 618
         }
