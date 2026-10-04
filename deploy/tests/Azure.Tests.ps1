@@ -107,8 +107,8 @@ function Invoke-GraphRequest {
 function Write-Log { param([string]$Message, [string]$Level = 'INFO') }   # silencia o log nos testes
 
 # ---------------------------------------------------------------- Utilitários puros
-$a = New-DeterministicGuid 'role:Nexus.Admin'
-Assert-That 'GUID determinístico é estável e distinto por função' { $a -eq (New-DeterministicGuid 'role:Nexus.Admin') -and $a -ne (New-DeterministicGuid 'role:Nexus.Gestao') }
+$a = New-DeterministicGuid 'role:Nexus.AdminIntegracao'
+Assert-That 'GUID determinístico é estável e distinto por função' { $a -eq (New-DeterministicGuid 'role:Nexus.AdminIntegracao') -and $a -ne (New-DeterministicGuid 'role:Nexus.Leitura') }
 
 $certA = New-TestCertificate 'AzulNexus-Coletor'
 $assertion = New-ClientAssertion -Certificate $certA -TenantId 'tenant-1' -ClientId 'client-1'
@@ -123,8 +123,8 @@ Assert-That 'Asserção do cliente: x5t é a impressão digital e as claims apon
     $claims.iss -eq 'client-1' -and $claims.sub -eq 'client-1' -and $claims.aud -eq 'https://login.microsoftonline.com/tenant-1/oauth2/v2.0/token' -and $claims.exp -gt $claims.nbf }
 
 $allNames = @($script:CollectorPermissions | ForEach-Object { $_.Name })
-Assert-That 'Lista de permissões: 7 obrigatórias + 1 opcional (SPEC 4.5)' { $allNames.Count -eq 8 -and @($script:CollectorPermissions | Where-Object Optional).Count -eq 1 }
-foreach ($removed in $allNames | Where-Object { $_ -ne 'Organization.Read.All' }) {
+Assert-That 'Lista de permissões: 7 obrigatórias + 3 opcionais (SPEC 4.5; Acesso Condicional e sign-ins são opcionais)' { $allNames.Count -eq 10 -and @($script:CollectorPermissions | Where-Object Optional).Count -eq 3 }
+foreach ($removed in @($script:CollectorPermissions | Where-Object { -not $_.Optional } | ForEach-Object { $_.Name })) {
     $granted = @($allNames | Where-Object { $_ -ne $removed })
     Assert-That "Validação aponta exatamente a permissão removida: $removed" { (@(Get-MissingPermissions -GrantedRoles $granted)) -join ',' -eq $removed }
 }
@@ -147,28 +147,28 @@ Assert-That 'Cria os dois registros e os dois service principals' { $script:Db.A
 Assert-That 'Locatário vem do diretório' { $r1.TenantId -eq 'tenant-1' -and $r1.TenantName -eq 'Azul Teste' }
 $collectorApp = $script:Db.Apps | Where-Object { $_.displayName -eq $script:CollectorAppName }
 $webApp = $script:Db.Apps | Where-Object { $_.displayName -eq $script:WebAppName }
-Assert-That 'Coletor: só permissões de aplicativo (Role), as 8 do SPEC, somente leitura' {
+Assert-That 'Coletor: só permissões de aplicativo (Role), as 10 (7 obrigatórias e 3 opcionais), somente leitura' {
     $access = @($collectorApp.requiredResourceAccess[0].resourceAccess)
-    $access.Count -eq 8 -and @($access | Where-Object { $_.type -ne 'Role' }).Count -eq 0 -and $collectorApp.signInAudience -eq 'AzureADMyOrg' }
+    $access.Count -eq 10 -and @($access | Where-Object { $_.type -ne 'Role' }).Count -eq 0 -and $collectorApp.signInAudience -eq 'AzureADMyOrg' }
 Assert-That 'Coletor: todas as permissões vêm de ".Read.All" (nenhuma de escrita)' { @($script:CollectorPermissions | Where-Object { $_.Name -notlike '*.Read.All' }).Count -eq 0 }
-Assert-That 'Coletor: consentimento do administrador concedido às 8 permissões' { @($script:Db.RoleAssignments | Where-Object { $_.principalId -eq $r1.Collector.ServicePrincipalId -and $_.resourceId -eq 'graph-sp' }).Count -eq 8 }
+Assert-That 'Coletor: consentimento do administrador concedido às 10 permissões' { @($script:Db.RoleAssignments | Where-Object { $_.principalId -eq $r1.Collector.ServicePrincipalId -and $_.resourceId -eq 'graph-sp' }).Count -eq 10 }
 Assert-That 'Certificados: um por registro, sem segredo de cliente' { @($collectorApp.keyCredentials).Count -eq 1 -and @($webApp.keyCredentials).Count -eq 1 -and -not $collectorApp.ContainsKey('passwordCredentials') -and -not $webApp.ContainsKey('passwordCredentials') }
 Assert-That 'Web: 4 funções do SPEC com ids estáveis' {
     $values = @($webApp.appRoles | ForEach-Object { $_.value }) | Sort-Object
-    ($values -join ',') -eq 'Nexus.Admin,Nexus.Gestao,Nexus.Operacao,Nexus.Seguranca' -and ($webApp.appRoles | Where-Object { $_.value -eq 'Nexus.Admin' }).id -eq $a.ToString() -and @($webApp.appRoles | Where-Object { $_.allowedMemberTypes -notcontains 'User' }).Count -eq 0 }
+    ($values -join ',') -eq 'Nexus.AdminIntegracao,Nexus.Analista,Nexus.Auditoria,Nexus.Leitura' -and ($webApp.appRoles | Where-Object { $_.value -eq 'Nexus.AdminIntegracao' }).id -eq $a.ToString() -and @($webApp.appRoles | Where-Object { $_.allowedMemberTypes -notcontains 'User' }).Count -eq 0 }
 Assert-That 'Web: URIs de redirecionamento e logout (SPEC 4.6) sem barra dupla' { $webApp.web.redirectUris -contains 'https://nexus.azul.corp:8443/signin-oidc' -and $webApp.web.logoutUrl -eq 'https://nexus.azul.corp:8443/signout-oidc' -and -not $webApp.web.implicitGrantSettings.enableIdTokenIssuance }
 Assert-That 'Web: permissões delegadas openid, profile e User.Read (e só elas)' { @($webApp.requiredResourceAccess[0].resourceAccess).Count -eq 3 -and @($webApp.requiredResourceAccess[0].resourceAccess | Where-Object { $_.type -ne 'Scope' }).Count -eq 0 }
 Assert-That 'Web: atribuição obrigatória ativada e consentimento delegado concedido' {
     $webSp = $script:Db.Sps | Where-Object { $_.id -eq $r1.Web.ServicePrincipalId }
     $webSp.appRoleAssignmentRequired -and $script:Db.Grants.Count -eq 1 -and $script:Db.Grants[0].scope -eq 'openid profile User.Read' -and $script:Db.Grants[0].consentType -eq 'AllPrincipals' }
-Assert-That 'Primeiro administrador (quem fez o login) recebe Nexus.Admin' { $script:Db.UserAssignments.Count -eq 1 -and $script:Db.UserAssignments[0].principalId -eq 'user-me' -and $script:Db.UserAssignments[0].appRoleId -eq $a.ToString() -and $r1.Web.Admin -eq 'admin@azul.corp' }
+Assert-That 'Primeiro administrador (quem fez o login) recebe Nexus.AdminIntegracao' { $script:Db.UserAssignments.Count -eq 1 -and $script:Db.UserAssignments[0].principalId -eq 'user-me' -and $script:Db.UserAssignments[0].appRoleId -eq $a.ToString() -and $r1.Web.Admin -eq 'admin@azul.corp' }
 
 # Idempotência: rodar de novo não cria nem concede nada
 $writesBefore = $script:Db.Writes
 $r2 = Initialize-NexusAzure -Token 't' -PublicUrl 'https://nexus.azul.corp:8443' -CollectorCertificate $collectorCert -WebCertificate $webCert
 Assert-That 'Segunda execução: mesmos registros, mesmos ids, nada duplicado' {
     $script:Db.Apps.Count -eq 2 -and $r2.Collector.AppId -eq $r1.Collector.AppId -and $r2.Web.AppId -eq $r1.Web.AppId -and
-    $script:Db.RoleAssignments.Count -eq 8 -and $script:Db.Grants.Count -eq 1 -and $script:Db.UserAssignments.Count -eq 1 -and
+    $script:Db.RoleAssignments.Count -eq 10 -and $script:Db.Grants.Count -eq 1 -and $script:Db.UserAssignments.Count -eq 1 -and
     @($collectorApp.keyCredentials).Count -eq 1 -and @($webApp.keyCredentials).Count -eq 1 -and @($webApp.appRoles).Count -eq 4 }
 Assert-That 'Segunda execução só atualiza (PATCH) os dois registros: nenhuma criação' { ($script:Db.Writes - $writesBefore) -eq 2 }
 
@@ -180,7 +180,7 @@ Assert-That 'Certificado novo é acrescentado e o antigo é mantido' { @($collec
 # Administrador informado e permissão opcional dispensada
 Reset-FakeGraph
 $r3 = Initialize-NexusAzure -Token 't' -PublicUrl 'https://nexus.azul.corp:8443' -CollectorCertificate $collectorCert -WebCertificate $webCert -AdminUpn 'ana@azul.corp' -SkipOptionalPermissions
-Assert-That 'Administrador informado por UPN recebe Nexus.Admin' { $script:Db.UserAssignments[0].principalId -eq 'user-ana' -and $r3.Web.Admin -eq 'ana@azul.corp' }
+Assert-That 'Administrador informado por UPN recebe Nexus.AdminIntegracao' { $script:Db.UserAssignments[0].principalId -eq 'user-ana' -and $r3.Web.Admin -eq 'ana@azul.corp' }
 Assert-That '-SkipOptionalPermissions pede 7 permissões (sem Organization.Read.All)' { $script:Db.RoleAssignments.Count -eq 7 }
 $threw = $false
 Reset-FakeGraph
@@ -199,7 +199,7 @@ function Invoke-GraphRequest { param([string]$Method, [string]$Uri, [string]$Tok
 
 $script:FakeToken = New-FakeJwt -Roles $allNames
 $okReport = Test-NexusAzureAccess -TenantId 'tenant-1' -ClientId 'c' -Certificate $collectorCert -IncludeOptional
-Assert-That 'Validação completa: token, permissões e 8 chamadas, tudo OK' { @($okReport | Where-Object Status -ne 'OK').Count -eq 0 -and @($okReport | Where-Object { $_.Item -like 'Chamada:*' }).Count -eq 8 }
+Assert-That 'Validação completa: token, permissões e 10 chamadas, tudo OK' { @($okReport | Where-Object Status -ne 'OK').Count -eq 0 -and @($okReport | Where-Object { $_.Item -like 'Chamada:*' }).Count -eq 10 }
 
 $script:FakeToken = New-FakeJwt -Roles @($allNames | Where-Object { $_ -notin 'User.Read.All', 'Device.Read.All' })
 $badReport = Test-NexusAzureAccess -TenantId 'tenant-1' -ClientId 'c' -Certificate $collectorCert -IncludeOptional
@@ -221,7 +221,7 @@ $json = (New-AzureConfig -Result $result -CollectorCertSubject 'CN=AzulNexus-Col
 $parsed = $json | ConvertFrom-Json
 Assert-That 'azure.json: identificadores, impressões digitais, funções e permissões' {
     $parsed.tenantId -eq 'tenant-1' -and $parsed.collector.clientId -eq 'app-c' -and $parsed.collector.certificateThumbprint -eq 'AA11' -and $parsed.web.clientId -eq 'app-w' -and
-    @($parsed.web.roles).Count -eq 4 -and @($parsed.permissions).Count -eq 8 }
+    @($parsed.web.roles).Count -eq 4 -and @($parsed.permissions).Count -eq 10 }
 Assert-That 'azure.json: nenhum segredo (senha, segredo de cliente, chave privada)' { $json -notmatch '(?i)password|secret|privateKey|clientSecret|BEGIN' }
 
 if ($script:Failures -gt 0) { Write-Host "$script:Failures falha(s)." -ForegroundColor Red; exit 1 }

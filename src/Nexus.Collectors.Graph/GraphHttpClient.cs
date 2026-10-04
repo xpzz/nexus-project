@@ -42,12 +42,41 @@ public sealed class GraphHttpClient(HttpClient http, ITokenProvider tokens, Func
 
     public const int BatchSize = 20;
 
+    /// <summary>Requests dropped by <see cref="Sanitize"/> since this client was created (blank id or URL, duplicate id, absolute URL, empty path segment).</summary>
+    public int DroppedRequests { get; private set; }
+
+    /// <summary>
+    /// A single malformed entry makes Graph reject the whole batch with 400, which would fail a collection of thousands of records.
+    /// Entries with a blank id or URL, a repeated id, an absolute URL or an empty path segment (for example <c>/users//</c>, from a null id) are dropped.
+    /// </summary>
+    private IReadOnlyList<(string Id, string Url)> Sanitize(IReadOnlyList<(string Id, string Url)> requests)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var clean = new List<(string, string)>(requests.Count);
+        foreach (var (id, url) in requests)
+        {
+            var valid = !string.IsNullOrWhiteSpace(id) && !string.IsNullOrWhiteSpace(url) && url.StartsWith('/') && !url.StartsWith("//", StringComparison.Ordinal)
+                && !url.Split('?')[0].Contains("//", StringComparison.Ordinal) && seen.Add(id);
+            if (valid)
+            {
+                clean.Add((id, url));
+            }
+            else
+            {
+                DroppedRequests++;
+            }
+        }
+
+        return clean;
+    }
+
     /// <summary>
     /// Runs GET requests through the Graph $batch endpoint, 20 at a time. Throttled or unavailable sub-requests
     /// (429, 503, 504) are retried on their own with the Retry-After they report; other statuses are returned as they are.
     /// </summary>
     public async Task<IReadOnlyList<BatchResponse>> BatchGetAsync(IReadOnlyList<(string Id, string Url)> requests, CancellationToken cancellationToken)
     {
+        requests = Sanitize(requests);
         var results = new List<BatchResponse>(requests.Count);
         foreach (var chunk in requests.Chunk(BatchSize))
         {

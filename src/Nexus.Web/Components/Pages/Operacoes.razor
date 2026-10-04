@@ -1,0 +1,132 @@
+@page "/operacao"
+@inject InventorySnapshotService Inventory
+@inject INexusDbFactory DbFactory
+@inject CurrentAccess Access
+@inject Nexus.Core.NexusPaths Paths
+@inject NavigationManager Nav
+
+<PageTitle>Fontes e coletas · Azul Nexus</PageTitle>
+
+<div class="ph">
+    <div><h1>Fontes e coletas</h1><p>Estado de cada conector, histórico de execuções por Run ID, falhas e logs técnicos. A atualização das fontes decide a qualidade de tudo o que o Nexus mostra.</p></div>
+    @if (_snapshot is not null) { <span class="asof">Agora: @DateTimeOffset.Now.ToString("dd/MM/yyyy HH:mm")</span> }
+</div>
+
+@if (Message is not null) { <div class="note">@Message</div> }
+
+@if (_snapshot is not null)
+{
+    <section class="card">
+        <h3>Fontes de dados</h3>
+        <p class="sub">Uma fonte opcional que nunca foi configurada não aparece. Uma fonte com falha mantém o último resultado válido: os dados ficam velhos, não somem.</p>
+        <div class="tw" style="border:0"><table style="min-width:0"><thead><tr><th>Fonte</th><th>Situação</th><th>Última coleta com sucesso</th><th class="r">Registros</th><th>Detalhe</th></tr></thead><tbody>
+            @foreach (var h in _health)
+            {
+                <tr><td class="nm">@h.Label@if (h.Optional){<small class="sm">opcional</small>}</td>
+                    <td><span class="pill @Pill(h)"><span aria-hidden="true">@Icon(h)</span> @h.Text</span></td>
+                    <td class="num">@(h.LastSuccessAt is { } at ? at.ToLocalTime().ToString("dd/MM/yyyy HH:mm") + " (" + Fmt.Ago(at, _snapshot.LoadedAt) + ")" : "nunca")</td>
+                    <td class="num r">@(h.Records is { } n ? Fmt.Number(n) : "—")</td>
+                    <td class="note-cell">@h.Detail</td></tr>
+            }
+        </tbody></table></div>
+    </section>
+
+    <section class="card">
+        <h3>Coletas</h3>
+        <div class="tw" style="border:0"><table style="min-width:760px"><thead><tr><th>Coleta</th><th>Última situação</th><th class="r">Registros</th><th>Último sucesso</th><th>Próxima</th><th>Mensagem</th>@if (Access.CanOperate){<th>Executar</th>}</tr></thead><tbody>
+            @foreach (var j in _snapshot.Jobs)
+            {
+                <tr><td class="nm">@SourceHealthBuilder.JobLabel(j.Name)<small class="sm">@j.Name</small></td>
+                    <td><span class="pill @JobPill(j.Status)">@(j.Status ?? "—")</span></td>
+                    <td class="num r">@(j.Records is { } n ? Fmt.Number(n) : "—")</td>
+                    <td class="num">@(j.LastSuccessAt?.ToLocalTime().ToString("dd/MM HH:mm") ?? "—")</td>
+                    <td class="num">@(j.NextRunAt?.ToLocalTime().ToString("dd/MM HH:mm") ?? "—")</td>
+                    <td class="note-cell">@j.Error</td>
+                    @if (Access.CanOperate)
+                    {
+                        <td><form method="post" action="/operacao/coletar" style="margin:0"><AntiforgeryToken /><input type="hidden" name="job" value="@j.Name" /><button type="submit">Coletar agora</button></form></td>
+                    }</tr>
+            }
+        </tbody></table></div>
+        @if (Access.CanOperate)
+        {
+            <form method="post" action="/operacao/coletar" class="actions" style="margin-top:10px"><AntiforgeryToken /><input type="hidden" name="job" value="all" /><button type="submit" class="primary">Coletar todas as fontes agora</button></form>
+        }
+        else
+        {
+            <p class="hint">Executar coletas exige o perfil Administrador de integração (ou o acesso de configuração no servidor). A execução respeita pausas e limites de CPU.</p>
+        }
+    </section>
+
+    <section class="card">
+        <div class="ttl"><h3>Histórico de execuções</h3>
+            <form method="get" action="/operacao" class="tools" style="margin:0">
+                <select name="job" aria-label="Coleta" data-auto><option value="">Todas as coletas</option>@foreach (var j in _snapshot.Jobs){<option value="@j.Name" selected="@(Job == j.Name)">@SourceHealthBuilder.JobLabel(j.Name)</option>}</select>
+                <label class="chk"><input type="checkbox" name="falhas" value="1" checked="@(Falhas == "1")" onchange="this.form.submit()" /> só falhas</label>
+            </form></div>
+        <p class="sub">Cada execução recebe um Run ID, o mesmo que aparece nos logs e nas versões de registros arquivadas.</p>
+        <div class="tw tall" style="border:0;max-height:420px"><table class="dense" style="min-width:760px"><thead><tr><th>Início</th><th>Coleta</th><th>Situação</th><th class="r">Duração</th><th class="r">Registros</th><th>Run ID</th><th>Mensagem</th></tr></thead><tbody>
+            @foreach (var r in _runs)
+            {
+                <tr><td class="num">@r.StartedAt.ToLocalTime().ToString("dd/MM HH:mm:ss")</td><td>@SourceHealthBuilder.JobLabel(r.Job)</td><td><span class="pill @JobPill(r.Status)">@r.Status</span></td>
+                    <td class="num r">@($"{r.DurationMs / 1000.0:N1} s")</td><td class="num r">@(r.Records is { } n ? Fmt.Number(n) : "—")</td><td class="num" title="@r.RunId">@r.RunId.ToString("N")[..8]</td><td class="note-cell">@r.Message</td></tr>
+            }
+            @if (_runs.Count == 0) { <tr><td colspan="7" class="empty">Nenhuma execução registrada com esse filtro.</td></tr> }
+        </tbody></table></div>
+    </section>
+
+    <section class="card">
+        <h3>Logs técnicos</h3>
+        @if (!Access.CanOperate)
+        {
+            <p class="hint">Os logs técnicos ficam visíveis ao Administrador de integração. Eles já são gravados sem tokens nem senhas e são filtrados de novo antes de aparecer aqui.</p>
+        }
+        else if (_log.Count == 0)
+        {
+            <p class="hint">Nenhum arquivo de log encontrado em @Paths.LogsDirectory.</p>
+        }
+        else
+        {
+            <p class="sub">Últimas @_log.Count linhas do log mais recente. Para o pacote completo use <a href="/diagnostico">Gerar pacote de diagnóstico</a>.</p>
+            <pre class="logs">@string.Join("\n", _log)</pre>
+        }
+    </section>
+}
+
+@code {
+    [SupplyParameterFromQuery] public string? Job { get; set; }
+    [SupplyParameterFromQuery] public string? Falhas { get; set; }
+    [SupplyParameterFromQuery] public string? Message { get; set; }
+
+    private InventorySnapshot? _snapshot;
+    private IReadOnlyList<SourceHealth> _health = [];
+    private List<JobRun> _runs = [];
+    private IReadOnlyList<string> _log = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        _snapshot = await Inventory.GetAsync();
+        _health = SourceHealthBuilder.Build(_snapshot.Jobs, DateTimeOffset.UtcNow);
+        try
+        {
+            await using var db = DbFactory.Create();
+            var query = db.JobRuns.AsNoTracking().AsQueryable();
+            if (!string.IsNullOrEmpty(Job)) { query = query.Where(r => r.Job == Job); }
+            if (Falhas == "1") { query = query.Where(r => r.Status == "Falhou"); }
+            _runs = (await query.OrderByDescending(r => r.Id).Take(150).ToListAsync());
+        }
+        catch (Exception)
+        {
+            _runs = []; // run history arrives with a migration; the page must open while it is pending
+        }
+
+        if (Access.CanOperate)
+        {
+            _log = LogTail.Read(Paths.LogsDirectory);
+        }
+    }
+
+    private static string Pill(SourceHealth h) => h.Status switch { SourceHealth.Ok => "ok", SourceHealth.Failed => "b", SourceHealth.Late or SourceHealth.Partial => "w", _ => "m" };
+    private static string Icon(SourceHealth h) => h.Status switch { SourceHealth.Ok => "✔", SourceHealth.Failed => "✕", SourceHealth.Late or SourceHealth.Partial => "▲", _ => "?" };
+    private static string JobPill(string? s) => s switch { "Concluída" => "ok", "Falhou" => "b", "Adiada" or "Em execução" => "w", _ => "m" };
+}

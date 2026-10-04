@@ -1,0 +1,12 @@
+<a class="card xkpi" href="@Kpi.Link" aria-label="@Kpi.Label: @Fmt.Number(Kpi.Count), ver a lista">
+    <div class="l"><span>@Kpi.Label</span></div>
+    <div class="v">@Fmt.Number(Kpi.Count)<em>@(Kpi.Percent is { } p ? Fmt.Pct(p) + " de " + Fmt.Number(Kpi.Denominator) : "sem denominador válido")</em></div>
+    <p class="def">@Kpi.Definition</p>
+    <p class="meta"><b>População:</b> @Kpi.Population<br /><b>Janela:</b> @Kpi.Window<br /><b>Dados de</b> @AsOf.ToLocalTime().ToString("dd/MM/yyyy HH:mm")@(Kpi.Caveat is null ? "" : ". " + Kpi.Caveat)</p>
+    <span class="go">Ver a lista que explica este número →</span>
+</a>
+
+@code {
+    [Parameter, EditorRequired] public ExecKpi Kpi { get; set; } = default!;
+    [Parameter] public DateTimeOffset AsOf { get; set; }
+}

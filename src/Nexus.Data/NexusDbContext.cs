@@ -29,6 +29,16 @@ public abstract class NexusDbContext(DbContextOptions options) : DbContext(optio
     public DbSet<MamRegistrationRecord> MamRegistrations => Set<MamRegistrationRecord>();
     public DbSet<InstalledSoftwareRecord> InstalledSoftware => Set<InstalledSoftwareRecord>();
     public DbSet<InventoryFetch> InventoryFetches => Set<InventoryFetch>();
+    public DbSet<JobRun> JobRuns => Set<JobRun>();
+    public DbSet<RawRecordVersion> RawRecordVersions => Set<RawRecordVersion>();
+    public DbSet<EvidenceTimelineEntry> EvidenceTimeline => Set<EvidenceTimelineEntry>();
+    public DbSet<AssetChange> AssetChanges => Set<AssetChange>();
+    public DbSet<SavedView> SavedViews => Set<SavedView>();
+    public DbSet<AppProtectionPolicyRecord> AppProtectionPolicies => Set<AppProtectionPolicyRecord>();
+    public DbSet<AppConfigRecord> AppConfigs => Set<AppConfigRecord>();
+    public DbSet<ConditionalAccessRecord> ConditionalAccessPolicies => Set<ConditionalAccessRecord>();
+    public DbSet<AccessEvidenceRecord> AccessEvidence => Set<AccessEvidenceRecord>();
+    public DbSet<ProtectionException> ProtectionExceptions => Set<ProtectionException>();
 
     protected override void OnModelCreating(ModelBuilder model)
     {
@@ -215,6 +225,119 @@ public abstract class NexusDbContext(DbContextOptions options) : DbContext(optio
             e.Property(x => x.Version).HasMaxLength(128);
             e.Property(x => x.Publisher).HasMaxLength(256);
             e.HasIndex(x => x.AssetId);
+        });
+
+        model.Entity<JobRun>(e =>
+        {
+            e.ToTable("job_runs");
+            e.Property(x => x.Job).HasMaxLength(64);
+            e.Property(x => x.Status).HasMaxLength(32);
+            e.Property(x => x.Message).HasMaxLength(2000);
+            e.HasIndex(x => new { x.Job, x.StartedAt });
+            e.HasIndex(x => x.RunId);
+        });
+
+        model.Entity<RawRecordVersion>(e =>
+        {
+            e.ToTable("raw_record_versions");
+            e.Property(x => x.Source).HasMaxLength(32);
+            e.Property(x => x.SourceKey).HasMaxLength(256);
+            e.Property(x => x.Hash).HasMaxLength(64);
+            e.HasIndex(x => new { x.Source, x.SourceKey, x.IsCurrent });
+            e.HasIndex(x => x.LastSeenAt);
+        });
+
+        model.Entity<EvidenceTimelineEntry>(e =>
+        {
+            e.ToTable("evidence_timeline");
+            e.Property(x => x.Source).HasMaxLength(32);
+            e.HasIndex(x => new { x.AssetId, x.Source, x.ObservedAt });
+            e.HasIndex(x => x.CollectedAt);
+        });
+
+        model.Entity<AssetChange>(e =>
+        {
+            e.ToTable("asset_changes");
+            e.Property(x => x.AssetName).HasMaxLength(256);
+            e.Property(x => x.Field).HasMaxLength(64);
+            e.Property(x => x.OldValue).HasMaxLength(512);
+            e.Property(x => x.NewValue).HasMaxLength(512);
+            e.HasIndex(x => new { x.AssetId, x.At });
+            e.HasIndex(x => x.At);
+        });
+
+        model.Entity<AppProtectionPolicyRecord>(e =>
+        {
+            e.ToTable("app_protection_policies");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasMaxLength(64).ValueGeneratedNever();
+            e.Property(x => x.Platform).HasMaxLength(16);
+            e.Property(x => x.Name).HasMaxLength(256);
+            e.Property(x => x.Assignments).HasMaxLength(2000);
+        });
+
+        model.Entity<AppConfigRecord>(e =>
+        {
+            e.ToTable("app_configs");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasMaxLength(64).ValueGeneratedNever();
+            e.Property(x => x.Kind).HasMaxLength(16);
+            e.Property(x => x.Platform).HasMaxLength(32);
+            e.Property(x => x.Name).HasMaxLength(256);
+            e.Property(x => x.Assignments).HasMaxLength(2000);
+        });
+
+        model.Entity<ConditionalAccessRecord>(e =>
+        {
+            e.ToTable("conditional_access_policies");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasMaxLength(64).ValueGeneratedNever();
+            e.Property(x => x.Name).HasMaxLength(256);
+            e.Property(x => x.State).HasMaxLength(48);
+            e.Property(x => x.Users).HasMaxLength(256);
+            e.Property(x => x.Applications).HasMaxLength(256);
+            e.Property(x => x.Platforms).HasMaxLength(256);
+            e.Property(x => x.GrantControls).HasMaxLength(256);
+        });
+
+        model.Entity<AccessEvidenceRecord>(e =>
+        {
+            e.ToTable("access_evidence");
+            e.HasKey(x => x.Key);
+            e.Property(x => x.Key).HasMaxLength(320).ValueGeneratedNever();
+            e.Property(x => x.UserId).HasMaxLength(64);
+            e.Property(x => x.UserPrincipalName).HasMaxLength(256);
+            e.Property(x => x.EntraDeviceId).HasMaxLength(64);
+            e.Property(x => x.DeviceName).HasMaxLength(256);
+            e.Property(x => x.OperatingSystem).HasMaxLength(128);
+            e.Property(x => x.Browser).HasMaxLength(128);
+            e.Property(x => x.TrustType).HasMaxLength(64);
+            e.Property(x => x.Workloads).HasMaxLength(128);
+            e.Property(x => x.ClientApp).HasMaxLength(128);
+            e.Property(x => x.CaStatus).HasMaxLength(32);
+            e.HasIndex(x => x.EntraDeviceId);
+            e.HasIndex(x => x.UserId);
+        });
+
+        model.Entity<SavedView>(e =>
+        {
+            e.ToTable("saved_views");
+            e.Property(x => x.Name).HasMaxLength(120);
+            e.Property(x => x.Query).HasMaxLength(2000);
+            e.Property(x => x.Owner).HasMaxLength(256);
+            e.HasIndex(x => x.Owner);
+        });
+
+        model.Entity<ProtectionException>(e =>
+        {
+            e.ToTable("protection_exceptions");
+            e.Property(x => x.SubjectKind).HasMaxLength(16);
+            e.Property(x => x.SubjectId).HasMaxLength(64);
+            e.Property(x => x.SubjectName).HasMaxLength(256);
+            e.Property(x => x.Control).HasMaxLength(32);
+            e.Property(x => x.Reason).HasMaxLength(1000);
+            e.Property(x => x.ApprovedBy).HasMaxLength(256);
+            e.HasIndex(x => new { x.Control, x.SubjectId });
         });
 
         model.Entity<InventoryFetch>(e =>

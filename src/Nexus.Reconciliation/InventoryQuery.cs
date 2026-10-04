@@ -1,12 +1,15 @@
+using Nexus.Data.Entities;
+
 namespace Nexus.Reconciliation;
 
 public sealed record InventoryFilter(string? Group = null, string? Management = null, string? State = null, string? Issue = null,
-    string? Ownership = null, string? Funnel = null, string? Query = null, string? Department = null, string? Activity = null);
+    string? Ownership = null, string? Funnel = null, string? Query = null, string? Department = null, string? Activity = null,
+    string? Oper = null, string? AssetType = null, string? Flags = null);
 
 /// <summary>Filters and sorting behind the full inventory and every drilldown link.</summary>
 public static class InventoryQuery
 {
-    public static readonly string[] Sorts = ["indice", "nome", "grupo", "usuario", "so", "gestao", "estado", "contato", "sccm", "intune", "area", "fontes"];
+    public static readonly string[] Sorts = ["indice", "nome", "grupo", "usuario", "so", "gestao", "estado", "contato", "sccm", "intune", "area", "fontes", "tipo", "oper", "score", "evidencia", "serial", "propriedade", "atencao"];
 
     public static readonly IReadOnlyDictionary<string, string> FunnelNames = new Dictionary<string, string>
     {
@@ -22,9 +25,49 @@ public static class InventoryQuery
         ["intune-nao-conforme"] = "Intune MDM sem estar conforme",
     };
 
+    /// <summary>Boolean facts that can be combined in the inventory (<c>flag=a,b</c>: all must hold).</summary>
+    public static readonly IReadOnlyDictionary<string, (string Label, Func<AssetView, bool> Test)> Flags = new Dictionary<string, (string, Func<AssetView, bool>)>
+    {
+        ["candidato"] = ("Candidato à inativação", v => v.Asset.DecommissionCandidate),
+        ["entra"] = ("Registrado no Entra ID", v => v.Asset.InEntra),
+        ["mdm"] = ("Gerenciado por MDM", v => v.Asset.IntuneChannel == "Mdm"),
+        ["naoconforme"] = ("Não compliant no Intune", v => v.Asset.IntuneChannel == "Mdm" && !string.Equals(v.Asset.ComplianceState, "compliant", StringComparison.OrdinalIgnoreCase)),
+        ["mam"] = ("Com proteção de apps (MAM)", v => v.Asset.HasMam),
+        ["semmam"] = ("Sem proteção de apps (MAM)", v => !v.Asset.HasMam),
+        ["xdr"] = ("Com agente Cortex XDR", v => v.Asset.InXdr),
+        ["semserial"] = ("Sem serial válido", v => string.IsNullOrWhiteSpace(v.Asset.Serial)),
+        ["semusuario"] = ("Sem usuário associado", v => string.IsNullOrWhiteSpace(v.Asset.PrimaryUser) && string.IsNullOrWhiteSpace(v.Asset.LastUser)),
+        ["fonteunica"] = ("Encontrado em uma única fonte", v => SourceCount(v.Asset) == 1),
+        ["identidadefraca"] = ("Identidade só por nome ou confiança baixa", v => v.Asset.Confidence == "Low" || v.Asset.AdByNameOnly || v.Asset.XdrByNameOnly || v.Asset.NetskopeByNameOnly),
+        ["revisao"] = ("Reconciliação a revisar", v => v.Asset.NeedsReview),
+        ["acessom365"] = ("Com acesso ao Microsoft 365 observado", v => v.Asset.LastM365AccessAt is not null),
+        ["semprotecao"] = ("Sem MDM e sem MAM", v => v.Asset.IntuneChannel != "Mdm" && !v.Asset.HasMam),
+    };
+
+    public static int SourceCount(Asset a) => new[] { a.InSccm, a.InIntune, a.InEntra, a.InAd, a.InXdr, a.InNetskope, a.HasMam }.Count(x => x);
+
+    public static string? FlagLabel(string flag) => Flags.TryGetValue(flag, out var f) ? f.Label : null;
+
+    public static IEnumerable<string> Split(string? csv) => (csv ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
     public static bool Matches(AssetView v, InventoryFilter f, DateTimeOffset now)
     {
         var a = v.Asset;
+        if (f.Oper is { Length: > 0 } oper && !Split(oper).Contains(a.OperationalState))
+        {
+            return false;
+        }
+
+        if (f.AssetType is { Length: > 0 } type && !Split(type).Contains(a.AssetType))
+        {
+            return false;
+        }
+
+        if (f.Flags is { Length: > 0 } flags && Split(flags).Any(x => !Flags.TryGetValue(x, out var fl) || !fl.Test(v)))
+        {
+            return false;
+        }
+
         if (f.Group is { Length: > 0 } g && !(g == "byod" ? v.Group is Groups.ByodMobile or Groups.ByodComputers : g == "sem-gestao" ? v.Issues.Contains("nomgr") : v.Group == g))
         {
             return false;
@@ -116,7 +159,13 @@ public static class InventoryQuery
             "fontes" => v => v.Asset.ActiveSourceCount,
             "area" => v => (v.Asset.Department ?? "").ToLowerInvariant(),
             "estado" => v => States.All.ToList().IndexOf(v.State),
-            "contato" => v => v.Asset.LastActivityAt ?? DateTimeOffset.MinValue,
+            "contato" or "evidencia" => v => v.Asset.LastActivityAt ?? DateTimeOffset.MinValue,
+            "tipo" => v => v.Asset.AssetType,
+            "oper" => v => OperationalStates.All.ToList().IndexOf(v.Asset.OperationalState),
+            "score" => v => v.Asset.ActivityScore,
+            "serial" => v => (v.Asset.Serial ?? "~").ToLowerInvariant(),
+            "propriedade" => v => OwnershipOf(v),
+            "atencao" => v => v.Issues.Count(i => i != "stale"),
             _ => v => v.Score,
         };
         var ordered = descending ? views.OrderByDescending(key) : views.OrderBy(key);

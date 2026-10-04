@@ -6,7 +6,7 @@ using Nexus.Data.Support;
 namespace Nexus.Reconciliation;
 
 /// <summary>Reads the raw tables, reconciles and replaces the derived tables in one transaction.</summary>
-public sealed class InventoryReconciler(INexusDbFactory dbFactory, TimeProvider clock, TimeSpan? activityWindow = null)
+public sealed class InventoryReconciler(INexusDbFactory dbFactory, TimeProvider clock, TimeSpan? activityWindow = null, EvidencePolicy? evidence = null)
 {
     public static readonly TimeSpan DefaultActivityWindow = TimeSpan.FromDays(30);
 
@@ -25,9 +25,17 @@ public sealed class InventoryReconciler(INexusDbFactory dbFactory, TimeProvider 
             await db.MamRegistrations.AsNoTracking().ToListAsync(cancellationToken),
             await db.Jobs.AnyAsync(j => j.Name == "intune.policies" && j.LastSuccessAt != null, cancellationToken),
             await db.XdrEndpoints.AsNoTracking().ToListAsync(cancellationToken),
-            await db.NetskopeClients.AsNoTracking().ToListAsync(cancellationToken));
+            await db.NetskopeClients.AsNoTracking().ToListAsync(cancellationToken),
+            evidence,
+            await db.AccessEvidence.AsNoTracking().ToListAsync(cancellationToken));
+
+        var runId = Guid.NewGuid();
+        var before = await db.Assets.AsNoTracking().ToDictionaryAsync(a => a.Id, cancellationToken);
+        var seedTimeline = !await db.EvidenceTimeline.AnyAsync(cancellationToken);
 
         var result = Reconciler.Run(input);
+        var changes = AssetHistory.Diff(before, result.Assets, input.Now, runId);
+        var timeline = AssetHistory.Timeline(before, result.Assets, input.Now, seedTimeline);
 
         var strategy = db.Database.CreateExecutionStrategy();
         await strategy.ExecuteAsync(async () =>
@@ -51,6 +59,20 @@ public sealed class InventoryReconciler(INexusDbFactory dbFactory, TimeProvider 
                 db.ChangeTracker.Clear();
             }
 
+            foreach (var chunk in changes.Chunk(1000))
+            {
+                db.AssetChanges.AddRange(chunk);
+                await db.SaveChangesAsync(cancellationToken);
+                db.ChangeTracker.Clear();
+            }
+
+            foreach (var chunk in timeline.Chunk(1000))
+            {
+                db.EvidenceTimeline.AddRange(chunk);
+                await db.SaveChangesAsync(cancellationToken);
+                db.ChangeTracker.Clear();
+            }
+
             db.ReviewItems.AddRange(result.Review.Select(r => new ReviewItem
             {
                 Kind = r.Kind, Detail = r.Detail, Sources = string.Join(",", r.Sources), CreatedAt = input.Now,
@@ -69,7 +91,8 @@ public static class InventoryReports
     {
         var ok = (await db.Jobs.AsNoTracking().Where(j => j.LastSuccessAt != null).Select(j => j.Name).ToListAsync(cancellationToken)).ToHashSet();
         return new SourceAvailability(ok.Contains("sccm.devices"), ok.Contains("intune.devices"), ok.Contains("entra.devices"), ok.Contains("ad.computers"),
-            ok.Contains("intune.policies"), ok.Contains("intune.mam"), ok.Contains("entra.users"), ok.Contains("xdr.endpoints"), ok.Contains("netskope.clients"));
+            ok.Contains("intune.policies"), ok.Contains("intune.mam"), ok.Contains("entra.users"), ok.Contains("xdr.endpoints"), ok.Contains("netskope.clients"),
+            ok.Contains("intune.apppolicies"), ok.Contains("entra.ca"), ok.Contains("entra.signins"));
     }
 
     public static async Task<KpiReport> BuildAsync(NexusDbContext db, CancellationToken cancellationToken) =>

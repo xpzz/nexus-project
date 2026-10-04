@@ -55,11 +55,17 @@ if (serviceHosting)
 
 builder.Services.AddSerilog();
 builder.Services.AddSingleton(paths);
-builder.Services.AddSingleton(new SettingsProvider(paths));
+var settingsProvider = new SettingsProvider(paths);
+builder.Services.AddSingleton(settingsProvider);
 builder.Services.AddSingleton<INexusDbFactory, SettingsDbFactory>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton(sp => new Nexus.Reconciliation.InventorySnapshotService(sp.GetRequiredService<INexusDbFactory>(), sp.GetRequiredService<TimeProvider>(),
-    () => sp.GetRequiredService<SettingsProvider>().Exists ? Math.Clamp(sp.GetRequiredService<SettingsProvider>().Current.Collection.ActivityWindowDays, 1, 365) : 30));
+    () => sp.GetRequiredService<SettingsProvider>().Exists ? Nexus.Reconciliation.EvidencePolicy.From(sp.GetRequiredService<SettingsProvider>().Current.Evidence) : Nexus.Reconciliation.EvidencePolicy.From(new Nexus.Core.Configuration.EvidenceSettings()),
+    () =>
+    {
+        var g = sp.GetRequiredService<SettingsProvider>().Exists ? sp.GetRequiredService<SettingsProvider>().Current.Governance : new Nexus.Core.Configuration.GovernanceSettings();
+        return new Nexus.Reconciliation.GovernanceSettingsView(Math.Clamp(g.UrlBlocklistLimit, 1, 100_000), g.UrlBlocklistReservePercent, 180);
+    }));
 builder.Services.AddHostedService<Nexus.Web.Hosting.SnapshotWarmup>();
 
 // Keys live in the data folder (ACL restricted) and are encrypted with DPAPI on Windows,
@@ -72,7 +78,17 @@ if (OperatingSystem.IsWindows())
     dataProtection.ProtectKeysWithDpapi(protectToLocalMachine: true);
 }
 
-builder.Services.AddAuthentication(SetupAccessMiddleware.Scheme)
+var authSettings = settingsProvider.Exists ? settingsProvider.Current.Web : null;
+var entraPrepared = authSettings is { UsesEntra: true } ? EntraSignIn.Prepare(Nexus.Core.Configuration.AzureSettingsStore.Load(paths)) : (null, null);
+var entraProblem = entraPrepared.Item2;
+var authBuilder = builder.Services.AddAuthentication(o =>
+{
+    o.DefaultScheme = entraPrepared.Item1 is null ? SetupAccessMiddleware.Scheme : EntraSignIn.PolicyScheme;
+    if (entraPrepared.Item1 is not null)
+    {
+        o.DefaultChallengeScheme = EntraSignIn.ChallengeScheme;
+    }
+})
     .AddCookie(SetupAccessMiddleware.Scheme, o =>
     {
         o.Cookie.Name = "AzulNexus.Setup";
@@ -82,7 +98,15 @@ builder.Services.AddAuthentication(SetupAccessMiddleware.Scheme)
         o.SlidingExpiration = false;
         o.LoginPath = SetupAccessMiddleware.AccessPath;
     });
+if (entraPrepared.Item1 is { } entra)
+{
+    EntraSignIn.Register(authBuilder, entra);
+}
+
+builder.Services.AddSingleton(new EntraStatus(entraPrepared.Item1 is not null, entraProblem));
 builder.Services.AddAuthorization();
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped(sp => { var http = sp.GetRequiredService<IHttpContextAccessor>().HttpContext; return Nexus.Web.Setup.CurrentAccess.From(http?.User, http?.Connection.RemoteIpAddress?.ToString()); });
 builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 
@@ -151,6 +175,8 @@ app.MapPost("/dispositivo/{id:guid}/inventario", async (Guid id, INexusDbFactory
 
     return Results.Redirect($"/dispositivo/{id}#software");
 }).DisableAntiforgery();
+
+app.MapInventoryEndpoints();
 
 app.MapGet("/diagnostico", async (HttpContext context, SettingsProvider settings, CancellationToken ct) =>
 {

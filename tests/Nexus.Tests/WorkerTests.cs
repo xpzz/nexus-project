@@ -67,6 +67,20 @@ public sealed class SwitchableSources(SyntheticEstate estate) : ISourceFactory
         return reader;
     }
 
+    public bool FailSignIns { get; set; }
+
+    public IGraphGovernanceReader? CreateGovernanceReader(NexusSettings settings)
+    {
+        if (!GraphEnabled)
+        {
+            return null;
+        }
+
+        var reader = (FakeGovernanceReader)estate.CreateGovernanceReader();
+        reader.FailSignInsWithForbidden = FailSignIns;
+        return reader;
+    }
+
     public GraphConnection? CreateGraphConnection(NexusSettings settings) => null;
 
     public ISccmReader? CreateSccmReader(SccmSettings settings, SccmQueryGate gate) =>

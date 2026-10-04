@@ -75,8 +75,12 @@ public sealed class GraphAccessCheck(NexusSettings settings, NexusPaths paths, I
                 }
             }
 
+            // Optional governance reads (Conditional Access and sign-ins) are reported, never treated as a failure: the core inventory does not need them.
+            var optionalMissing = GraphPermissions.Missing(GraphAssertion.Roles(token), GraphPermissions.Collector.Where(p => p.Phase == 3)).Select(p => p.Name).ToList();
+            var optionalNote = optionalMissing.Count == 0 ? "" : $" Opcionais sem consentimento: {string.Join(", ", optionalMissing)} (Acesso Condicional e acessos ao Microsoft 365 ficam como não disponíveis).";
+
             return failed.Count == 0
-                ? HealthCheckResult.Ok(Name, $"Token obtido e {required.Count} permissões de leitura verificadas.")
+                ? HealthCheckResult.Ok(Name, $"Token obtido e {required.Count} permissões de leitura verificadas.{optionalNote}")
                 : new HealthCheckResult(Name, HealthStatus.Warning, $"Leitura recusada: {string.Join(", ", failed)}.",
                     ErrorCatalog.Entra["Graph403"].WithDetail(string.Join(", ", failed)));
         }

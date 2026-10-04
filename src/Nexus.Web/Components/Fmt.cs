@@ -110,6 +110,7 @@ public static class Fmt
         "MultipleXdrRecords" => "Mais de um agente do XDR com o mesmo nome",
         "MultipleNetskopeRecords" => "Mais de um cliente Netskope com o mesmo nome",
         "MamAmbiguous" => "Proteção de apps sem dispositivo único",
+        "MamWithoutUser" => "Proteção de apps sem usuário associado",
         _ => kind,
     };
 }

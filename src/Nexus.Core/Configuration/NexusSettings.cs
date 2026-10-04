@@ -5,6 +5,9 @@ namespace Nexus.Core.Configuration;
 /// <summary>Configuration persisted in config/nexus.json. Never holds secrets in clear text.</summary>
 public sealed class NexusSettings
 {
+    public EvidenceSettings Evidence { get; set; } = new();
+    public GovernanceSettings Governance { get; set; } = new();
+
     public int SchemaVersion { get; set; } = 1;
     public DatabaseSettings Database { get; set; } = new();
     public SccmSettings Sccm { get; set; } = new();
@@ -120,6 +123,86 @@ public sealed class ActiveDirectorySettings
     public int PageSize { get; set; } = 500;
 }
 
+/// <summary>How recent a report must be, in days. Each step must be larger than the previous one.</summary>
+public sealed class EvidenceThresholds
+{
+    /// <summary>Two independent tools reported inside this window: confirmed active.</summary>
+    public int ConfirmedDays { get; set; } = 7;
+    /// <summary>One tool that runs on the device (or two identity sources) reported inside this window: probably active.</summary>
+    public int ProbableDays { get; set; } = 30;
+    /// <summary>Some report exists inside this window, but nothing recent: no recent evidence.</summary>
+    public int NoRecentDays { get; set; } = 90;
+    /// <summary>Nothing for this long: candidate to be retired.</summary>
+    public int DecommissionDays { get; set; } = 180;
+
+    public EvidenceThresholds() { }
+
+    public EvidenceThresholds(int confirmed, int probable, int noRecent, int decommission)
+    {
+        (ConfirmedDays, ProbableDays, NoRecentDays, DecommissionDays) = (confirmed, probable, noRecent, decommission);
+    }
+
+    /// <summary>Keeps the steps ordered so a typo in nexus.json cannot invert the classification.</summary>
+    public EvidenceThresholds Normalized()
+    {
+        var confirmed = Math.Clamp(ConfirmedDays, 1, 365);
+        var probable = Math.Clamp(ProbableDays, confirmed, 730);
+        var noRecent = Math.Clamp(NoRecentDays, probable, 1095);
+        return new EvidenceThresholds(confirmed, probable, noRecent, Math.Clamp(DecommissionDays, noRecent, 3650));
+    }
+}
+
+/// <summary>Configurable activity evidence engine (ADR-0007): thresholds per asset type, how much each tool is trusted and how types are recognized.</summary>
+public sealed class EvidenceSettings
+{
+    public EvidenceThresholds Default { get; set; } = new();
+
+    /// <summary>Overrides by asset type (desktop, notebook, server, phone, tablet, mac, shared, kiosk, iot).</summary>
+    public Dictionary<string, EvidenceThresholds> ByType { get; set; } = new()
+    {
+        ["phone"] = new(14, 45, 90, 180),
+        ["tablet"] = new(14, 45, 90, 180),
+        ["shared"] = new(14, 60, 120, 240),
+        ["kiosk"] = new(14, 60, 120, 240),
+        ["iot"] = new(14, 60, 120, 240),
+    };
+
+    /// <summary>Probability (0 to 1) that a fresh report from the tool means the device is in use. Identity sources weigh less than telemetry.</summary>
+    public Dictionary<string, double> Reliability { get; set; } = new()
+    {
+        ["sccm"] = 0.75, ["intune"] = 0.80, ["xdr"] = 0.80, ["netskope"] = 0.70, ["mam"] = 0.55, ["m365"] = 0.60, ["entra"] = 0.40, ["ad"] = 0.25,
+    };
+
+    /// <summary>Independent tools needed inside the confirmed window to call a device confirmed.</summary>
+    public int MinConfirmedSources { get; set; } = 2;
+
+    /// <summary>Name tokens (separated by - _ . or digits) that identify a type when the hardware says nothing. Empty by default except where the convention is universal.</summary>
+    public Dictionary<string, List<string>> TypeNameTokens { get; set; } = new()
+    {
+        ["notebook"] = ["NB", "NOTE", "NTB", "LT", "LAP"],
+        ["desktop"] = ["DT", "DSK", "DESK"],
+        ["kiosk"] = ["KIOSK", "KSK"],
+        ["shared"] = ["SHARED", "COMPART"],
+        ["iot"] = ["IOT"],
+    };
+}
+
+/// <summary>Governance collectors: app protection policies and app configuration, Conditional Access and Microsoft 365 access (sign-ins).</summary>
+public sealed class GovernanceSettings
+{
+    /// <summary>Sign-ins of the last N days are summarized per device (access evidence). Larger windows read more pages.</summary>
+    public int SignInWindowDays { get; set; } = 14;
+    /// <summary>Pages of 500 sign-ins read per run (a cap, so a busy tenant cannot make the collection run for hours).</summary>
+    public int MaxSignInPages { get; set; } = 40;
+    /// <summary>Operational limit of entries in the Edge URL block list (Intune app configuration).</summary>
+    public int UrlBlocklistLimit { get; set; } = 1000;
+    /// <summary>Percent of the limit kept free for growth: the list is flagged when it gets past the rest.</summary>
+    public int UrlBlocklistReservePercent { get; set; } = 10;
+    public int AppPoliciesIntervalMinutes { get; set; } = 240;
+    public int ConditionalAccessIntervalMinutes { get; set; } = 240;
+    public int SignInsIntervalMinutes { get; set; } = 120;
+}
+
 public sealed class CollectionSettings
 {
     public int SccmIntervalMinutes { get; set; } = 30;
@@ -133,8 +216,10 @@ public sealed class CollectionSettings
     public int UsersIntervalMinutes { get; set; } = 240;
     public int XdrIntervalMinutes { get; set; } = 60;
     public int NetskopeIntervalMinutes { get; set; } = 60;
+    /// <summary>How long superseded versions of source records, evidence dates and asset changes are kept (minimum 30).</summary>
+    public int HistoryRetentionDays { get; set; } = 400;
 
-    /// <summary>A device is in the active pool when the tools reported inside this window (see ADR-0006).</summary>
+    /// <summary>Legacy. The thresholds that decide whether a device is active now live in <see cref="NexusSettings.Evidence"/> (ADR-0007).</summary>
     public int ActivityWindowDays { get; set; } = 30;
     public int MaxCpuPercent { get; set; } = 25;
     public int MaxMemoryMegabytes { get; set; } = 1024;
@@ -167,4 +252,12 @@ public sealed class WebSettings
     /// Set to false to also close the inventory screens behind setup mode.
     /// </summary>
     public bool OpenAccess { get; set; } = true;
+
+    /// <summary>
+    /// "open": screens are open for reading and operator pages need the server or the setup code (default, ADR-0005).
+    /// "entra": every visitor signs in with Microsoft Entra ID and gets the app roles of the "Azul Nexus – Web" registration (ADR-0008).
+    /// </summary>
+    public string AuthMode { get; set; } = "open";
+
+    public bool UsesEntra => string.Equals(AuthMode, "entra", StringComparison.OrdinalIgnoreCase);
 }

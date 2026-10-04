@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="pt-BR" data-theme="@ThemeAttribute" data-theme-pref="@ThemePreference">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -7,28 +7,21 @@
     <link rel="icon" type="image/svg+xml" href="favicon.svg" />
     <link rel="stylesheet" href="@Assets["app.css"]" />
     <title>Azul Nexus</title>
-    <script>try{var t=localStorage.getItem('nexus-theme');if(t)document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
+    <script src="@Assets["theme.js"]"></script>
     <HeadOutlet />
 </head>
 <body>
     <Routes />
     <script src="_framework/blazor.web.js"></script>
-    <script>
-        document.addEventListener('click', function (e) {
-            var row = e.target.closest('tr[data-href]');
-            if (row && !e.target.closest('a')) { var go = row.dataset.href; if (window.Blazor && Blazor.navigateTo) Blazor.navigateTo(go); else location.href = go; return; }
-            if (!e.target.closest('#theme')) return;
-            var r = document.documentElement, d = r.getAttribute('data-theme');
-            var dark = d ? d === 'dark' : matchMedia('(prefers-color-scheme:dark)').matches;
-            var next = dark ? 'light' : 'dark';
-            r.setAttribute('data-theme', next);
-            try { localStorage.setItem('nexus-theme', next); } catch (err) { }
-        });
-    </script>
-    <script>
-        document.addEventListener('change', function (e) {
-            if (e.target.matches('select[data-auto]') && e.target.form) e.target.form.submit();
-        });
-    </script>
+    <script src="@Assets["app.js"]"></script>
 </body>
 </html>
+
+@code {
+    [CascadingParameter] private HttpContext? HttpContext { get; set; }
+
+    private string ThemePreference => HttpContext?.Request.Cookies["nexus-theme"] is "light" or "dark" ? HttpContext.Request.Cookies["nexus-theme"]! : "system";
+
+    /// <summary>Explicit choices are rendered by the server so the first paint is right; "system" leaves the attribute off and lets CSS follow the OS.</summary>
+    private string? ThemeAttribute => ThemePreference == "system" ? null : ThemePreference;
+}

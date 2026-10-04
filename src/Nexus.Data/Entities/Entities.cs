@@ -114,6 +114,11 @@ public sealed class SccmDeviceRecord
     public long? DiskTotalMb { get; set; }
     public long? DiskFreeMb { get; set; }
     public string? BiosVersion { get; set; }
+    /// <summary>MAC addresses, comma separated, upper case.</summary>
+    public string? MacAddresses { get; set; }
+    public string? IpAddresses { get; set; }
+    /// <summary>laptop, desktop, server, tablet or other, from the SMBIOS chassis type.</summary>
+    public string? Chassis { get; set; }
     public DateTimeOffset CollectedAt { get; set; }
 }
 
@@ -162,6 +167,9 @@ public sealed class IntuneDeviceRecord
     public string? DeviceRegistrationState { get; set; }
     public bool? AutopilotEnrolled { get; set; }
     public DateTimeOffset? ComplianceGraceExpiresAt { get; set; }
+    /// <summary>Hardware MACs of company-owned devices only (never stored for personal devices).</summary>
+    public string? EthernetMac { get; set; }
+    public string? WifiMac { get; set; }
     public DateTimeOffset CollectedAt { get; set; }
 }
 
@@ -282,6 +290,8 @@ public sealed class MamRegistrationRecord
     public string? FlaggedReasons { get; set; }
     public string? AppliedPolicies { get; set; }
     public string? IntendedPolicies { get; set; }
+    /// <summary>Latest app operation (for example selective wipe) as "name|state|when".</summary>
+    public string? LastOperation { get; set; }
     public DateTimeOffset CollectedAt { get; set; }
 }
 
@@ -418,6 +428,39 @@ public sealed class Asset
     public long? DiskTotalMb { get; set; }
     public long? DiskFreeMb { get; set; }
     public string? CpuName { get; set; }
+    /// <summary>desktop, notebook, server, phone, tablet, mac, shared, kiosk, iot or unknown (see EvidenceEngine).</summary>
+    public string AssetType { get; set; } = "unknown";
+    /// <summary>ConfirmedActive, ProbableActive, NoRecentEvidence, Inactive, Conflicting, Unknown or Decommissioned.</summary>
+    public string OperationalState { get; set; } = "Unknown";
+    /// <summary>Activity from the evidence alone, before identity conflicts and decommission marks override the state.</summary>
+    public string ActivityLevel { get; set; } = "Unknown";
+    public int ActivityScore { get; set; }
+    public string? ActivityExplanation { get; set; }
+    /// <summary>Signals that counted, as JSON: key, label, date, tier and probability.</summary>
+    public string? EvidenceJson { get; set; }
+    public bool DecommissionCandidate { get; set; }
+    public string? Fqdn { get; set; }
+    /// <summary>Hardware (BIOS) UUID as reported by SCCM.</summary>
+    public string? Uuid { get; set; }
+    /// <summary>IP addresses known across tools, separated by commas.</summary>
+    public string? IpAddresses { get; set; }
+    /// <summary>MAC addresses known across tools, separated by commas (supporting evidence only: never joins records on its own).</summary>
+    public string? MacAddresses { get; set; }
+    /// <summary>Last interactive user the tools know (SCCM console usage or the Intune primary user).</summary>
+    public string? LastUser { get; set; }
+    public DateTimeOffset? SccmLastDdrAt { get; set; }
+    public DateTimeOffset? SccmLastSwScanAt { get; set; }
+    /// <summary>Intune enrollment type as Graph reports it (for example androidEnterprisePersonallyOwnedWorkProfile, userEnrollment).</summary>
+    public string? IntuneEnrollmentType { get; set; }
+    /// <summary>Intune managed device owner type: company or personal.</summary>
+    public string? IntuneOwnerType { get; set; }
+    public string? IntuneRegistrationState { get; set; }
+    public bool? IntuneSupervised { get; set; }
+    /// <summary>Last Microsoft 365 sign-in from this device (Entra device id match). Null when the sign-in collector is off or the device was not seen.</summary>
+    public DateTimeOffset? LastM365AccessAt { get; set; }
+    public string? M365Workloads { get; set; }
+    /// <summary>Hardware chassis as SCCM reports it (laptop, desktop, server, tablet...); decides notebook versus desktop.</summary>
+    public string? Chassis { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }
 
@@ -442,4 +485,168 @@ public sealed class ReviewItem
     public string Detail { get; set; } = "";
     public string? Sources { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
+}
+
+/// <summary>One run of a collection job, kept for the operations page and for tracing a result back to a Run ID.</summary>
+public sealed class JobRun
+{
+    public long Id { get; set; }
+    public Guid RunId { get; set; }
+    public string Job { get; set; } = "";
+    public DateTimeOffset StartedAt { get; set; }
+    public DateTimeOffset CompletedAt { get; set; }
+    public string Status { get; set; } = "";
+    public int? Records { get; set; }
+    public int DurationMs { get; set; }
+    /// <summary>What happened, how it affects the data and how to fix it (never a token or a connection string).</summary>
+    public string? Message { get; set; }
+}
+
+/// <summary>
+/// A version of a source record. The raw tables hold the latest snapshot and are replaced on every collection; this table keeps what each source
+/// said and when it changed, so a classification can be explained later. A new version is written only when the payload changes (volatile
+/// dates such as last sync are left out of the comparison: they live in <see cref="EvidenceTimelineEntry"/>).
+/// </summary>
+public sealed class RawRecordVersion
+{
+    public long Id { get; set; }
+    public string Source { get; set; } = "";
+    public string SourceKey { get; set; } = "";
+    public string PayloadJson { get; set; } = "";
+    public string Hash { get; set; } = "";
+    public DateTimeOffset FirstSeenAt { get; set; }
+    /// <summary>Last collection that still returned this exact payload.</summary>
+    public DateTimeOffset LastSeenAt { get; set; }
+    public bool IsCurrent { get; set; }
+    /// <summary>Set when the source stopped returning the record.</summary>
+    public DateTimeOffset? RemovedAt { get; set; }
+    public Guid RunId { get; set; }
+}
+
+/// <summary>The last-report date each tool gave for an asset, one row per change (at most one per source and device per day).</summary>
+public sealed class EvidenceTimelineEntry
+{
+    public long Id { get; set; }
+    public Guid AssetId { get; set; }
+    public string Source { get; set; } = "";
+    public DateTimeOffset ObservedAt { get; set; }
+    public DateTimeOffset CollectedAt { get; set; }
+}
+
+/// <summary>A relevant change in a consolidated asset between two reconciliations (state, type, owner, management, identity).</summary>
+public sealed class AssetChange
+{
+    public long Id { get; set; }
+    public Guid AssetId { get; set; }
+    public string AssetName { get; set; } = "";
+    public DateTimeOffset At { get; set; }
+    /// <summary>Field name, or Created / Removed.</summary>
+    public string Field { get; set; } = "";
+    public string? OldValue { get; set; }
+    public string? NewValue { get; set; }
+    public Guid RunId { get; set; }
+}
+
+/// <summary>A named inventory filter, shareable by URL. Visible to its owner and, when shared, to everyone who can read the inventory.</summary>
+public sealed class SavedView
+{
+    public long Id { get; set; }
+    public string Name { get; set; } = "";
+    /// <summary>Query string of the inventory page (filters, sort and columns), without the leading question mark.</summary>
+    public string Query { get; set; } = "";
+    public string Owner { get; set; } = "";
+    public bool Shared { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+}
+
+/// <summary>An approved exception to a protection requirement (for example a user without MAM). It does not hide the gap: the gap shows as "excepted" with the reason.</summary>
+public sealed class ProtectionException
+{
+    public long Id { get; set; }
+    /// <summary>user or device.</summary>
+    public string SubjectKind { get; set; } = "";
+    /// <summary>Entra user id or asset id.</summary>
+    public string SubjectId { get; set; } = "";
+    public string SubjectName { get; set; } = "";
+    /// <summary>What is excepted: mam, mdm, compliance or edge.</summary>
+    public string Control { get; set; } = "";
+    public string Reason { get; set; } = "";
+    public string ApprovedBy { get; set; } = "";
+    public DateTimeOffset ApprovedAt { get; set; }
+    public DateTimeOffset? ExpiresAt { get; set; }
+    public bool Active { get; set; } = true;
+}
+
+/// <summary>An iOS or Android app protection policy: settings that decide whether corporate data can leave the app, targeted apps and assignment.</summary>
+public sealed class AppProtectionPolicyRecord
+{
+    public string Id { get; set; } = "";
+    public string Platform { get; set; } = "";
+    public string Name { get; set; } = "";
+    public DateTimeOffset? LastModifiedAt { get; set; }
+    public int? Version { get; set; }
+    public bool IsAssigned { get; set; }
+    public bool AssignedToAll { get; set; }
+    public string? Assignments { get; set; }
+    /// <summary>Targeted app identifiers (bundle or package ids) as a JSON array.</summary>
+    public string AppsJson { get; set; } = "[]";
+    /// <summary>The whitelisted settings as a JSON object of name to value.</summary>
+    public string SettingsJson { get; set; } = "{}";
+    public DateTimeOffset CollectedAt { get; set; }
+}
+
+/// <summary>An app configuration policy. Edge's URL allow and block lists are read from its settings.</summary>
+public sealed class AppConfigRecord
+{
+    public string Id { get; set; } = "";
+    /// <summary>managed-app (MAM) or managed-device (MDM).</summary>
+    public string Kind { get; set; } = "";
+    public string Platform { get; set; } = "";
+    public string Name { get; set; } = "";
+    public DateTimeOffset? LastModifiedAt { get; set; }
+    public string? Assignments { get; set; }
+    public string AppsJson { get; set; } = "[]";
+    public string SettingsJson { get; set; } = "{}";
+    public DateTimeOffset CollectedAt { get; set; }
+}
+
+public sealed class ConditionalAccessRecord
+{
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+    /// <summary>enabled, disabled or enabledForReportingButNotEnforced.</summary>
+    public string State { get; set; } = "";
+    public DateTimeOffset? ModifiedAt { get; set; }
+    public string? Users { get; set; }
+    public string? Applications { get; set; }
+    public string? Platforms { get; set; }
+    public string? GrantControls { get; set; }
+    public bool RequiresCompliantDevice { get; set; }
+    public bool RequiresApprovedApp { get; set; }
+    public bool RequiresAppProtection { get; set; }
+    public bool RequiresMfa { get; set; }
+    public bool TargetsMicrosoft365 { get; set; }
+    public DateTimeOffset CollectedAt { get; set; }
+}
+
+/// <summary>Microsoft 365 access seen in sign-ins, per device (or per user, system and browser when no device is identified).</summary>
+public sealed class AccessEvidenceRecord
+{
+    public string Key { get; set; } = "";
+    public string? UserId { get; set; }
+    public string? UserPrincipalName { get; set; }
+    public string? EntraDeviceId { get; set; }
+    public string? DeviceName { get; set; }
+    public string? OperatingSystem { get; set; }
+    public string? Browser { get; set; }
+    public bool? IsManaged { get; set; }
+    public bool? IsCompliant { get; set; }
+    public string? TrustType { get; set; }
+    public DateTimeOffset LastAccessAt { get; set; }
+    public string? Workloads { get; set; }
+    public int Count { get; set; }
+    public string? ClientApp { get; set; }
+    /// <summary>Conditional Access result of the latest sign-in: success, failure or notApplied. It reports what happened, not what a policy would allow.</summary>
+    public string? CaStatus { get; set; }
+    public DateTimeOffset CollectedAt { get; set; }
 }

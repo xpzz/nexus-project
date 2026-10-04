@@ -1,28 +1,106 @@
 @page "/inventario"
 @inject InventorySnapshotService Inventory
 @inject NavigationManager Nav
+@inject INexusDbFactory DbFactory
+@inject CurrentAccess Access
 
 <PageTitle>Inventário · Azul Nexus</PageTitle>
 
 <div class="ph">
-    <div><h1>Inventário completo</h1><p>Um registro por equipamento, com a origem de cada dado. Clique em uma linha para ver todas as fontes lado a lado.</p></div>
-    @if (_snapshot is not null) { <span class="asof">@Fmt.Number(_rows.Count) de @Fmt.Number(_snapshot.Views.Count) dispositivos</span> }
+    <div><h1>Inventário</h1><p>Um registro por equipamento, com a origem de cada dado. Os filtros ficam na URL: copie o endereço para compartilhar a mesma visão.</p></div>
+    @if (_snapshot is not null) { <span class="asof">@Fmt.Number(_rows.Count) de @Fmt.Number(_snapshot.Views.Count) ativos únicos · dados de @_snapshot.LoadedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</span> }
 </div>
 
-<form method="get" action="/inventario" class="tools">
-    <input type="search" name="q" placeholder="Nome, usuário, serial ou modelo" value="@Q" aria-label="Busca livre" />
-    <select name="propriedade" aria-label="Propriedade" data-auto><option value="">Propriedade</option>@foreach (var o in new[] { "Corporativo", "BYOD", "Externo" }){<option value="@o" selected="@(Propriedade == o)">@o</option>}</select>
-    <select name="grupo" aria-label="Grupo" data-auto><option value="">Grupo</option>@foreach (var g in Groups.All){<option value="@g" selected="@(Grupo == g)">@Groups.Title(g)</option>}<option value="byod" selected="@(Grupo == "byod")">BYOD (celulares e computadores)</option><option value="sem-gestao" selected="@(Grupo == "sem-gestao")">Sem gestão</option></select>
-    <select name="gestao" aria-label="Gestão" data-auto><option value="">Gestão</option>@foreach (var m in Management.All){<option value="@m" selected="@(Gestao == m)">@m</option>}</select>
-    <select name="depto" aria-label="Área" data-auto><option value="">Área</option>@foreach (var d in _departments){<option value="@d" selected="@(Depto == d)">@d</option>}</select>
-    <select name="atividade" aria-label="Atividade" data-auto><option value="">Atividade</option><option value="pool" selected="@(Atividade == "pool")">No pool ativo</option>@foreach (var c in new[] { ActivityClasses.Confirmed, ActivityClasses.Single, ActivityClasses.Unconfirmed, ActivityClasses.Inactive }){<option value="@c" selected="@(Atividade == c)">@ActivityClasses.Title(c)</option>}</select>
-    <select name="estado" aria-label="Estado" data-auto><option value="">Estado</option><option value="ativos" selected="@(Estado == "ativos")">Ativos</option>@foreach (var s in States.All){<option value="@s" selected="@(Estado == s)">@s</option>}</select>
-    <select name="pendencia" aria-label="Pendência" data-auto><option value="">Pendência</option>@foreach (var r in HealthModel.Rules.Where(r => r.IsAvailable(Src))){<option value="@r.Id" selected="@(Pendencia == r.Id)">@r.Title</option>}</select>
-    @if (!string.IsNullOrEmpty(Funil)) { <input type="hidden" name="funil" value="@Funil" /> }
-    @if (!string.IsNullOrEmpty(Ordem)) { <input type="hidden" name="ordem" value="@Ordem" /> }
-    @if (Desc) { <input type="hidden" name="desc" value="true" /> }
-    <button type="submit">Filtrar</button>
+<form method="get" action="/inventario" class="tools filters">
+    <input type="search" name="q" placeholder="Hostname, usuário, serial, modelo ou identificador" value="@_q.Get("q")" aria-label="Busca livre" />
+    <select name="oper" aria-label="Estado operacional" data-auto>@foreach (var (value, label) in OperOptions()){<option value="@value" selected="@(_q.Get("oper") == value)">@label</option>}</select>
+    <select name="tipo" aria-label="Tipo de ativo" data-auto><option value="">Tipo</option>@foreach (var t in AssetTypes.All){<option value="@t" selected="@(_q.Get("tipo") == t)">@AssetTypes.Title(t)</option>}</select>
+    <select name="propriedade" aria-label="Propriedade" data-auto><option value="">Propriedade</option>@foreach (var o in new[] { "Corporativo", "BYOD", "Externo" }){<option value="@o" selected="@(_q.Get("propriedade") == o)">@o</option>}</select>
+    <select name="gestao" aria-label="Gerenciamento" data-auto><option value="">Gerenciamento</option>@foreach (var m in Management.All){<option value="@m" selected="@(_q.Get("gestao") == m)">@m</option>}</select>
+    <select name="depto" aria-label="Área" data-auto><option value="">Área</option>@foreach (var d in _departments){<option value="@d" selected="@(_q.Get("depto") == d)">@d</option>}</select>
+    <select name="pendencia" aria-label="Pendência" data-auto><option value="">Pendência</option>@foreach (var r in HealthModel.Rules.Where(r => r.IsAvailable(Src))){<option value="@r.Id" selected="@(_q.Get("pendencia") == r.Id)">@r.Title</option>}</select>
+    @foreach (var key in new[] { "funil", "grupo", "estado", "atividade", "flag", "ordem", "desc", "cols", "tam" }.Where(_q.Has))
+    {
+        <input type="hidden" name="@key" value="@_q.Get(key)" />
+    }
+    <button type="submit" class="primary">Filtrar</button>
 </form>
+
+<div class="tools">
+    <details class="pick">
+        <summary>Mais filtros</summary>
+        <form method="get" action="/inventario" class="pickbody">
+            @foreach (var key in InvQuery.FilterKeys.Where(k => k != "flag").Concat(["ordem", "desc", "cols", "tam"]).Where(_q.Has))
+            {
+                <input type="hidden" name="@key" value="@_q.Get(key)" />
+            }
+            <fieldset><legend>Todas as condições marcadas valem ao mesmo tempo</legend>
+                @foreach (var (key, (label, _)) in InventoryQuery.Flags)
+                {
+                    <label class="chk"><input type="checkbox" class="flagbox" value="@key" checked="@(_flags.Contains(key))" /> @label</label>
+                }
+            </fieldset>
+            <input type="hidden" name="flag" id="flagvalue" value="@_q.Get("flag")" />
+            <button type="submit" class="primary" onclick="document.getElementById('flagvalue').value=[...document.querySelectorAll('.flagbox:checked')].map(x=>x.value).join(',')">Aplicar</button>
+        </form>
+    </details>
+
+    <details class="pick">
+        <summary>Colunas (@_cols.Count)</summary>
+        <form method="get" action="/inventario" class="pickbody">
+            @foreach (var key in InvQuery.FilterKeys.Concat(["ordem", "desc", "tam"]).Where(_q.Has))
+            {
+                <input type="hidden" name="@key" value="@_q.Get(key)" />
+            }
+            <fieldset><legend>Colunas da tabela</legend>
+                @foreach (var c in Catalog)
+                {
+                    <label class="chk"><input type="checkbox" class="colbox" value="@c.Key" checked="@_cols.Contains(c.Key)" disabled="@(c.Key == "equip")" /> @c.Label</label>
+                }
+            </fieldset>
+            <input type="hidden" name="cols" id="colvalue" value="@string.Join(",", _cols)" />
+            <button type="submit" class="primary" onclick="document.getElementById('colvalue').value=['equip',...[...document.querySelectorAll('.colbox:checked')].map(x=>x.value)].join(',')">Aplicar</button>
+            <a class="button" href="@_q.With("cols", null).Url()">Padrão</a>
+        </form>
+    </details>
+
+    <details class="pick">
+        <summary>Filtros salvos (@_views.Count)</summary>
+        <div class="pickbody">
+            @if (_views.Count == 0) { <p class="hint">Nenhum filtro salvo ainda.</p> }
+            @foreach (var v in _views)
+            {
+                <div class="vrow">
+                    <a href="/inventario?@v.Query">@v.Name</a><small>@(v.Shared ? "compartilhado" : "só seu") · @v.Owner</small>
+                    @if (Access.CanAnalyze && (v.Owner == Access.Actor || Access.CanOperate))
+                    {
+                        <form method="post" action="/inventario/filtros/@v.Id/excluir"><AntiforgeryToken /><button type="submit" aria-label="Excluir o filtro @v.Name">Excluir</button></form>
+                    }
+                </div>
+            }
+            @if (Access.CanAnalyze)
+            {
+                <form method="post" action="/inventario/filtros" class="vsave">
+                    <AntiforgeryToken />
+                    <input type="hidden" name="query" value="@_q.QueryString" />
+                    <input name="name" required maxlength="120" placeholder="Nome do filtro" aria-label="Nome do filtro" />
+                    <label class="chk"><input type="checkbox" name="shared" value="true" /> Compartilhar</label>
+                    <button type="submit" class="primary">Salvar o filtro atual</button>
+                </form>
+            }
+            else
+            {
+                <p class="hint">Salvar filtros exige o perfil Analista ou superior. Qualquer filtro pode ser compartilhado copiando a URL.</p>
+            }
+        </div>
+    </details>
+
+    @if (Access.CanExport)
+    {
+        <a class="button" href="@_q.Url("/inventario/exportar.csv")" title="Exporta o resultado atual (até 50.000 linhas). A exportação é registrada na auditoria.">Exportar CSV</a>
+    }
+    <span class="cnt">@(_rows.Count == 0 ? 0 : _skip + 1)–@Math.Min(_rows.Count, _skip + _q.PageSize) de @Fmt.Number(_rows.Count)</span>
+</div>
 
 @if (Tags().Any())
 {
@@ -31,127 +109,205 @@
         {
             <span class="tag">@label<a href="@href" aria-label="Remover filtro @label" style="text-decoration:none;color:inherit;padding:0 6px">×</a></span>
         }
-        <a class="button" href="/inventario">Limpar tudo</a>
+        <a class="button" href="@_q.OnlyViewKeys().Url()">Limpar filtros</a>
     </div>
 }
 
-<div class="tw">
-    <table>
+<div class="tw tall">
+    <table class="dense">
         <thead>
-            <tr>
-                @Header("nome", "Dispositivo")@Header("grupo", "Grupo")@Header("usuario", "Usuário")@Header("so", "Sistema")
-                <th>Fontes</th>@Header("gestao", "Gestão")@Header("estado", "Estado")@Header("fontes", "Fontes ativas")@Header("sccm", "Último SCCM")@Header("intune", "Último Intune")@Header("indice", "Índice")
-            </tr>
+            <tr>@foreach (var c in _cols.Select(k => Catalog.First(x => x.Key == k))) { @Header(c.Key, c.Label, c.Sort) }</tr>
         </thead>
         <tbody>
             @foreach (var v in _page)
             {
                 var a = v.Asset;
-                <tr class="link" data-href="/dispositivo/@a.Id">
-                    <td class="nm"><a href="/dispositivo/@a.Id">@a.Name</a><small>@(a.Model ?? a.OperatingSystem ?? "—")</small></td>
-                    <td>@Groups.Title(v.Group)<small style="display:block;color:var(--ink3);font-size:11.5px">@InventoryQuery.OwnershipOf(v)</small></td>
-                    <td>@(a.PrimaryUser ?? "—")<small style="display:block;color:var(--ink3);font-size:11.5px">@(a.Department ?? "")</small></td>
-                    <td>@(a.OperatingSystem ?? a.Platform)</td>
-                    <td><span class="ch"><b class="@(a.InSccm ? "on" : "")">SCCM</b><b class="@(a.InIntune ? "on" : "")">INT</b><b class="@(a.InEntra ? "on" : "")">ENT</b><b class="@(a.InAd ? "on" : "")">AD</b>@if (_snapshot!.Sources.Xdr || a.InXdr) {<b class="@(a.InXdr ? "on" : "")">XDR</b>}@if (_snapshot!.Sources.Netskope || a.InNetskope) {<b class="@(a.InNetskope ? "on" : "")">NS</b>}@if (a.HasMam) {<b class="on">MAM</b>}</span></td>
-                    <td><span class="pill @(v.Management == Management.None ? "b" : v.Management == Management.CoManaged ? "a" : "m")">@v.Management</span></td>
-                    <td><span class="pill @Fmt.StateCss(v.State)">@v.State</span></td>
-                    <td><span class="pill @(a.ActivityClass switch { "Confirmed" => "ok", "Single" => "a", "Unconfirmed" => "w", _ => "m" })" title="@ActivityClasses.Explain(a.ActivityClass)">@ActivityClasses.Title(a.ActivityClass)</span><small style="display:block;color:var(--ink3);font-size:11.5px">@a.ActiveSourceCount @(a.ActiveSourceCount == 1 ? "fonte" : "fontes")</small></td>
-                    <td class="num">@Fmt.Ago(a.SccmLastSeenAt, _now)</td>
-                    <td class="num">@Fmt.Ago(a.IntuneLastSyncAt, _now)</td>
-                    <td class="score @Fmt.ScoreClass(v.Score)">@v.Score</td>
+                <tr class="link" data-href="@Detail(a)">
+                    @foreach (var key in _cols) { @Cell(key, v) }
                 </tr>
             }
             @if (_rows.Count == 0)
             {
-                <tr><td colspan="11" style="text-align:center;color:var(--ink3);padding:28px">Nenhum dispositivo com esses filtros.</td></tr>
+                <tr><td colspan="@_cols.Count" class="empty">@(_snapshot is { HasData: false } ? "O inventário ainda está vazio: nenhuma coleta foi reconciliada." : "Nenhum ativo com esses filtros.")</td></tr>
             }
         </tbody>
     </table>
 </div>
 
 <div class="pager">
-    <span>@(_rows.Count == 0 ? 0 : _skip + 1)–@Math.Min(_rows.Count, _skip + PageSize) de @Fmt.Number(_rows.Count)</span>
-    @if (_skip == 0) { <span class="button" style="opacity:.5">Anterior</span> } else { <a class="button" href="@Link(pagina: _skip / PageSize - 1)">Anterior</a> }
-    @if (_skip + PageSize >= _rows.Count) { <span class="button" style="opacity:.5">Próxima</span> } else { <a class="button" href="@Link(pagina: _skip / PageSize + 1)">Próxima</a> }
+    <span>@(_rows.Count == 0 ? 0 : _skip + 1)–@Math.Min(_rows.Count, _skip + _q.PageSize) de @Fmt.Number(_rows.Count)</span>
+    @if (_skip == 0) { <span class="button off" aria-disabled="true">Anterior</span> } else { <a class="button" href="@_q.With("pagina", (_skip / _q.PageSize - 1).ToString()).Url()">Anterior</a> }
+    @if (_skip + _q.PageSize >= _rows.Count) { <span class="button off" aria-disabled="true">Próxima</span> } else { <a class="button" href="@_q.With("pagina", (_skip / _q.PageSize + 1).ToString()).Url()">Próxima</a> }
 </div>
 
 @code {
-    private const int PageSize = 25;
-    [SupplyParameterFromQuery] public string? Q { get; set; }
-    [SupplyParameterFromQuery] public string? Grupo { get; set; }
-    [SupplyParameterFromQuery] public string? Gestao { get; set; }
-    [SupplyParameterFromQuery] public string? Estado { get; set; }
-    [SupplyParameterFromQuery] public string? Pendencia { get; set; }
-    [SupplyParameterFromQuery] public string? Propriedade { get; set; }
-    [SupplyParameterFromQuery] public string? Funil { get; set; }
-    [SupplyParameterFromQuery] public string? Depto { get; set; }
-    [SupplyParameterFromQuery] public string? Atividade { get; set; }
-    [SupplyParameterFromQuery] public string? Ordem { get; set; }
-    [SupplyParameterFromQuery] public bool Desc { get; set; }
-    [SupplyParameterFromQuery] public int Pagina { get; set; }
+    private static readonly (string Key, string Label, string? Sort)[] Catalog =
+    [
+        ("equip", "Equipamento", "nome"), ("tipo", "Tipo", "tipo"), ("propriedade", "Propriedade", "propriedade"), ("usuario", "Usuário ou área", "usuario"),
+        ("atividade", "Atividade", "oper"), ("evidencia", "Última evidência", "evidencia"), ("gestao", "Gerenciamento", "gestao"), ("atencao", "Atenção necessária", "atencao"),
+        ("fontes", "Fontes que conhecem", null), ("so", "Sistema", "so"), ("serial", "Serial", "serial"), ("score", "Score de atividade", "score"),
+        ("sccm", "Último SCCM", "sccm"), ("intune", "Último Intune", "intune"), ("xdr", "Último Cortex XDR", null), ("netskope", "Último Netskope", null),
+        ("ad", "Último AD", null), ("entra", "Último Entra ID", null), ("rede", "IP e MAC", null), ("identidade", "Confiança da identidade", null),
+    ];
 
+    private static readonly string[] DefaultColumns = ["equip", "tipo", "propriedade", "usuario", "atividade", "evidencia", "gestao", "atencao"];
+
+    private InvQuery _q = InvQuery.From("");
     private InventorySnapshot? _snapshot;
     private SourceAvailability Src => _snapshot?.Sources ?? SourceAvailability.All;
     private List<AssetView> _rows = [];
     private List<AssetView> _page = [];
+    private List<SavedView> _views = [];
+    private List<string> _cols = [.. DefaultColumns];
+    private HashSet<string> _flags = [];
     private DateTimeOffset _now;
     private int _skip;
     private List<string> _departments = [];
 
     protected override async Task OnInitializedAsync()
     {
+        _q = InvQuery.From(new Uri(Nav.Uri).Query);
         _snapshot = await Inventory.GetAsync();
         _now = _snapshot.LoadedAt == DateTimeOffset.MinValue ? DateTimeOffset.UtcNow : _snapshot.LoadedAt;
         _departments = _snapshot.Views.Select(v => v.Asset.Department).Where(d => !string.IsNullOrEmpty(d)).Select(d => d!).Distinct().Order().ToList();
-        var filter = new InventoryFilter(Grupo, Gestao, Estado, Pendencia, Propriedade, Funil, Q, Depto, Atividade);
-        _rows = InventoryQuery.Sort(_snapshot.Views.Where(v => InventoryQuery.Matches(v, filter, _now)), Ordem, Desc).ToList();
-        _skip = Math.Clamp(Pagina, 0, Math.Max(0, (_rows.Count - 1) / PageSize)) * PageSize;
-        _page = _rows.Skip(_skip).Take(PageSize).ToList();
+        _flags = InventoryQuery.Split(_q.Get("flag")).ToHashSet();
+
+        var requested = InventoryQuery.Split(_q.Get("cols")).Where(k => Catalog.Any(c => c.Key == k)).Distinct().ToList();
+        _cols = requested.Count == 0 ? [.. DefaultColumns] : requested.Contains("equip") ? requested : ["equip", .. requested];
+
+        var filter = _q.ToFilter();
+        _rows = InventoryQuery.Sort(_snapshot.Views.Where(v => InventoryQuery.Matches(v, filter, _now)), _q.Get("ordem").NullIfEmpty() ?? "indice", _q.Descending).ToList();
+        _skip = Math.Clamp(_q.PageIndex, 0, Math.Max(0, (_rows.Count - 1) / _q.PageSize)) * _q.PageSize;
+        _page = _rows.Skip(_skip).Take(_q.PageSize).ToList();
+
+        try
+        {
+            await using var db = DbFactory.Create();
+            _views = (await db.SavedViews.AsNoTracking().OrderBy(v => v.Name).ToListAsync()).Where(v => v.Shared || v.Owner == Access.Actor || Access.CanOperate).ToList();
+        }
+        catch (Exception)
+        {
+            _views = []; // the table of saved filters may not exist yet (migration pending): the inventory itself still works
+        }
     }
 
-    // Every control is a plain link or form field: the page is rendered on the server once and needs no live connection.
-    private string Link(string? q = null, string? grupo = null, string? gestao = null, string? estado = null, string? pendencia = null, string? funil = null, string? propriedade = null, string? ordem = null, bool? desc = null, int? pagina = null, string? depto = null, string? atividade = null)
-    {
-        var parts = new List<string>();
-        void Add(string key, string? value) { if (!string.IsNullOrEmpty(value)) parts.Add($"{key}={Uri.EscapeDataString(value)}"); }
-        Add("q", q ?? Q); Add("grupo", grupo ?? Grupo); Add("gestao", gestao ?? Gestao); Add("estado", estado ?? Estado); Add("pendencia", pendencia ?? Pendencia);
-        Add("funil", funil ?? Funil); Add("propriedade", propriedade ?? Propriedade); Add("ordem", ordem ?? Ordem); Add("depto", depto ?? Depto); Add("atividade", atividade ?? Atividade);
-        if (desc ?? Desc) parts.Add("desc=true");
-        if (pagina is > 0) parts.Add($"pagina={pagina}");
-        return parts.Count == 0 ? "/inventario" : "/inventario?" + string.Join("&", parts);
-    }
+    private string Detail(Asset a) => $"/dispositivo/{a.Id}?voltar={Uri.EscapeDataString(_q.Url())}";
 
-    private string Without(string which) => which switch
+    private IEnumerable<(string Value, string Label)> OperOptions()
     {
-        "q" => Fmt.Inv(Grupo, Gestao, Estado, Pendencia, Funil, Propriedade, null, Depto, Atividade),
-        "grupo" => Fmt.Inv(null, Gestao, Estado, Pendencia, Funil, Propriedade, Q, Depto, Atividade),
-        "gestao" => Fmt.Inv(Grupo, null, Estado, Pendencia, Funil, Propriedade, Q, Depto, Atividade),
-        "estado" => Fmt.Inv(Grupo, Gestao, null, Pendencia, Funil, Propriedade, Q, Depto, Atividade),
-        "pendencia" => Fmt.Inv(Grupo, Gestao, Estado, null, Funil, Propriedade, Q, Depto, Atividade),
-        "funil" => Fmt.Inv(Grupo, Gestao, Estado, Pendencia, null, Propriedade, Q, Depto, Atividade),
-        "depto" => Fmt.Inv(Grupo, Gestao, Estado, Pendencia, Funil, Propriedade, Q, null, Atividade),
-        "atividade" => Fmt.Inv(Grupo, Gestao, Estado, Pendencia, Funil, Propriedade, Q, Depto, null),
-        _ => Fmt.Inv(Grupo, Gestao, Estado, Pendencia, Funil, null, Q, Depto, Atividade),
-    };
+        yield return ("", "Estado operacional");
+        yield return ("ConfirmedActive,ProbableActive", "Ativos (confirmado e provável)");
+        foreach (var s in OperationalStates.All) { yield return (s, OperationalStates.Title(s)); }
+        yield return ("NoRecentEvidence,Inactive", "Sem evidência recente ou inativos");
+        var current = _q.Get("oper");
+        if (current.Length > 0 && current != "ConfirmedActive,ProbableActive" && current != "NoRecentEvidence,Inactive" && !OperationalStates.All.Contains(current))
+        {
+            yield return (current, string.Join(" ou ", InventoryQuery.Split(current).Select(OperationalStates.Title)));
+        }
+    }
 
     private IEnumerable<(string, string)> Tags()
     {
-        if (!string.IsNullOrEmpty(Q)) yield return ($"Busca: {Q}", Without("q"));
-        if (!string.IsNullOrEmpty(Grupo)) yield return ($"Grupo: {(Groups.All.Contains(Grupo) ? Groups.Title(Grupo) : Grupo == "byod" ? "BYOD" : Grupo == "sem-gestao" ? "Sem gestão" : Grupo)}", Without("grupo"));
-        if (!string.IsNullOrEmpty(Gestao)) yield return ($"Gestão: {Gestao}", Without("gestao"));
-        if (!string.IsNullOrEmpty(Estado)) yield return ($"Estado: {(Estado == "ativos" ? "Ativos" : Estado)}", Without("estado"));
-        if (!string.IsNullOrEmpty(Depto)) yield return ($"Área: {Depto}", Without("depto"));
-        if (!string.IsNullOrEmpty(Atividade)) yield return ($"Atividade: {(Atividade == "pool" ? "no pool ativo" : ActivityClasses.Title(Atividade))}", Without("atividade"));
-        if (!string.IsNullOrEmpty(Propriedade)) yield return ($"Propriedade: {Propriedade}", Without("propriedade"));
-        if (!string.IsNullOrEmpty(Pendencia) && HealthModel.Rules.Any(r => r.Id == Pendencia)) yield return ($"Pendência: {HealthModel.RuleOf(Pendencia).Title}", Without("pendencia"));
-        if (!string.IsNullOrEmpty(Funil) && InventoryQuery.FunnelNames.TryGetValue(Funil, out var name)) yield return ($"Funil: {name}", Without("funil"));
-        else if (!string.IsNullOrEmpty(Funil) && SourceComparison.SpecLabel(Funil) is { } cmp) yield return ($"Fontes: {cmp}", Without("funil"));
+        string Del(string key) => _q.Without(key).Url();
+        if (_q.Has("q")) yield return ($"Busca: {_q.Get("q")}", Del("q"));
+        if (_q.Has("oper")) yield return ($"Atividade: {string.Join(" ou ", InventoryQuery.Split(_q.Get("oper")).Select(OperationalStates.Title))}", Del("oper"));
+        if (_q.Has("tipo")) yield return ($"Tipo: {string.Join(" ou ", InventoryQuery.Split(_q.Get("tipo")).Select(AssetTypes.Title))}", Del("tipo"));
+        if (_q.Has("grupo")) yield return ($"Grupo: {(Groups.All.Contains(_q.Get("grupo")) ? Groups.Title(_q.Get("grupo")) : _q.Get("grupo") == "byod" ? "BYOD" : _q.Get("grupo") == "sem-gestao" ? "Sem gestão" : _q.Get("grupo"))}", Del("grupo"));
+        if (_q.Has("gestao")) yield return ($"Gerenciamento: {_q.Get("gestao")}", Del("gestao"));
+        if (_q.Has("estado")) yield return ($"Saúde: {(_q.Get("estado") == "ativos" ? "ativos" : _q.Get("estado"))}", Del("estado"));
+        if (_q.Has("depto")) yield return ($"Área: {_q.Get("depto")}", Del("depto"));
+        if (_q.Has("atividade")) yield return ($"Atividade (pool): {(_q.Get("atividade") == "pool" ? "no pool ativo" : ActivityClasses.Title(_q.Get("atividade")))}", Del("atividade"));
+        if (_q.Has("propriedade")) yield return ($"Propriedade: {_q.Get("propriedade")}", Del("propriedade"));
+        if (_q.Has("pendencia") && HealthModel.Rules.Any(r => r.Id == _q.Get("pendencia"))) yield return ($"Pendência: {HealthModel.RuleOf(_q.Get("pendencia")).Title}", Del("pendencia"));
+        foreach (var flag in _flags)
+        {
+            if (InventoryQuery.FlagLabel(flag) is { } label)
+            {
+                yield return (label, _q.With("flag", string.Join(",", _flags.Where(f => f != flag))).Url());
+            }
+        }
+
+        var funil = _q.Get("funil");
+        if (funil.Length > 0 && InventoryQuery.FunnelNames.TryGetValue(funil, out var name)) yield return ($"Funil: {name}", Del("funil"));
+        else if (funil.Length > 0 && SourceComparison.SpecLabel(funil) is { } cmp) yield return ($"Fontes: {cmp}", Del("funil"));
     }
 
-    private RenderFragment Header(string key, string label) => __builder =>
+    private RenderFragment Header(string key, string label, string? sort) => __builder =>
     {
-        var active = (Ordem ?? "indice") == key;
-        var desc = active && !Desc;
-        <th class="s"><a href="@Link(ordem: key, desc: desc)" style="color:inherit;text-decoration:none">@label@(active ? (Desc ? " ↓" : " ↑") : "")</a></th>
+        if (sort is null)
+        {
+            <th scope="col">@label</th>
+            return;
+        }
+
+        var active = (_q.Get("ordem").NullIfEmpty() ?? "indice") == sort;
+        var next = _q.With("ordem", sort).With("desc", active && !_q.Descending ? "true" : null);
+        <th scope="col" class="s" aria-sort="@(active ? (_q.Descending ? "descending" : "ascending") : "none")"><a href="@next.Url()" style="color:inherit;text-decoration:none">@label@(active ? (_q.Descending ? " ↓" : " ↑") : "")</a></th>
+    };
+
+    private string User(AssetView v)
+    {
+        var a = v.Asset;
+        var name = a.PrimaryUser ?? a.LastUser;
+        if (name is null) { return "—"; }
+        return a.Ownership == "Personal" && !Access.CanSeePersonalData ? PersonalData.Mask(name) : name;
+    }
+
+    private RenderFragment Cell(string key, AssetView v) => __builder =>
+    {
+        var a = v.Asset;
+        switch (key)
+        {
+            case "equip":
+                <td class="nm"><a href="@Detail(a)">@a.Name</a><small>@(a.Model ?? a.OperatingSystem ?? "—")</small></td>
+                break;
+            case "tipo":
+                <td>@AssetTypes.Title(a.AssetType)</td>
+                break;
+            case "propriedade":
+                <td>@InventoryQuery.OwnershipOf(v)</td>
+                break;
+            case "usuario":
+                <td>@User(v)<small class="sm">@(a.Department ?? "")</small></td>
+                break;
+            case "atividade":
+                <td><span class="pill @OperationalStates.Css(a.OperationalState)" title="@a.ActivityExplanation"><span aria-hidden="true">@OperationalStates.Icon(a.OperationalState)</span> @OperationalStates.Title(a.OperationalState)</span><small class="sm">score @a.ActivityScore</small></td>
+                break;
+            case "evidencia":
+                var last = LastEvidence.Of(a);
+                <td class="num">@(last is null ? "—" : Fmt.Ago(last.Value.At, _now))<small class="sm">@(last?.Label ?? "sem data")</small></td>
+                break;
+            case "gestao":
+                <td><span class="pill @(v.Management == Management.None ? "b" : v.Management == Management.CoManaged ? "a" : "m")">@v.Management</span></td>
+                break;
+            case "atencao":
+                var worst = v.Issues.Where(i => i != "stale").Select(HealthModel.RuleOf).OrderBy(r => r.Priority).FirstOrDefault();
+                <td>@if (worst is null){<span class="sm">—</span>}else{<span class="pill @Fmt.PriorityCss(worst.Priority)"><span aria-hidden="true">@(worst.Priority <= Priority.High ? "▲" : "●")</span> @worst.Title</span>@if (v.Issues.Count(i => i != "stale") > 1){<small class="sm">+@(v.Issues.Count(i => i != "stale") - 1) pendência(s)</small>}}</td>
+                break;
+            case "fontes":
+                <td><span class="ch"><b class="@(a.InSccm ? "on" : "")">SCCM</b><b class="@(a.InIntune ? "on" : "")">INT</b><b class="@(a.InEntra ? "on" : "")">ENT</b><b class="@(a.InAd ? "on" : "")">AD</b>@if (_snapshot!.Sources.Xdr || a.InXdr) {<b class="@(a.InXdr ? "on" : "")">XDR</b>}@if (_snapshot!.Sources.Netskope || a.InNetskope) {<b class="@(a.InNetskope ? "on" : "")">NS</b>}@if (a.HasMam) {<b class="on">MAM</b>}</span></td>
+                break;
+            case "so":
+                <td>@(a.OperatingSystem ?? a.Platform)<small class="sm">@a.OsVersion</small></td>
+                break;
+            case "serial":
+                <td class="num">@(a.Serial ?? "sem serial")</td>
+                break;
+            case "score":
+                <td class="num">@a.ActivityScore</td>
+                break;
+            case "sccm": <td class="num">@Fmt.Ago(a.SccmLastSeenAt, _now)</td> break;
+            case "intune": <td class="num">@Fmt.Ago(a.IntuneLastSyncAt, _now)</td> break;
+            case "xdr": <td class="num">@Fmt.Ago(a.XdrLastSeenAt, _now)</td> break;
+            case "netskope": <td class="num">@Fmt.Ago(a.NetskopeLastSeenAt, _now)</td> break;
+            case "ad": <td class="num">@Fmt.Ago(a.AdLastLogonAt, _now)</td> break;
+            case "entra": <td class="num">@Fmt.Ago(a.EntraLastSignInAt, _now)</td> break;
+            case "rede":
+                <td class="num">@(a.IpAddresses ?? "—")<small class="sm">@(a.MacAddresses ?? "")</small></td>
+                break;
+            case "identidade":
+                <td><span class="pill @(a.Confidence == "High" ? "ok" : a.Confidence == "Medium" ? "w" : "b")">@(a.Confidence switch { "High" => "Alta", "Medium" => "Média", _ => "Baixa" })</span></td>
+                break;
+        }
     };
 }

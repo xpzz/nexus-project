@@ -1,8 +1,7 @@
 @page "/painel"
 @inject InventorySnapshotService Inventory
-@inject TimeProvider Clock
 
-<PageTitle>Visão geral · Azul Nexus</PageTitle>
+<PageTitle>Visão executiva · Azul Nexus</PageTitle>
 
 @if (_snapshot is null)
 {
@@ -10,154 +9,119 @@
 }
 else if (!_snapshot.HasData)
 {
-    <div class="ph"><div><h1>Visão geral do parque</h1><p>Ainda não há dispositivos reconciliados.</p></div></div>
+    <div class="ph"><div><h1>Visão executiva</h1><p>Ainda não há ativos reconciliados.</p></div></div>
     <div class="card">
         <h3>O que falta para ver o parque aqui</h3>
-        <p class="hint">O inventário aparece depois da primeira coleta. Confira as fontes no assistente e peça uma coleta na tela de saúde do Nexus.</p>
-        <div class="actions"><a class="button primary" href="/assistente">Abrir o assistente</a><a class="button" href="/saude">Saúde do Nexus</a></div>
+        <p class="hint">O inventário aparece depois da primeira coleta reconciliada. Confira as fontes e peça uma coleta em Operações.</p>
+        <div class="actions"><a class="button primary" href="/operacao">Abrir Operações</a><a class="button" href="/assistente">Abrir o assistente</a></div>
     </div>
 }
 else
 {
-    var o = _overview!;
+    var r = _report!;
     <div class="ph">
-        <div><h1>Visão geral do parque</h1><p>Um registro por equipamento, ligando SCCM, Intune, Entra ID e AD. Clique em qualquer número para ver os dispositivos.</p></div>
-        <span class="asof">Dados de @_snapshot.LoadedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm") · coleta, não tempo real</span>
+        <div><h1>Visão executiva</h1><p>Quantos equipamentos estão efetivamente ativos, quão confiável e recente é essa avaliação e o que investigar primeiro.</p></div>
+        <span class="asof">Dados de @r.AsOf.ToLocalTime().ToString("dd/MM/yyyy HH:mm") · coleta, não tempo real</span>
     </div>
 
-    <section class="card hero" aria-label="Saúde do parque">
-        <Ring Value="o.ParkScore" />
-        <div>
-            <h2>@o.Headline</h2>
-            <p class="hint" style="margin:2px 0 0">Índice médio dos @Fmt.Number(o.Active) dispositivos ativos. @(o.BelowTarget == 0 ? "Todas as metas disponíveis foram atingidas." : $"{o.BelowTarget} meta(s) abaixo do objetivo.") @Fmt.Pct(o.AtRiskPercent) dos ativos em risco.</p>
-            <div class="states">
-                @foreach (var st in States.All)
+    <p class="ctx"><b>@Fmt.Number(r.UniqueAssets)</b> ativos únicos reconciliados · universo avaliado: <b>@Fmt.Number(r.Evaluated)</b> (exclui @Fmt.Number(r.Decommissioned) excluídos ou descomissionados). Um equipamento conhecido por várias ferramentas conta uma vez.
+        @if (r.MissingSources.Count > 0) { <span class="pill w"><span aria-hidden="true">▲</span> sem dados de @string.Join(", ", r.MissingSources)</span> }</p>
+
+    <section class="kstrip" aria-label="Indicadores principais">
+        @foreach (var k in r.Kpis) { <ExecKpiView Kpi="k" AsOf="r.AsOf" /> }
+    </section>
+
+    <div class="grid g2">
+        <section class="card">
+            <div class="ttl"><h3>Estado dos ativos</h3><a href="/parque-ativo">Detalhar</a></div>
+            <p class="sub">Todos os @Fmt.Number(r.UniqueAssets) ativos únicos por estado operacional.</p>
+            <Bar Label="Estado operacional" ShowLegend="false" Segments="@StateSegs(r)" />
+            <div class="legend vert">
+                @foreach (var s in OperationalStates.All)
                 {
-                    <a href="@Fmt.Inv(estado: st)"><b>@Fmt.Number(o.States[st])</b><span><span class="pill @Fmt.StateCss(st)">@st</span></span></a>
+                    <a href="/inventario?oper=@s" title="@OperationalStates.Explain(s)"><u class="seg @StateCss(s)"></u><span aria-hidden="true">@OperationalStates.Icon(s)</span> @OperationalStates.Title(s) <b>@Fmt.Number(r.States[s])</b></a>
                 }
             </div>
-        </div>
-    </section>
+        </section>
 
-    <a class="card" href="/atividade" style="display:block;text-decoration:none;color:inherit">
-        <div class="ttl"><h3>Pool de máquinas ativas</h3><span class="asof">janela de @o.Pool.WindowDays dias · cruzamento de @o.Pool.Sources.Count(s => s.Enabled) fontes</span></div>
-        <div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap;margin:6px 0 10px"><b style="font:700 28px var(--f-display)">@Fmt.Number(o.Pool.Pool)</b>
-            <span class="hint">@Fmt.Number(o.Pool.Confirmed) confirmadas · @Fmt.Number(o.Pool.Single) por uma fonte · @Fmt.Number(o.Pool.Unconfirmed) não confirmadas · @Fmt.Number(o.Pool.Inactive) inativas</span></div>
-        <Bar ShowLegend="false" Label="Pool ativo" Segments="@(new List<Seg> { new("Confirmada", o.Pool.Confirmed, "s-ok"), new("Uma fonte", o.Pool.Single, "c-both"), new("Não confirmada", o.Pool.Unconfirmed, "s-warn"), new("Inativa", o.Pool.Inactive, "c-mute") })" />
-    </a>
-
-    <section class="card" aria-label="Fontes lado a lado">
-        <div class="ttl"><h3>Fontes lado a lado</h3><a href="/comparativo">Comparar fontes</a></div>
-        <p class="sub">Quantos equipamentos cada ferramenta conhece e quantos reportaram em @o.Pool.WindowDays dias.</p>
-        <div class="srcgrid">
-            @foreach (var s in _comparison!.Sources)
-            {
-                <a class="srcbox @(s.Enabled ? "" : "off")" href="@(s.Enabled ? Fmt.Inv(funil: "fonte:" + s.Key) : "/saude")">
-                    <div class="tt"><span>@s.Label</span>@if (!s.Enabled){<span class="pill m">Aguardando coleta</span>}</div>
-                    @if (s.Enabled)
-                    {
-                        <div class="n">@Fmt.Number(s.Known)<em>@Fmt.Pct(Math.Round(100.0 * s.Known / Math.Max(1, _comparison.Total), 1)) do parque</em></div>
-                        <Bar ShowLegend="false" Label="@("Reports do " + s.Label)" Segments="@(new List<Seg> { new("Reportou", s.Reporting, "s-ok"), new("Sem reportar", s.Silent, "s-warn") })" />
-                        <small>@Fmt.Number(s.Reporting) reportaram · @(s.MedianAgeDays is { } d ? $"mediana há {d} dias" : "sem datas") · @Fmt.Number(s.OnlyHere) só aqui</small>
-                    }
-                </a>
-            }
-        </div>
-    </section>
-
-    <div class="ttl"><h2>Metas do parque</h2><span class="asof">Cada cartão mostra a meta e quanto falta</span></div>
-    <div class="grid g3">
-        @foreach (var k in o.Highlights)
-        {
-            <KpiCardView Card="k" />
-        }
-    </div>
-
-    <div class="ttl"><h2>Indicadores</h2></div>
-    <div class="grid g3">
-        @foreach (var k in o.Kpis)
-        {
-            <KpiCardView Card="k" />
-        }
-    </div>
-
-    <div class="ttl"><h2>Grupos do parque</h2><span class="asof">Cada grupo é avaliado pela gestão que se espera dele</span></div>
-    <div class="grid g3">
-        @foreach (var g in o.Groups)
-        {
-            <a class="box" href="@GroupHref(g.Group)">
-                <div class="tt"><span>@Groups.Title(g.Group)</span><Ring Value="g.Score" Small="true" /></div>
-                <div class="n">@Fmt.Number(g.Total)<em>@Fmt.Number(g.Active) ativos</em></div>
-                <Bar Label="@("Gestão em " + Groups.Title(g.Group))" ShowLegend="false" Segments="ManagementSegs(g)" />
-                <div class="legend" style="margin-top:0">@foreach (var s in ManagementSegs(g).Where(s => s.Count > 0)){<span><u class="seg @s.Css"></u>@s.Label <b>@Fmt.Number(s.Count)</b></span>}</div>
-                <div class="mini"><span>Esperado</span><b style="font-weight:400;text-align:right;max-width:150px">@Groups.Expected(g.Group)</b><span>Em risco</span><b>@g.AtRisk</b><span>Desatualizados</span><b>@g.Stale</b></div>
-            </a>
-        }
+        <section class="card">
+            <div class="ttl"><h3>Fontes de dados</h3><a href="/operacao">Operações</a></div>
+            <p class="sub">Quando cada fonte coletou pela última vez. Dados antigos distorcem a classificação.</p>
+            <div class="tw wrap" style="border:0"><table style="min-width:0"><thead><tr><th>Fonte</th><th>Situação</th><th>Última coleta</th><th>Registros</th></tr></thead><tbody>
+                @foreach (var h in r.Sources)
+                {
+                    <tr title="@h.Detail"><td class="nm">@h.Label</td><td><span class="pill @SourcePill(h)"><span aria-hidden="true">@SourceIcon(h)</span> @h.Text</span></td><td class="num">@Fmt.Ago(h.LastSuccessAt, r.AsOf)</td><td class="num">@(h.Records is { } n ? Fmt.Number(n) : "—")</td></tr>
+                }
+            </tbody></table></div>
+        </section>
     </div>
 
     <section class="card">
-        <div class="ttl"><h3>Intune em números</h3><a href="/intune">Abrir o Intune</a></div>
-        @if (!_snapshot.Sources.Policies && !_snapshot.Sources.Mam)
-        {
-            <p class="hint">Políticas, perfis e proteção de aplicativos ainda não foram coletados. Eles chegam nos jobs intune.policies e intune.mam.</p>
-        }
-        else
-        {
-            var im = _snapshot.Intune;
-            <div class="grid g4" style="margin-bottom:10px">
-                <a class="box" href="/intune?aba=conformidade"><div class="tt"><span>Políticas de conformidade</span></div><div class="n">@im.PoliciesByKind.GetValueOrDefault("compliance")</div></a>
-                <a class="box" href="/intune?aba=configuracao"><div class="tt"><span>Perfis de configuração</span></div><div class="n">@(im.PoliciesByKind.GetValueOrDefault("configuration") + im.PoliciesByKind.GetValueOrDefault("settings"))</div></a>
-                <a class="box" href="/intune?aba=mam"><div class="tt"><span>Políticas de proteção de apps</span></div><div class="n">@(im.PoliciesByKind.Where(k => k.Key.StartsWith("mam-")).Sum(k => k.Value))</div></a>
-                <a class="box" href="/intune?aba=registros"><div class="tt"><span>Apps protegidos (registros)</span></div><div class="n">@Fmt.Number(im.MamRegistrations)<em>@Fmt.Number(im.MamUsers) usuários</em></div></a>
-            </div>
-            @if (im.TopFailing.Count > 0)
+        <div class="ttl"><h3>Fila de atenção</h3><span class="asof">O que investigar primeiro</span></div>
+        <div class="tw" style="border:0"><table style="min-width:0"><thead><tr><th>Motivo</th><th>Situação</th><th class="r">Afetados</th><th>Observação</th><th></th></tr></thead><tbody>
+            @foreach (var i in r.Queue)
             {
-                <p class="sub">Políticas e perfis com mais dispositivos em falha</p>
-                <div class="list">
-                    @foreach (var f in im.TopFailing)
-                    {
-                        <div class="row"><div class="t"><b><a href="/intune/politica?tipo=@f.Kind&nome=@Uri.EscapeDataString(f.Name)&estado=nonCompliant" style="color:inherit">@f.Name</a></b><span>@PolicyKinds.Title(f.Kind)</span></div><div class="r"><strong>@Fmt.Number(f.Failed)</strong><span class="asof">de @Fmt.Number(f.Total)</span></div></div>
-                    }
-                </div>
+                <tr>
+                    <td class="nm">@i.Reason<small class="sm">@i.Why</small></td>
+                    <td><span class="pill @QueuePill(i.Status)"><span aria-hidden="true">@QueueIcon(i.Status)</span> @QueueText(i.Status)</span></td>
+                    <td class="num r">@(i.Status is QueueStatus.HasItems or QueueStatus.Zero or QueueStatus.Failed ? Fmt.Number(i.Count) : "—")</td>
+                    <td class="note-cell">@i.Note</td>
+                    <td>@if (i.Link is not null && i.Status is QueueStatus.HasItems or QueueStatus.Failed){<a class="button" href="@i.Link">Investigar</a>}</td>
+                </tr>
             }
-        }
+        </tbody></table></div>
+        <p class="sub" style="margin-top:8px">Zero ocorrências (nada a fazer), sem dados (fonte ainda não coletada), coleta com falha e funcionalidade não disponível são situações diferentes.</p>
     </section>
 
     <section class="card">
-        <div class="ttl"><h3>O que pede ação primeiro</h3><a href="/pendencias">Todas as pendências</a></div>
-        <div class="list">
-            @foreach (var r in o.TopRules)
+        <div class="ttl"><h3>Governança Microsoft em resumo</h3><a href="/governanca">Abrir a governança</a></div>
+        <p class="sub">Registrado, gerenciado, compliant, protegido por MAM e com agente não são a mesma coisa. Cada linha usa a sua própria população.</p>
+        <div class="tw" style="border:0"><table style="min-width:0"><thead><tr><th>Conceito</th><th class="r">Quantidade</th><th class="r">Percentual</th><th>População</th></tr></thead><tbody>
+            @foreach (var g in r.Governance)
             {
-                <div class="row">
-                    <div class="t"><b>@r.Rule.Title</b><span>@r.Rule.Action · responsável sugerido: @r.Rule.Owner</span></div>
-                    <div class="r"><span class="pill @Fmt.PriorityCss(r.Rule.Priority)">@Fmt.PriorityLabel(r.Rule.Priority)</span><strong>@Fmt.Number(r.Devices)</strong><a class="button" href="@Fmt.Inv(pendencia: r.Rule.Id)">Ver lista</a></div>
-                </div>
+                <tr title="@g.Meaning">
+                    <td class="nm">@g.Concept<small class="sm">@g.Meaning</small></td>
+                    @if (g.Unavailable is not null)
+                    {
+                        <td colspan="3"><span class="pill m"><span aria-hidden="true">?</span> @g.Unavailable</span></td>
+                    }
+                    else
+                    {
+                        <td class="num r">@(g.Link is null ? Fmt.Number(g.Count) : "")@if (g.Link is not null){<a href="@g.Link">@Fmt.Number(g.Count)</a>}</td>
+                        <td class="num r">@(g.Percent is { } p ? Fmt.Pct(p) : "—")</td>
+                        <td>@g.Population (@Fmt.Number(g.Denominator))</td>
+                    }
+                </tr>
             }
-            @if (o.TopRules.Count == 0)
-            {
-                <div class="row"><span class="pill ok">Nenhuma pendência nas regras disponíveis</span></div>
-            }
-        </div>
+        </tbody></table></div>
     </section>
+    <p class="note">Tendências ao longo do tempo só aparecem quando houver histórico real e comparável: o Nexus começou a guardar o histórico agora e não preenche semanas anteriores.</p>
 }
 
 @code {
     private InventorySnapshot? _snapshot;
-    private OverviewReport? _overview;
-    private SourceComparisonReport? _comparison;
+    private ExecutiveReport? _report;
 
     protected override async Task OnInitializedAsync()
     {
         _snapshot = await Inventory.GetAsync();
         if (_snapshot.HasData)
         {
-            _overview = _snapshot.Overview();
-            _comparison = _snapshot.Comparison();
+            _report = _snapshot.Executive();
         }
     }
 
-    private static string GroupHref(string group) => group is Groups.ByodMobile or Groups.ByodComputers ? "/byod" : "/parque/" + Fmt.Slug(group);
+    private static string StateCss(string s) => s switch
+    {
+        OperationalStates.Confirmed => "s-ok", OperationalStates.Probable => "c-both", OperationalStates.NoRecent => "s-warn", OperationalStates.Conflicting => "s-bad", _ => "c-mute",
+    };
 
-    private static IReadOnlyList<Seg> ManagementSegs(GroupCard g) =>
-        Management.All.Where(m => m != Management.OnlyMam).Select(m => new Seg(m, g.ByManagement[m], Fmt.ManagementSeg(m))).ToList();
+    private static IReadOnlyList<Seg> StateSegs(ExecutiveReport r) => OperationalStates.All.Select(s => new Seg(OperationalStates.Title(s), r.States[s], StateCss(s), "/inventario?oper=" + s)).ToList();
+
+    private static string SourcePill(SourceHealth h) => h.Status switch { SourceHealth.Ok => "ok", SourceHealth.Failed => "b", SourceHealth.Late or SourceHealth.Partial => "w", _ => "m" };
+    private static string SourceIcon(SourceHealth h) => h.Status switch { SourceHealth.Ok => "✔", SourceHealth.Failed => "✕", SourceHealth.Late or SourceHealth.Partial => "▲", _ => "?" };
+
+    private static string QueuePill(QueueStatus s) => s switch { QueueStatus.HasItems => "w", QueueStatus.Zero => "ok", QueueStatus.Failed => "b", _ => "m" };
+    private static string QueueIcon(QueueStatus s) => s switch { QueueStatus.HasItems => "▲", QueueStatus.Zero => "✔", QueueStatus.Failed => "✕", _ => "?" };
+    private static string QueueText(QueueStatus s) => s switch { QueueStatus.HasItems => "a investigar", QueueStatus.Zero => "zero ocorrências", QueueStatus.NoData => "sem dados", QueueStatus.Failed => "coleta com falha", _ => "não disponível" };
 }

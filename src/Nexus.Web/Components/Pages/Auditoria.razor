@@ -1,0 +1,52 @@
+@page "/auditoria"
+@inject INexusDbFactory DbFactory
+@inject CurrentAccess Access
+@inject NavigationManager Nav
+
+<PageTitle>Trilha de auditoria · Azul Nexus</PageTitle>
+
+<div class="ph">
+    <div><h1>Trilha de auditoria</h1><p>Ações administrativas registradas pelo Nexus: filtros salvos, exportações, coletas manuais, mudanças de acesso e de configuração. Só o perfil Auditor lê esta trilha: quem administra não audita a si mesmo.</p></div>
+</div>
+
+@if (!Access.CanAudit)
+{
+    <div class="note"><b>Acesso restrito.</b> Esta página exige o papel Auditoria no aplicativo "Azul Nexus – Web" do Entra ID. Sem o login com o Entra ID ativo, ela só abre no próprio servidor.</div>
+}
+else
+{
+    <form method="get" action="/auditoria" class="tools">
+        <input type="search" name="acao" value="@Acao" placeholder="Ação (por exemplo inventory.exported)" aria-label="Filtrar por ação" />
+        <input type="search" name="quem" value="@Quem" placeholder="Quem" aria-label="Filtrar por usuário" />
+        <button type="submit" class="primary">Filtrar</button>
+        <a class="button" href="/auditoria/exportar.csv?acao=@Uri.EscapeDataString(Acao ?? "")&quem=@Uri.EscapeDataString(Quem ?? "")">Exportar CSV</a>
+        <span class="cnt">@_events.Count eventos (até 500, do mais recente)</span>
+    </form>
+    <div class="tw tall"><table class="dense"><thead><tr><th>Quando</th><th>Quem</th><th>Ação</th><th>Detalhe</th></tr></thead><tbody>
+        @foreach (var e in _events)
+        {
+            <tr><td class="num">@e.At.ToLocalTime().ToString("dd/MM/yyyy HH:mm:ss")</td><td>@e.Actor</td><td class="num">@e.Action</td><td class="note-cell">@e.Detail</td></tr>
+        }
+        @if (_events.Count == 0) { <tr><td colspan="4" class="empty">Nenhum evento com esses filtros.</td></tr> }
+    </tbody></table></div>
+}
+
+@code {
+    [SupplyParameterFromQuery] public string? Acao { get; set; }
+    [SupplyParameterFromQuery] public string? Quem { get; set; }
+    private List<AuditEvent> _events = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Access.CanAudit)
+        {
+            return;
+        }
+
+        await using var db = DbFactory.Create();
+        var query = db.AuditEvents.AsNoTracking().AsQueryable();
+        if (!string.IsNullOrWhiteSpace(Acao)) { query = query.Where(e => e.Action.Contains(Acao)); }
+        if (!string.IsNullOrWhiteSpace(Quem)) { query = query.Where(e => e.Actor.Contains(Quem)); }
+        _events = await query.OrderByDescending(e => e.Id).Take(500).ToListAsync();
+    }
+}

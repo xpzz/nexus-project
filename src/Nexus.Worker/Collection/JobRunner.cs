@@ -23,10 +23,13 @@ public static class JobNames
     public const string Mam = "intune.mam";
     public const string Users = "entra.users";
     public const string Policies = "intune.policies";
+    public const string AppPolicies = "intune.apppolicies";
+    public const string ConditionalAccess = "entra.ca";
+    public const string SignIns = "entra.signins";
     public const string Reconcile = "inventory.reconcile";
     // Order matters: users are resolved from the devices and MAM registrations collected just before.
-    public static readonly string[] All = [Sccm, ActiveDirectory, Intune, Entra, Xdr, Netskope, Mam, Users, Policies, Reconcile];
-    public static readonly string[] Collections = [Sccm, ActiveDirectory, Intune, Entra, Xdr, Netskope, Mam, Users, Policies];
+    public static readonly string[] All = [Sccm, ActiveDirectory, Intune, Entra, Xdr, Netskope, Mam, Users, Policies, AppPolicies, ConditionalAccess, SignIns, Reconcile];
+    public static readonly string[] Collections = [Sccm, ActiveDirectory, Intune, Entra, Xdr, Netskope, Mam, Users, Policies, AppPolicies, ConditionalAccess, SignIns];
 }
 
 public sealed record JobOutcome(string Status, int? Records, string? Message);
@@ -52,6 +55,9 @@ public sealed class JobRunner(
     private readonly Dictionary<string, SemaphoreSlim> _locks = JobNames.All.ToDictionary(n => n, _ => new SemaphoreSlim(1, 1));
     private bool _slowQueryObserved;
 
+    /// <summary>Run ID of the job being executed; flows to the history tables and the logs.</summary>
+    private static readonly AsyncLocal<Guid> CurrentRunId = new();
+
     public TimeSpan IntervalOf(string job, NexusSettings settings) => job switch
     {
         JobNames.Sccm => TimeSpan.FromMinutes(settings.Collection.SccmIntervalMinutes),
@@ -62,6 +68,9 @@ public sealed class JobRunner(
         JobNames.Mam => TimeSpan.FromMinutes(settings.Collection.MamIntervalMinutes),
         JobNames.Users => TimeSpan.FromMinutes(settings.Collection.UsersIntervalMinutes),
         JobNames.Policies => TimeSpan.FromMinutes(settings.Collection.PoliciesIntervalMinutes),
+        JobNames.AppPolicies => TimeSpan.FromMinutes(settings.Governance.AppPoliciesIntervalMinutes),
+        JobNames.ConditionalAccess => TimeSpan.FromMinutes(settings.Governance.ConditionalAccessIntervalMinutes),
+        JobNames.SignIns => TimeSpan.FromMinutes(settings.Governance.SignInsIntervalMinutes),
         JobNames.Reconcile => TimeSpan.FromMinutes(settings.Collection.ReconcileIntervalMinutes),
         _ => throw new ArgumentOutOfRangeException(nameof(job), job, "Coleta desconhecida."),
     };
@@ -88,13 +97,16 @@ public sealed class JobRunner(
     {
         var settings = settingsProvider.Current;
         var now = clock.GetUtcNow();
+        var runId = Guid.NewGuid();
+        CurrentRunId.Value = runId;
+        using var scope = logger.BeginScope(new Dictionary<string, object> { ["RunId"] = runId, ["Job"] = job });
 
         var blocked = await gate.CheckAsync(settings.Collection, job == JobNames.Sccm && _slowQueryObserved, cancellationToken);
         if (blocked is not null)
         {
             _slowQueryObserved = false; // one postponement per slow query
             var outcome = new JobOutcome(StatusPostponed, null, blocked.ToString());
-            await SaveStateAsync(job, now, outcome, TimeSpan.Zero, now + PostponeDelay, cancellationToken);
+            await SaveStateAsync(job, now, outcome, TimeSpan.Zero, now + PostponeDelay, cancellationToken, runId);
             logger.LogInformation("Coleta {Job} adiada: {Reason}", job, blocked.WhatHappened);
             return outcome;
         }
@@ -114,6 +126,9 @@ public sealed class JobRunner(
                 JobNames.Mam => await CollectMamAsync(settings, now, cancellationToken),
                 JobNames.Users => await CollectUsersAsync(settings, now, cancellationToken),
                 JobNames.Policies => await CollectPoliciesAsync(settings, now, cancellationToken),
+                JobNames.AppPolicies => await CollectAppPoliciesAsync(settings, now, cancellationToken),
+                JobNames.ConditionalAccess => await CollectConditionalAccessAsync(settings, now, cancellationToken),
+                JobNames.SignIns => await CollectSignInsAsync(settings, now, cancellationToken),
                 JobNames.Reconcile => await ReconcileAsync(cancellationToken),
                 _ => throw new ArgumentOutOfRangeException(nameof(job)),
             };
@@ -127,7 +142,7 @@ public sealed class JobRunner(
             result = new JobOutcome(StatusFailed, null, ex.Message);
         }
 
-        await SaveStateAsync(job, now, result, stopwatch.Elapsed, now + IntervalOf(job, settings), cancellationToken);
+        await SaveStateAsync(job, now, result, stopwatch.Elapsed, now + IntervalOf(job, settings), cancellationToken, runId);
         if (result.Status == StatusSucceeded && job != JobNames.Reconcile)
         {
             await RunAsync(JobNames.Reconcile, cancellationToken); // new data: refresh the reconciled view
@@ -147,10 +162,33 @@ public sealed class JobRunner(
             }
         }
 
-        var window = TimeSpan.FromDays(Math.Clamp(settingsProvider.Current.Collection.ActivityWindowDays, 1, 365));
-        var result = await new InventoryReconciler(dbFactory, clock, window).RunAsync(cancellationToken);
+        var policy = EvidencePolicy.From(settingsProvider.Current.Evidence);
+        var result = await new InventoryReconciler(dbFactory, clock, TimeSpan.FromDays(policy.Default.ProbableDays), policy).RunAsync(cancellationToken);
         logger.LogInformation("Reconciliação: {Assets} ativos, {Review} itens para revisão.", result.Assets.Count, result.Review.Count);
+        await PurgeHistoryAsync(cancellationToken);
         return result.Assets.Count;
+    }
+
+    private async Task PurgeHistoryAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var retention = Math.Max(30, settingsProvider.Current.Collection.HistoryRetentionDays);
+            var limit = clock.GetUtcNow() - TimeSpan.FromDays(retention);
+            await using var db = dbFactory.Create();
+            var versions = await RawRecordArchive.PurgeAsync(db, clock.GetUtcNow(), retention, cancellationToken);
+            var runs = await db.JobRuns.Where(r => r.StartedAt < limit).ExecuteDeleteAsync(cancellationToken);
+            var timeline = await db.EvidenceTimeline.Where(e => e.CollectedAt < limit).ExecuteDeleteAsync(cancellationToken);
+            var changes = await db.AssetChanges.Where(c => c.At < limit).ExecuteDeleteAsync(cancellationToken);
+            if (versions + runs + timeline + changes > 0)
+            {
+                logger.LogInformation("Histórico expirado removido (retenção de {Days} dias): {Versions} versões, {Runs} execuções, {Timeline} datas de evidência, {Changes} mudanças.", retention, versions, runs, timeline, changes);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "A limpeza do histórico falhou e será tentada na próxima reconciliação.");
+        }
     }
 
     private async Task<int?> CollectIntuneAsync(NexusSettings settings, DateTimeOffset now, CancellationToken cancellationToken)
@@ -172,7 +210,7 @@ public sealed class JobRunner(
                 LastSyncAt = d.LastSyncAt, EnrolledAt = d.EnrolledAt, ComplianceState = d.ComplianceState,
                 UserPrincipalName = d.UserPrincipalName, UserId = d.UserId, IsEncrypted = d.IsEncrypted, JailBroken = d.JailBroken, IsSupervised = d.IsSupervised,
                 TotalStorageBytes = d.TotalStorageBytes, FreeStorageBytes = d.FreeStorageBytes, PhysicalMemoryBytes = d.PhysicalMemoryBytes,
-                DeviceRegistrationState = d.DeviceRegistrationState, AutopilotEnrolled = d.AutopilotEnrolled, ComplianceGraceExpiresAt = d.ComplianceGraceExpiresAt, CollectedAt = now,
+                DeviceRegistrationState = d.DeviceRegistrationState, AutopilotEnrolled = d.AutopilotEnrolled, ComplianceGraceExpiresAt = d.ComplianceGraceExpiresAt, EthernetMac = NetworkIds.NormalizeMac(d.EthernetMac), WifiMac = NetworkIds.NormalizeMac(d.WifiMac), CollectedAt = now,
             };
         }
 
@@ -181,7 +219,7 @@ public sealed class JobRunner(
             logger.LogWarning("Este tenant recusou os campos estendidos dos dispositivos (criptografia, armazenamento, jailbreak); coletado só o básico.");
         }
 
-        await ReplaceAsync<IntuneDeviceRecord>(rows.Values.ToList(), cancellationToken);
+        await ReplaceAsync<IntuneDeviceRecord>(rows.Values.ToList(), cancellationToken, "intune", r => r.Id);
         return rows.Count;
     }
 
@@ -204,7 +242,7 @@ public sealed class JobRunner(
             };
         }
 
-        await ReplaceAsync<EntraDeviceRecord>(rows.Values.ToList(), cancellationToken);
+        await ReplaceAsync<EntraDeviceRecord>(rows.Values.ToList(), cancellationToken, "entra", r => r.Id);
         return rows.Count;
     }
 
@@ -237,8 +275,29 @@ public sealed class JobRunner(
             logger.LogWarning("{Reason}", reason);
         }
 
+        try
+        {
+            var extras = await reader.ReadExtrasAsync(cancellationToken);
+            foreach (var (id, e) in extras.Where(x => rows.ContainsKey(x.Key)))
+            {
+                rows[id].MacAddresses = e.Macs.Count == 0 ? null : string.Join(",", e.Macs);
+                rows[id].IpAddresses = e.Ips.Count == 0 ? null : string.Join(",", e.Ips.Take(8));
+                rows[id].Chassis = e.Chassis;
+            }
+
+            if (reader is SqlSccmReader { ExtrasWarning: { } warning })
+            {
+                logger.LogWarning("{Warning}", warning);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // MAC, IP and chassis are enrichment: the devices themselves were read, so the collection must not fail because of them.
+            logger.LogWarning(ex, "Não foi possível ler MAC, IP e chassi do SCCM; a coleta dos dispositivos continua.");
+        }
+
         _slowQueryObserved = queryGate.SlowQueryObserved;
-        await ReplaceAsync<SccmDeviceRecord>(rows.Values.ToList(), cancellationToken);
+        await ReplaceAsync<SccmDeviceRecord>(rows.Values.ToList(), cancellationToken, "sccm", r => r.ResourceId.ToString());
         return rows.Count;
     }
 
@@ -262,7 +321,7 @@ public sealed class JobRunner(
             };
         }
 
-        await ReplaceAsync<AdComputerRecord>(rows.Values.ToList(), cancellationToken);
+        await ReplaceAsync<AdComputerRecord>(rows.Values.ToList(), cancellationToken, "ad", r => r.ObjectGuid.ToString());
         return rows.Count;
     }
 
@@ -284,7 +343,7 @@ public sealed class JobRunner(
             };
         }
 
-        await ReplaceAsync<XdrEndpointRecord>(rows.Values.ToList(), cancellationToken);
+        await ReplaceAsync<XdrEndpointRecord>(rows.Values.ToList(), cancellationToken, "xdr", r => r.AgentId);
         return rows.Count;
     }
 
@@ -307,7 +366,87 @@ public sealed class JobRunner(
             };
         }
 
-        await ReplaceAsync<NetskopeClientRecord>(rows.Values.ToList(), cancellationToken);
+        await ReplaceAsync<NetskopeClientRecord>(rows.Values.ToList(), cancellationToken, "netskope", r => r.Id);
+        return rows.Count;
+    }
+
+    private async Task<int?> CollectAppPoliciesAsync(NexusSettings settings, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var reader = sources.CreateGovernanceReader(settings);
+        if (reader is null)
+        {
+            return null;
+        }
+
+        var policies = new Dictionary<string, AppProtectionPolicyRecord>();
+        await foreach (var p in reader.ReadAppProtectionPoliciesAsync(cancellationToken))
+        {
+            policies[p.Id] = new AppProtectionPolicyRecord
+            {
+                Id = p.Id, Platform = p.Platform, Name = p.Name, LastModifiedAt = p.LastModifiedAt, Version = p.Version, IsAssigned = p.IsAssigned, AssignedToAll = p.AssignedToAll,
+                Assignments = p.Assignments, AppsJson = System.Text.Json.JsonSerializer.Serialize(p.Apps), SettingsJson = System.Text.Json.JsonSerializer.Serialize(p.Settings), CollectedAt = now,
+            };
+        }
+
+        var configs = new Dictionary<string, AppConfigRecord>();
+        await foreach (var c in reader.ReadAppConfigurationsAsync(cancellationToken))
+        {
+            configs[c.Id] = new AppConfigRecord
+            {
+                Id = c.Id, Kind = c.Kind, Platform = c.Platform, Name = c.Name, LastModifiedAt = c.LastModifiedAt, Assignments = c.Assignments,
+                AppsJson = System.Text.Json.JsonSerializer.Serialize(c.Apps), SettingsJson = System.Text.Json.JsonSerializer.Serialize(c.Settings), CollectedAt = now,
+            };
+        }
+
+        await ReplaceAsync<AppProtectionPolicyRecord>(policies.Values.ToList(), cancellationToken, "app-policy", r => r.Id);
+        await ReplaceAsync<AppConfigRecord>(configs.Values.ToList(), cancellationToken, "app-config", r => r.Id);
+        return policies.Count + configs.Count;
+    }
+
+    private async Task<int?> CollectConditionalAccessAsync(NexusSettings settings, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var reader = sources.CreateGovernanceReader(settings);
+        if (reader is null)
+        {
+            return null;
+        }
+
+        var rows = new Dictionary<string, ConditionalAccessRecord>();
+        await foreach (var c in reader.ReadConditionalAccessAsync(cancellationToken))
+        {
+            rows[c.Id] = new ConditionalAccessRecord
+            {
+                Id = c.Id, Name = c.Name, State = c.State, ModifiedAt = c.ModifiedAt, Users = c.Users, Applications = c.Applications, Platforms = c.Platforms, GrantControls = string.Join(",", c.GrantControls),
+                RequiresCompliantDevice = c.RequiresCompliantDevice, RequiresApprovedApp = c.RequiresApprovedApp, RequiresAppProtection = c.RequiresAppProtection, RequiresMfa = c.RequiresMfa,
+                TargetsMicrosoft365 = c.TargetsMicrosoft365, CollectedAt = now,
+            };
+        }
+
+        await ReplaceAsync<ConditionalAccessRecord>(rows.Values.ToList(), cancellationToken, "ca-policy", r => r.Id);
+        return rows.Count;
+    }
+
+    private async Task<int?> CollectSignInsAsync(NexusSettings settings, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var reader = sources.CreateGovernanceReader(settings);
+        if (reader is null)
+        {
+            return null;
+        }
+
+        var since = now - TimeSpan.FromDays(Math.Clamp(settings.Governance.SignInWindowDays, 1, 30));
+        var rows = new Dictionary<string, AccessEvidenceRecord>();
+        await foreach (var a in reader.ReadSignInAccessAsync(since, Math.Clamp(settings.Governance.MaxSignInPages, 1, 400), cancellationToken))
+        {
+            rows[a.Key] = new AccessEvidenceRecord
+            {
+                Key = a.Key, UserId = a.UserId, UserPrincipalName = a.UserPrincipalName, EntraDeviceId = a.EntraDeviceId, DeviceName = a.DeviceName, OperatingSystem = a.OperatingSystem,
+                Browser = a.Browser, IsManaged = a.IsManaged, IsCompliant = a.IsCompliant, TrustType = a.TrustType, LastAccessAt = a.LastAccessAt, Workloads = a.Workloads, Count = a.Count,
+                ClientApp = a.ClientApp, CaStatus = a.CaStatus, CollectedAt = now,
+            };
+        }
+
+        await ReplaceAsync<AccessEvidenceRecord>(rows.Values.ToList(), cancellationToken); // volatile by nature: the asset timeline keeps the dates
         return rows.Count;
     }
 
@@ -326,11 +465,11 @@ public sealed class JobRunner(
             {
                 Id = r.Id, UserId = r.UserId, DeviceName = r.DeviceName, DeviceTag = r.DeviceTag, DeviceType = r.DeviceType, AppIdentifier = r.AppIdentifier,
                 AppVersion = r.AppVersion, PlatformVersion = r.PlatformVersion, LastSyncAt = r.LastSyncAt, CreatedAt = r.CreatedAt, FlaggedReasons = r.FlaggedReasons,
-                AppliedPolicies = r.AppliedPolicies, IntendedPolicies = r.IntendedPolicies, CollectedAt = now,
+                AppliedPolicies = r.AppliedPolicies, IntendedPolicies = r.IntendedPolicies, LastOperation = r.LastOperation, CollectedAt = now,
             };
         }
 
-        await ReplaceAsync<MamRegistrationRecord>(rows.Values.ToList(), cancellationToken);
+        await ReplaceAsync<MamRegistrationRecord>(rows.Values.ToList(), cancellationToken, "mam", r => r.Id);
         return rows.Count;
     }
 
@@ -347,7 +486,7 @@ public sealed class JobRunner(
         {
             var fromDevices = await db.IntuneDevices.AsNoTracking().Where(d => d.UserId != null).Select(d => d.UserId!).Distinct().ToListAsync(cancellationToken);
             var fromMam = await db.MamRegistrations.AsNoTracking().Where(r => r.UserId != null).Select(r => r.UserId!).Distinct().ToListAsync(cancellationToken);
-            ids = fromDevices.Concat(fromMam).Distinct().ToList();
+            ids = GraphIds.Clean(fromDevices.Concat(fromMam)); // blank, zero-GUID and repeated ids would break the $batch request
         }
 
         var rows = new Dictionary<string, EntraUserRecord>();
@@ -362,7 +501,7 @@ public sealed class JobRunner(
             }
         }
 
-        await ReplaceAsync<EntraUserRecord>(rows.Values.ToList(), cancellationToken);
+        await ReplaceAsync<EntraUserRecord>(rows.Values.ToList(), cancellationToken, "entra-user", r => r.Id);
         return rows.Count;
     }
 
@@ -410,7 +549,29 @@ public sealed class JobRunner(
         return policies.Count;
     }
 
-    private async Task ReplaceAsync<T>(List<T> rows, CancellationToken cancellationToken) where T : class
+    /// <summary>Replaces the raw table in one transaction (a failure keeps the last snapshot) and then archives the versions that changed.</summary>
+    private async Task ReplaceAsync<T>(List<T> rows, CancellationToken cancellationToken, string? archiveSource = null, Func<T, string>? archiveKey = null) where T : class
+    {
+        await ReplaceTableAsync(rows, cancellationToken);
+        if (archiveSource is null || archiveKey is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await using var db = dbFactory.Create();
+            var result = await RawRecordArchive.ArchiveAsync(db, archiveSource, rows, archiveKey, clock.GetUtcNow(), CurrentRunId.Value, cancellationToken);
+            logger.LogInformation("Versões de {Source}: {Created} novas, {Changed} alteradas, {Unchanged} iguais, {Removed} removidas (run {RunId}).", archiveSource, result.Created, result.Changed, result.Unchanged, result.Removed, CurrentRunId.Value);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The collection itself succeeded; losing one history write must not turn it into a failure.
+            logger.LogWarning(ex, "Não foi possível arquivar as versões de {Source}. A coleta foi concluída; o histórico desta rodada ficou incompleto.", archiveSource);
+        }
+    }
+
+    private async Task ReplaceTableAsync<T>(List<T> rows, CancellationToken cancellationToken) where T : class
     {
         await using var db = dbFactory.Create();
         var strategy = db.Database.CreateExecutionStrategy();
@@ -429,7 +590,7 @@ public sealed class JobRunner(
         });
     }
 
-    private async Task SaveStateAsync(string job, DateTimeOffset startedAt, JobOutcome outcome, TimeSpan duration, DateTimeOffset nextRun, CancellationToken cancellationToken)
+    private async Task SaveStateAsync(string job, DateTimeOffset startedAt, JobOutcome outcome, TimeSpan duration, DateTimeOffset nextRun, CancellationToken cancellationToken, Guid runId)
     {
         await using var db = dbFactory.Create();
         var state = await db.Jobs.FirstOrDefaultAsync(j => j.Name == job, cancellationToken);
@@ -451,6 +612,11 @@ public sealed class JobRunner(
             state.LastRecordCount = outcome.Records;
         }
 
+        db.JobRuns.Add(new JobRun
+        {
+            RunId = runId, Job = job, StartedAt = startedAt, CompletedAt = state.LastCompletedAt!.Value, Status = outcome.Status, Records = outcome.Records,
+            DurationMs = (int)duration.TotalMilliseconds, Message = outcome.Message is { Length: > 2000 } m ? m[..2000] : outcome.Message,
+        });
         await db.SaveChangesAsync(cancellationToken);
     }
 }

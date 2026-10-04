@@ -40,6 +40,7 @@ public static class ActivityModel
         new("xdr", "Cortex XDR", a.XdrLastSeenAt, true),
         new("netskope", "Netskope", a.NetskopeLastSeenAt, true),
         new("mam", "Intune MAM", a.MamLastSyncAt, true),
+        new("m365", "Microsoft 365", a.LastM365AccessAt, true),
         new("entra", "Entra ID", a.EntraLastSignInAt, false),
         new("ad", "Active Directory", a.AdLastLogonAt, false),
     ];

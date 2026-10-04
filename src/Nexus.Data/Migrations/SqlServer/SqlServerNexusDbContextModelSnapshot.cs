@@ -22,6 +22,76 @@ namespace Nexus.Data.Migrations.SqlServer
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
+            modelBuilder.Entity("Nexus.Data.Entities.AccessEvidenceRecord", b =>
+                {
+                    b.Property<string>("Key")
+                        .HasMaxLength(320)
+                        .HasColumnType("nvarchar(320)");
+
+                    b.Property<string>("Browser")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("CaStatus")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("ClientApp")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<DateTimeOffset>("CollectedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<int>("Count")
+                        .HasColumnType("int");
+
+                    b.Property<string>("DeviceName")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("EntraDeviceId")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<bool?>("IsCompliant")
+                        .HasColumnType("bit");
+
+                    b.Property<bool?>("IsManaged")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTimeOffset>("LastAccessAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("OperatingSystem")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("TrustType")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("UserId")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("UserPrincipalName")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("Workloads")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.HasKey("Key");
+
+                    b.HasIndex("EntraDeviceId");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("access_evidence", (string)null);
+                });
+
             modelBuilder.Entity("Nexus.Data.Entities.AdComputerRecord", b =>
                 {
                     b.Property<Guid>("ObjectGuid")
@@ -70,6 +140,98 @@ namespace Nexus.Data.Migrations.SqlServer
                     b.ToTable("ad_computers", (string)null);
                 });
 
+            modelBuilder.Entity("Nexus.Data.Entities.AppConfigRecord", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("AppsJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Assignments")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<DateTimeOffset>("CollectedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<DateTimeOffset?>("LastModifiedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("Platform")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("SettingsJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("app_configs", (string)null);
+                });
+
+            modelBuilder.Entity("Nexus.Data.Entities.AppProtectionPolicyRecord", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("AppsJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<bool>("AssignedToAll")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Assignments")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<DateTimeOffset>("CollectedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<bool>("IsAssigned")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTimeOffset?>("LastModifiedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("Platform")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<string>("SettingsJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int?>("Version")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("app_protection_policies", (string)null);
+                });
+
             modelBuilder.Entity("Nexus.Data.Entities.Asset", b =>
                 {
                     b.Property<Guid>("Id")
@@ -87,6 +249,16 @@ namespace Nexus.Data.Migrations.SqlServer
                         .HasMaxLength(16)
                         .HasColumnType("nvarchar(16)");
 
+                    b.Property<string>("ActivityExplanation")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ActivityLevel")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("ActivityScore")
+                        .HasColumnType("int");
+
                     b.Property<bool>("AdByNameOnly")
                         .HasColumnType("bit");
 
@@ -95,6 +267,13 @@ namespace Nexus.Data.Migrations.SqlServer
 
                     b.Property<DateTimeOffset?>("AdLastLogonAt")
                         .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("AssetType")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Chassis")
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<int>("CompliancePolicies")
                         .HasColumnType("int");
@@ -126,6 +305,9 @@ namespace Nexus.Data.Migrations.SqlServer
                         .HasMaxLength(256)
                         .HasColumnType("nvarchar(256)");
 
+                    b.Property<bool>("DecommissionCandidate")
+                        .HasColumnType("bit");
+
                     b.Property<string>("Department")
                         .HasMaxLength(256)
                         .HasColumnType("nvarchar(256)");
@@ -142,6 +324,12 @@ namespace Nexus.Data.Migrations.SqlServer
                     b.Property<string>("EntraTrustType")
                         .HasMaxLength(32)
                         .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("EvidenceJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Fqdn")
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<bool>("HasMam")
                         .HasColumnType("bit");
@@ -169,12 +357,27 @@ namespace Nexus.Data.Migrations.SqlServer
                         .HasMaxLength(24)
                         .HasColumnType("nvarchar(24)");
 
+                    b.Property<string>("IntuneEnrollmentType")
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<DateTimeOffset?>("IntuneLastSyncAt")
                         .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("IntuneOwnerType")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("IntuneRegistrationState")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<bool?>("IntuneSupervised")
+                        .HasColumnType("bit");
 
                     b.Property<string>("IntuneUserId")
                         .HasMaxLength(64)
                         .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("IpAddresses")
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<bool>("IsActive")
                         .HasColumnType("bit");
@@ -188,8 +391,20 @@ namespace Nexus.Data.Migrations.SqlServer
                     b.Property<DateTimeOffset?>("LastActivityAt")
                         .HasColumnType("datetimeoffset");
 
+                    b.Property<DateTimeOffset?>("LastM365AccessAt")
+                        .HasColumnType("datetimeoffset");
+
                     b.Property<DateTimeOffset?>("LastStrongActivityAt")
                         .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("LastUser")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("M365Workloads")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("MacAddresses")
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<int>("MamAppCount")
                         .HasColumnType("int");
@@ -237,6 +452,10 @@ namespace Nexus.Data.Migrations.SqlServer
                     b.Property<string>("OperatingSystem")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<string>("OperationalState")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<string>("OsVersion")
                         .HasColumnType("nvarchar(max)");
 
@@ -273,6 +492,9 @@ namespace Nexus.Data.Migrations.SqlServer
                         .HasMaxLength(16)
                         .HasColumnType("nvarchar(16)");
 
+                    b.Property<DateTimeOffset?>("SccmLastDdrAt")
+                        .HasColumnType("datetimeoffset");
+
                     b.Property<DateTimeOffset?>("SccmLastHwScanAt")
                         .HasColumnType("datetimeoffset");
 
@@ -280,6 +502,9 @@ namespace Nexus.Data.Migrations.SqlServer
                         .HasColumnType("datetimeoffset");
 
                     b.Property<DateTimeOffset?>("SccmLastSeenAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset?>("SccmLastSwScanAt")
                         .HasColumnType("datetimeoffset");
 
                     b.Property<string>("Serial")
@@ -291,6 +516,9 @@ namespace Nexus.Data.Migrations.SqlServer
 
                     b.Property<bool?>("UserEnabled")
                         .HasColumnType("bit");
+
+                    b.Property<string>("Uuid")
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("XdrAgentType")
                         .HasMaxLength(64)
@@ -325,6 +553,50 @@ namespace Nexus.Data.Migrations.SqlServer
                     b.HasIndex("Platform");
 
                     b.ToTable("assets", (string)null);
+                });
+
+            modelBuilder.Entity("Nexus.Data.Entities.AssetChange", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<Guid>("AssetId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("AssetName")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<DateTimeOffset>("At")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Field")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("NewValue")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<string>("OldValue")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<Guid>("RunId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("At");
+
+                    b.HasIndex("AssetId", "At");
+
+                    b.ToTable("asset_changes", (string)null);
                 });
 
             modelBuilder.Entity("Nexus.Data.Entities.AssetLink", b =>
@@ -402,6 +674,64 @@ namespace Nexus.Data.Migrations.SqlServer
                     b.ToTable("audit_events", (string)null);
                 });
 
+            modelBuilder.Entity("Nexus.Data.Entities.ConditionalAccessRecord", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("Applications")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<DateTimeOffset>("CollectedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("GrantControls")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<DateTimeOffset?>("ModifiedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("Platforms")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<bool>("RequiresAppProtection")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("RequiresApprovedApp")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("RequiresCompliantDevice")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("RequiresMfa")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(48)
+                        .HasColumnType("nvarchar(48)");
+
+                    b.Property<bool>("TargetsMicrosoft365")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Users")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("conditional_access_policies", (string)null);
+                });
+
             modelBuilder.Entity("Nexus.Data.Entities.EntraDeviceRecord", b =>
                 {
                     b.Property<string>("Id")
@@ -477,6 +807,37 @@ namespace Nexus.Data.Migrations.SqlServer
                     b.HasKey("Id");
 
                     b.ToTable("entra_users", (string)null);
+                });
+
+            modelBuilder.Entity("Nexus.Data.Entities.EvidenceTimelineEntry", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<Guid>("AssetId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("CollectedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset>("ObservedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CollectedAt");
+
+                    b.HasIndex("AssetId", "Source", "ObservedAt");
+
+                    b.ToTable("evidence_timeline", (string)null);
                 });
 
             modelBuilder.Entity("Nexus.Data.Entities.HealthResultRecord", b =>
@@ -670,6 +1031,9 @@ namespace Nexus.Data.Migrations.SqlServer
                         .HasMaxLength(64)
                         .HasColumnType("nvarchar(64)");
 
+                    b.Property<string>("EthernetMac")
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<long?>("FreeStorageBytes")
                         .HasColumnType("bigint");
 
@@ -727,6 +1091,9 @@ namespace Nexus.Data.Migrations.SqlServer
                     b.Property<string>("UserPrincipalName")
                         .HasMaxLength(256)
                         .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("WifiMac")
+                        .HasColumnType("nvarchar(max)");
 
                     b.HasKey("Id");
 
@@ -817,6 +1184,52 @@ namespace Nexus.Data.Migrations.SqlServer
                     b.ToTable("inventory_fetches", (string)null);
                 });
 
+            modelBuilder.Entity("Nexus.Data.Entities.JobRun", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTimeOffset>("CompletedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<int>("DurationMs")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Job")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("Message")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<int?>("Records")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("RunId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("StartedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RunId");
+
+                    b.HasIndex("Job", "StartedAt");
+
+                    b.ToTable("job_runs", (string)null);
+                });
+
             modelBuilder.Entity("Nexus.Data.Entities.JobState", b =>
                 {
                     b.Property<string>("Name")
@@ -896,6 +1309,9 @@ namespace Nexus.Data.Migrations.SqlServer
                     b.Property<string>("IntendedPolicies")
                         .HasMaxLength(1024)
                         .HasColumnType("nvarchar(1024)");
+
+                    b.Property<string>("LastOperation")
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<DateTimeOffset?>("LastSyncAt")
                         .HasColumnType("datetimeoffset");
@@ -981,6 +1397,111 @@ namespace Nexus.Data.Migrations.SqlServer
                     b.ToTable("netskope_clients", (string)null);
                 });
 
+            modelBuilder.Entity("Nexus.Data.Entities.ProtectionException", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<bool>("Active")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTimeOffset>("ApprovedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("ApprovedBy")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("Control")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<DateTimeOffset?>("ExpiresAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<string>("SubjectId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("SubjectKind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<string>("SubjectName")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Control", "SubjectId");
+
+                    b.ToTable("protection_exceptions", (string)null);
+                });
+
+            modelBuilder.Entity("Nexus.Data.Entities.RawRecordVersion", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTimeOffset>("FirstSeenAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Hash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<bool>("IsCurrent")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTimeOffset>("LastSeenAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset?>("RemovedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid>("RunId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("SourceKey")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LastSeenAt");
+
+                    b.HasIndex("Source", "SourceKey", "IsCurrent");
+
+                    b.ToTable("raw_record_versions", (string)null);
+                });
+
             modelBuilder.Entity("Nexus.Data.Entities.ReviewItem", b =>
                 {
                     b.Property<long>("Id")
@@ -1010,6 +1531,42 @@ namespace Nexus.Data.Migrations.SqlServer
                     b.ToTable("review_items", (string)null);
                 });
 
+            modelBuilder.Entity("Nexus.Data.Entities.SavedView", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("nvarchar(120)");
+
+                    b.Property<string>("Owner")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("Query")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<bool>("Shared")
+                        .HasColumnType("bit");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Owner");
+
+                    b.ToTable("saved_views", (string)null);
+                });
+
             modelBuilder.Entity("Nexus.Data.Entities.SccmDeviceRecord", b =>
                 {
                     b.Property<int>("ResourceId")
@@ -1028,6 +1585,9 @@ namespace Nexus.Data.Migrations.SqlServer
                     b.Property<string>("BiosVersion")
                         .HasMaxLength(128)
                         .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("Chassis")
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<bool?>("Client")
                         .HasColumnType("bit");
@@ -1059,6 +1619,9 @@ namespace Nexus.Data.Migrations.SqlServer
                         .HasMaxLength(256)
                         .HasColumnType("nvarchar(256)");
 
+                    b.Property<string>("IpAddresses")
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<DateTimeOffset?>("LastActiveAt")
                         .HasColumnType("datetimeoffset");
 
@@ -1080,6 +1643,9 @@ namespace Nexus.Data.Migrations.SqlServer
 
                     b.Property<DateTimeOffset?>("LastSwScanAt")
                         .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("MacAddresses")
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("Manufacturer")
                         .HasMaxLength(128)

@@ -1,6 +1,7 @@
 @page "/dispositivo/{Id:guid}"
 @inject InventorySnapshotService Inventory
 @inject INexusDbFactory DbFactory
+@inject CurrentAccess Access
 
 <PageTitle>@(_view?.Asset.Name ?? "Dispositivo") · Azul Nexus</PageTitle>
 
@@ -19,39 +20,81 @@ else
     var a = _view.Asset;
     var now = _now;
     <div class="ph">
-        <div><a href="@Fmt.Inv(grupo: _view.Group)" class="hint">← @Groups.Title(_view.Group)</a><h1>@a.Name</h1><p>@(a.Manufacturer) @(a.Model) · @(a.OperatingSystem ?? a.Platform) @(a.OsVersion)</p></div>
-        <Ring Value="_view.Score" />
+        <div><a href="@BackUrl" class="hint">← Voltar ao inventário</a><h1>@a.Name</h1><p>@(a.Manufacturer) @(a.Model) · @(a.OperatingSystem ?? a.Platform) @(a.OsVersion) · @AssetTypes.Title(a.AssetType) · @InventoryQuery.OwnershipOf(_view)</p></div>
+        <span class="asof">Dados de @_now.ToLocalTime().ToString("dd/MM/yyyy HH:mm") · ID Nexus @a.Id</span>
     </div>
 
-    <div class="legend" style="margin:0">
-        <span class="pill a">@InventoryQuery.OwnershipOf(_view)</span>
-        <span class="pill @(_view.Management == Management.None ? "b" : "m")">@_view.Management</span>
-        <span class="pill @Fmt.StateCss(_view.State)">@_view.State</span>
-        @if (a.HasMam) { <span class="pill a">Proteção de apps (MAM)</span> }
-        @if (a.NeedsReview) { <span class="pill w">revisar vínculo</span> }
+    <h2 class="sec">Identidade, atividade e risco são coisas diferentes</h2>
+    <div class="grid g3">
+        <section class="card tri">
+            <div class="l"><span>Confiança da identidade</span><span class="pill @(a.Confidence == "High" ? "ok" : a.Confidence == "Medium" ? "w" : "b")">@(a.Confidence switch { "High" => "Alta", "Medium" => "Média", _ => "Baixa" })</span></div>
+            <p class="sub">Quão seguro é que os registros ligados sejam o mesmo equipamento. @(a.NeedsReview ? "Há um conflito a revisar." : "Sem conflito aberto.")</p>
+        </section>
+        <section class="card tri">
+            <div class="l"><span>Atividade</span><span class="pill @OperationalStates.Css(a.OperationalState)"><span aria-hidden="true">@OperationalStates.Icon(a.OperationalState)</span> @OperationalStates.Title(a.OperationalState)</span></div>
+            <p class="sub">Score de atividade @a.ActivityScore de 100: chance de o equipamento estar em uso, a partir das datas das fontes.</p>
+        </section>
+        <section class="card tri">
+            <div class="l"><span>Risco de segurança e gestão</span><span class="pill @Fmt.StateCss(_view.State)">@_view.State</span></div>
+            <p class="sub">Índice de saúde @_view.Score de 100, das pendências abaixo. Não mede se o equipamento está ativo.</p>
+        </section>
     </div>
 
     <section class="card">
+        <h3>Por que esta classificação</h3>
+        <p class="explain">@a.ActivityExplanation</p>
+        <p class="sub">Limiares do tipo @AssetTypes.Title(a.AssetType): confirmado em até @_th.ConfirmedDays dias, provável em até @_th.ProbableDays, observação até @_th.NoRecentDays, candidato à inativação após @_th.DecommissionDays dias sem relato. @(a.DecommissionCandidate ? "Este equipamento passou do limite." : "")</p>
+        <div class="tw" style="border:0"><table style="min-width:620px"><thead><tr><th>Fonte</th><th>Evento</th><th>Quando</th><th>Há</th><th>Peso na decisão</th><th>Natureza</th></tr></thead><tbody>
+            @foreach (var r in Reports())
+            {
+                var sig = r.Signal is null ? null : _signals.FirstOrDefault(x => x.Key == r.Signal.Key);
+                <tr><td>@r.Source</td><td>@r.Event</td><td class="num">@(r.At?.ToLocalTime().ToString("dd/MM/yyyy HH:mm") ?? "—")</td><td class="num">@Fmt.Ago(r.At, now)</td>
+                    <td class="num">@(sig is null ? "—" : sig.Counts ? $"{sig.Probability * 100:0}%" : r.At is null ? "sem data" : "fora das janelas")</td>
+                    <td>@(r.Signal is null ? "complementar" : r.Signal.Strong ? "telemetria do equipamento" : "identidade (peso menor)")</td></tr>
+            }
+        </tbody></table></div>
+    </section>
+
+    <h2 class="sec">Identificadores correlacionados</h2>
+    <section class="card">
+        <div class="tw" style="border:0"><table style="min-width:620px"><thead><tr><th>Identificador</th><th>Valor</th><th>Fonte</th></tr></thead><tbody>
+            @foreach (var (kind, value, source) in Identifiers())
+            {
+                <tr><td>@kind</td><td class="num">@value</td><td>@source</td></tr>
+            }
+        </tbody></table></div>
+        <div class="list" style="margin-top:10px">
+            @foreach (var l in _links)
+            {
+                <div class="row"><div class="t"><b>@Fmt.JobLabel(l.Source == "sccm" ? "sccm.devices" : l.Source == "intune" ? "intune.devices" : l.Source == "entra" ? "entra.devices" : l.Source == "mam" ? "intune.mam" : l.Source == "xdr" ? "xdr.endpoints" : l.Source == "netskope" ? "netskope.clients" : "ad.computers") · @l.SourceKey</b><span>@(l.Reason ?? "Registro de origem do ativo.")</span></div><span class="pill @(l.Confidence == "High" ? "ok" : l.Confidence == "Medium" ? "w" : "m")">vínculo por @EvidenceLabel(l.Evidence) · confiança @(l.Confidence == "High" ? "alta" : l.Confidence == "Medium" ? "média" : "baixa")</span></div>
+            }
+        </div>
+        @foreach (var r in _review) { <div class="note" style="margin-top:10px"><b>@Fmt.ReviewKind(r.Kind):</b> @r.Detail</div> }
+    </section>
+
+    <h2 class="sec">Gerenciamento e postura</h2>
+    <section class="card">
         <dl class="kv" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px 24px">
-            @Item("Usuário", a.PrimaryUser ?? "—")
-            @Item("Área", a.Department ?? "—")
-            @Item("Conta do usuário", a.UserEnabled switch { true => "habilitada", false => "desabilitada", _ => "—" })
-            @Item("Serial", a.Serial ?? "—")
+            @Item("Gerenciamento", _view.Management)
             @Item("Gestão esperada", Groups.Expected(_view.Group))
             @Item("Cumpre a gestão esperada", _view.MeetsExpected ? "sim" : "não")
+            @Item("Usuário", User(a))
+            @Item("Último usuário identificado", a.LastUser ?? "—")
+            @Item("Área (AD)", a.Department ?? "—")
+            @Item("Conta do usuário", a.UserEnabled switch { true => "habilitada", false => "desabilitada", _ => "—" })
         </dl>
     </section>
 
-    <div class="ttl"><h2>Último report por fonte</h2><span class="asof">Quando cada ferramenta ouviu falar do dispositivo</span></div>
+    <div class="ttl"><h2>Governança Microsoft</h2><span class="asof">Cada conceito é independente dos demais</span></div>
     <section class="card">
-        <p class="sub">Atividade: <span class="pill @(a.ActivityClass switch { "Confirmed" => "ok", "Single" => "a", "Unconfirmed" => "w", _ => "m" })">@ActivityClasses.Title(a.ActivityClass)</span> · @ActivityClasses.Explain(a.ActivityClass) @(a.IsActive ? "Está no pool ativo." : "Fora do pool ativo.") Janela de @_windowDays dias.</p>
-        <div class="tw" style="border:0"><table style="min-width:620px"><thead><tr><th>Fonte</th><th>Evento</th><th>Quando</th><th>Há</th><th>Na janela</th><th>Evidência</th></tr></thead><tbody>
-            @foreach (var r in Reports())
-            {
-                <tr><td>@r.Source</td><td>@r.Event</td><td class="num">@(r.At?.ToLocalTime().ToString("dd/MM/yyyy HH:mm") ?? "—")</td><td class="num">@Fmt.Ago(r.At, now)</td>
-                    <td>@(r.Signal is null ? "—" : r.At is { } t && now - t <= TimeSpan.FromDays(_windowDays) ? "sim" : "não")</td>
-                    <td>@(r.Signal is null ? "" : r.Signal.Strong ? "forte" : "fraca")</td></tr>
-            }
+        <div class="tw" style="border:0"><table style="min-width:620px"><thead><tr><th>Conceito</th><th>Situação</th><th>Evidência</th></tr></thead><tbody>
+            <tr><td>Registrado no Entra ID</td><td>@Yes(a.InEntra)</td><td>@(a.InEntra ? TrustLabel(a.EntraTrustType) : "Sem registro no Entra ID.")</td></tr>
+            <tr><td>Gerenciado por MDM</td><td>@Yes(a.IntuneChannel == "Mdm")</td><td>@ChannelLabel(a.IntuneChannel)</td></tr>
+            <tr><td>Compliant</td><td>@(a.IntuneChannel != "Mdm" ? Na("sem MDM") : Yes(string.Equals(a.ComplianceState, "compliant", StringComparison.OrdinalIgnoreCase)))</td><td>@(a.ComplianceState ?? "—")</td></tr>
+            <tr><td>Protegido por MAM</td><td>@(MamNotApplicable(a) ? Na("MAM é para celulares, tablets e BYOD") : Yes(a.HasMam))</td><td>@(a.HasMam ? $"{a.MamAppCount} registro(s) de app. Protege só os aplicativos compatíveis, não o aparelho." : "Sem registro de proteção de aplicativos.")</td></tr>
+            <tr><td>Com agente de segurança</td><td>@(_snapshotSources.Xdr || a.InXdr ? Yes(a.InXdr && Reconciler.IsXdrConnected(a.XdrStatus)) : Na("fonte sem coleta"))</td><td>@(a.InXdr ? a.XdrStatus : "—")</td></tr>
+            <tr><td>Acesso permitido por Acesso Condicional</td><td>@Na("não coletado")</td><td>A coleta de Acesso Condicional e de sign-ins ainda não está habilitada.</td></tr>
+            <tr><td>Ativo no parque</td><td>@Yes(a.IsActive)</td><td>@OperationalStates.Title(a.OperationalState)</td></tr>
         </tbody></table></div>
     </section>
 
@@ -204,15 +247,38 @@ else
         </div>
     </section>
 
-    <div class="ttl"><h2>Como os registros foram ligados</h2></div>
+    <div class="ttl"><h2>Histórico de alterações</h2><span class="asof">Mudanças relevantes entre reconciliações</span></div>
     <section class="card">
-        <div class="list">
-            @foreach (var l in _links)
-            {
-                <div class="row"><div class="t"><b>@Fmt.JobLabel(l.Source == "sccm" ? "sccm.devices" : l.Source == "intune" ? "intune.devices" : l.Source == "entra" ? "entra.devices" : l.Source == "mam" ? "intune.mam" : l.Source == "xdr" ? "xdr.endpoints" : "ad.computers") · @l.SourceKey</b><span>@(l.Reason ?? "Registro de origem do ativo.")</span></div><span class="pill @(l.Confidence == "High" ? "ok" : l.Confidence == "Medium" ? "w" : "m")">confiança @(l.Confidence == "High" ? "alta" : l.Confidence == "Medium" ? "média" : "baixa")</span></div>
-            }
-        </div>
-        @foreach (var r in _review) { <div class="note" style="margin-top:10px"><b>@Fmt.ReviewKind(r.Kind):</b> @r.Detail</div> }
+        @if (_changes.Count == 0)
+        {
+            <p class="hint">Nenhuma alteração registrada para este equipamento desde que o histórico começou.</p>
+        }
+        else
+        {
+            <div class="tw" style="border:0"><table style="min-width:560px"><thead><tr><th>Quando</th><th>Campo</th><th>De</th><th>Para</th></tr></thead><tbody>
+                @foreach (var c in _changes)
+                {
+                    <tr><td class="num">@c.At.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</td><td>@FieldLabel(c.Field)</td><td>@(Describe(c.Field, c.OldValue))</td><td>@(Describe(c.Field, c.NewValue))</td></tr>
+                }
+            </tbody></table></div>
+        }
+    </section>
+
+    <div class="ttl"><h2>Linha do tempo das evidências</h2><span class="asof">Cada vez que uma fonte informou uma data nova</span></div>
+    <section class="card">
+        @if (_timeline.Count == 0)
+        {
+            <p class="hint">A linha do tempo começa na primeira reconciliação depois da atualização do Nexus.</p>
+        }
+        else
+        {
+            <div class="tw" style="border:0"><table style="min-width:480px"><thead><tr><th>Fonte</th><th>Data informada pela fonte</th><th>Coletada em</th></tr></thead><tbody>
+                @foreach (var e in _timeline)
+                {
+                    <tr><td>@SourceLabel(e.Source)</td><td class="num">@e.ObservedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</td><td class="num">@e.CollectedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</td></tr>
+                }
+            </tbody></table></div>
+        }
     </section>
     <div class="note">Somente leitura. Dados pessoais em BYOD: o Nexus não coleta telefone, IMEI nem localização.</div>
 }
@@ -220,6 +286,10 @@ else
 @code {
     [Parameter] public Guid Id { get; set; }
     [SupplyParameterFromQuery] public string? Sw { get; set; }
+    [SupplyParameterFromQuery] public string? Voltar { get; set; }
+
+    /// <summary>Only a path inside the inventory is accepted: the parameter must not become an open redirect.</summary>
+    private string BackUrl => Voltar is { Length: > 0 and < 1500 } v && v.StartsWith("/inventario", StringComparison.Ordinal) && !v.StartsWith("//", StringComparison.Ordinal) ? v : "/inventario";
     private AssetView? _view;
     private DateTimeOffset _now;
     private SourceAvailability _snapshotSources = SourceAvailability.All;
@@ -235,6 +305,10 @@ else
     private List<InstalledSoftwareRecord> _software = [];
     private List<InstalledSoftwareRecord> _shownSoftware = [];
     private InventoryFetch? _fetch;
+    private List<AssetChange> _changes = [];
+    private List<EvidenceTimelineEntry> _timeline = [];
+    private IReadOnlyList<EvidenceSignal> _signals = [];
+    private EvidenceThresholds _th = new();
 
     protected override async Task OnInitializedAsync()
     {
@@ -247,6 +321,9 @@ else
         {
             return;
         }
+
+        _th = snapshot.Evidence.For(_view.Asset.AssetType);
+        _signals = EvidenceEngine.Signals(_view.Asset, snapshot.LoadedAt, _th, snapshot.Evidence);
 
         await using var db = DbFactory.Create();
         _links = await db.AssetLinks.AsNoTracking().Where(l => l.AssetId == Id).OrderBy(l => l.Source).ToListAsync();
@@ -283,6 +360,16 @@ else
             }
         }
 
+        try
+        {
+            _changes = (await db.AssetChanges.AsNoTracking().Where(c => c.AssetId == Id).ToListAsync()).OrderByDescending(c => c.At).Take(50).ToList();
+            _timeline = (await db.EvidenceTimeline.AsNoTracking().Where(e => e.AssetId == Id).ToListAsync()).OrderByDescending(e => e.ObservedAt).Take(60).ToList();
+        }
+        catch (Exception)
+        {
+            // History tables arrive with a migration; the device page must still open while it is pending.
+        }
+
         _fetch = await db.InventoryFetches.AsNoTracking().FirstOrDefaultAsync(f => f.AssetId == Id);
         _software = await db.InstalledSoftware.AsNoTracking().Where(s => s.AssetId == Id).OrderBy(s => s.Name).ToListAsync();
         _shownSoftware = string.IsNullOrWhiteSpace(Sw)
@@ -313,6 +400,58 @@ else
         if (a.InEntra) yield return new("Entra ID", "Último login", a.EntraLastSignInAt, signals["entra"]);
         if (a.InAd) yield return new("Active Directory", "Último logon", a.AdLastLogonAt, signals["ad"]);
     }
+
+    private string User(Asset a) => a.PrimaryUser is null ? "—" : a.Ownership == "Personal" && !Access.CanSeePersonalData ? PersonalData.Mask(a.PrimaryUser) : a.PrimaryUser;
+
+    private IEnumerable<(string Kind, string Value, string Source)> Identifiers()
+    {
+        var a = _view!.Asset;
+        string? Key(string source) => _links.FirstOrDefault(l => l.Source == source)?.SourceKey;
+        yield return ("ID interno do Nexus", a.Id.ToString(), "Nexus (imutável enquanto algum vínculo permanecer)");
+        yield return ("Serial", a.Serial ?? "sem serial válido", a.Serial is null ? "—" : "SCCM, Intune ou Netskope");
+        if (_entra?.DeviceId is { } did) yield return ("Entra Device ID", did.ToString(), "Entra ID");
+        if (Key("entra") is { } oid) yield return ("Entra object ID", oid, "Entra ID");
+        if (Key("intune") is { } iid) yield return ("Intune managed device ID", iid, "Intune");
+        if (Key("sccm") is { } rid) yield return ("SCCM Resource ID", rid, "SCCM");
+        if (a.Uuid is not null) yield return ("UUID de hardware (BIOS)", a.Uuid, "SCCM");
+        if (Key("ad") is { } g) yield return ("AD objectGUID", g, "Active Directory");
+        if (Key("xdr") is { } x) yield return ("Cortex XDR agent ID", x, "Cortex XDR");
+        if (Key("netskope") is { } n) yield return ("Netskope client ID", n, "Netskope");
+        yield return ("Hostname", a.Name, "fontes de gerenciamento");
+        if (a.Fqdn is not null) yield return ("FQDN", a.Fqdn, "AD ou SCCM");
+        if (a.IpAddresses is not null) yield return ("IPs conhecidos", a.IpAddresses, "Cortex XDR");
+        yield return ("MACs conhecidos", a.MacAddresses ?? "ainda não coletados", a.MacAddresses is null ? "—" : "SCCM ou Intune");
+        yield return ("Usuário principal", User(a), "Intune");
+    }
+
+    private static string EvidenceLabel(string e) => e switch
+    {
+        "entra-id" or "aad-device-id" => "Entra Device ID",
+        "serial" => "serial",
+        "hardware-uuid" => "UUID de hardware",
+        "name" => "nome (apoio)",
+        "user-platform" => "usuário e plataforma",
+        "mam-registration" => "registro de MAM",
+        "none" => "registro único",
+        _ => e,
+    };
+
+    private static string FieldLabel(string f) => f switch
+    {
+        "Created" => "Ativo criado", "Removed" => "Ativo removido", "OperationalState" => "Estado operacional", "AssetType" => "Tipo", "Ownership" => "Propriedade", "Coverage" => "Cobertura de gestão",
+        "PrimaryUser" => "Usuário", "Department" => "Área", "OperatingSystem" => "Sistema", "OsVersion" => "Versão do sistema", "IntuneChannel" => "Canal do Intune", "ComplianceState" => "Conformidade",
+        "HasMam" => "Proteção de apps", "Confidence" => "Confiança da identidade", "Name" => "Hostname", "Serial" => "Serial", "Model" => "Modelo", _ => f,
+    };
+
+    private static string Describe(string field, string? value) => value is null ? "—" : field == "OperationalState" ? OperationalStates.Title(value) : field == "AssetType" ? AssetTypes.Title(value) : value;
+
+    private static string SourceLabel(string s) => s switch { "sccm" => "SCCM", "intune" => "Intune", "xdr" => "Cortex XDR", "netskope" => "Netskope", "mam" => "Proteção de apps (MAM)", "entra" => "Entra ID", "ad" => "Active Directory", _ => s };
+
+    private static MarkupString Yes(bool value) => new(value ? "<span class=\"pill ok\"><span aria-hidden=\"true\">✔</span> sim</span>" : "<span class=\"pill b\"><span aria-hidden=\"true\">✕</span> não</span>");
+
+    private static MarkupString Na(string why) => new($"<span class=\"pill m\"><span aria-hidden=\"true\">?</span> sem evidência ({why})</span>");
+
+    private static bool MamNotApplicable(Asset a) => a.Ownership == "Corporate" && a.Platform is "WindowsClient" or "WindowsServer" && !a.HasMam;
 
     private static string StatePill(string state) => state switch { "compliant" or "remediated" or "succeeded" => "ok", "nonCompliant" or "error" or "conflict" or "failed" => "b", "pending" => "w", _ => "m" };
 

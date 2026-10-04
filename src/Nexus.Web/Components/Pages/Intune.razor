@@ -59,8 +59,8 @@
             @if (_registrations.Count == 0) { <tr><td colspan="8" style="text-align:center;color:var(--ink3);padding:28px">@(_snapshot.Sources.Mam ? "Nenhum registro com esses filtros." : "A proteção de aplicativos ainda não foi coletada (job intune.mam).")</td></tr> }
         </tbody></table></div>
         <div class="pager">
-            @if (Pagina <= 0) { <span class="button" style="opacity:.5">Anterior</span> } else { <a class="button" href="@RegLink(Pagina - 1)">Anterior</a> }
-            @if ((Pagina + 1) * 25 >= _regTotal) { <span class="button" style="opacity:.5">Próxima</span> } else { <a class="button" href="@RegLink(Pagina + 1)">Próxima</a> }
+            @if (Pagina <= 0) { <span class="button off" aria-disabled="true">Anterior</span> } else { <a class="button" href="@RegLink(Pagina - 1)">Anterior</a> }
+            @if ((Pagina + 1) * 25 >= _regTotal) { <span class="button off" aria-disabled="true">Próxima</span> } else { <a class="button" href="@RegLink(Pagina + 1)">Próxima</a> }
         </div>
     }
     else if (Tab == "mam")

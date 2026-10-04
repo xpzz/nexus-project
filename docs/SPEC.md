@@ -158,7 +158,7 @@ Após a instalação, um assistente dentro da aplicação conclui a configuraç�
 
 Antes do SSO existir, o Nexus fica em modo de configuração: acessível no próprio servidor (localhost) ou remotamente com o código exibido ao fim da instalação. O código é de uso único e expira em 24 horas; `nexusctl setup-code` gera outro, apenas para administradores locais.
 
-O modo de configuração termina quando o SSO é validado e há ao menos um usuário em `Nexus.Admin`. Se o acesso se perder, `nexusctl recover-access` reabre o modo de configuração e registra o evento na auditoria.
+O modo de configuração termina quando o SSO é validado e há ao menos um usuário em `Nexus.AdminIntegracao`. Se o acesso se perder, `nexusctl recover-access` reabre o modo de configuração e registra o evento na auditoria.
 
 ### 4.2 Etapas do assistente
 
@@ -189,7 +189,7 @@ Antes de começar, a tela mostra as funções exigidas. Criar os registros exige
 
 | Registro | Uso | Credencial | Permissões |
 |---|---|---|---|
-| Azul Nexus – Web | Login SSO e perfis | Certificado do serviço Web | Delegadas: openid, profile e User.Read. Funções de aplicativo: Nexus.Admin, Nexus.Gestao, Nexus.Operacao e Nexus.Seguranca |
+| Azul Nexus – Web | Login SSO e perfis | Certificado do serviço Web | Delegadas: openid, profile e User.Read. Funções de aplicativo: Nexus.Leitura, Nexus.Analista, Nexus.AdminIntegracao e Nexus.Auditoria (ADR-0008) |
 | Azul Nexus – Coletor | Leitura de Intune e Entra | Certificado do serviço Worker | De aplicativo, somente leitura (4.5) |
 | Azul Nexus – Relatórios (opcional) | exportJobs do Intune | Certificado próprio | As exigidas pela criação de exportJobs (a referência lista ReadWrite), só para os relatórios habilitados |
 
@@ -222,7 +222,7 @@ Cada passo mostra o nome do menu em português e em inglês, o valor a copiar e 
 6. Clique em “Conceder consentimento do administrador” e confirme que todas ficaram concedidas.
 7. Crie “Azul Nexus – Web” do mesmo modo, com URI de redirecionamento Web `https://{fqdn}:{porta}/signin-oidc` e logout `https://{fqdn}:{porta}/signout-oidc`, como exibidos no Nexus. Envie `nexus-web.cer`, adicione as permissões delegadas e conceda consentimento.
 8. Funções de aplicativo › Criar função de aplicativo: crie as quatro funções com os valores exibidos, para Usuários/Grupos.
-9. Aplicativos empresariais › Azul Nexus – Web › Propriedades: ative a atribuição obrigatória. Em Usuários e grupos, atribua ao menos um administrador a Nexus.Admin; atribuição por grupo exige Entra ID P1.
+9. Aplicativos empresariais › Azul Nexus – Web › Propriedades: ative a atribuição obrigatória. Em Usuários e grupos, atribua ao menos um administrador a Nexus.AdminIntegracao; atribuição por grupo exige Entra ID P1.
 10. Volte ao Nexus e clique em “Validar”.
 
 ### 4.7 Validação
