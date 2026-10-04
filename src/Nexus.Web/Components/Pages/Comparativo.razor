@@ -1,0 +1,138 @@
+@page "/comparativo"
+@inject InventorySnapshotService Inventory
+
+<PageTitle>Comparar fontes · Azul Nexus</PageTitle>
+
+<div class="ph">
+    <div><h1>Comparar fontes</h1><p>SCCM, Active Directory, Intune, Cortex XDR e Netskope lado a lado: quem conhece cada equipamento, quando cada uma reportou pela última vez e onde elas discordam. Clique em qualquer número para ver os dispositivos.</p></div>
+    @if (_snapshot is not null) { <span class="asof">Janela de @_snapshot.WindowDays dias · dados de @_snapshot.LoadedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</span> }
+</div>
+
+@if (_report is { Total: > 0 })
+{
+    var r = _report;
+    var on = r.Sources.Where(s => s.Enabled).ToList();
+    <div class="grid g4">
+        <a class="card kcard" href="/inventario"><div class="l">Equipamentos no inventário</div><div class="v">@Fmt.Number(r.Total)</div><div class="d">um registro por equipamento, depois da reconciliação</div></a>
+        <div class="card kcard"><div class="l">Fontes com coleta</div><div class="v">@r.EnabledCount de @r.Sources.Count</div><div class="d">@(string.Join(", ", on.Select(s => s.Label)))</div></div>
+        <div class="card kcard"><div class="l">Vistos por todas as fontes com coleta</div><div class="v">@(r.EnabledCount == 0 ? "—" : Fmt.Number(r.InAllEnabled))</div><div class="d">@(r.EnabledCount == 0 ? "Nenhuma fonte coletada ainda" : Fmt.Pct(Math.Round(100.0 * r.InAllEnabled / r.Total, 1)) + " do inventário")</div></div>
+        <a class="card kcard" href="@Fmt.Inv(funil: "dif:sccm:intune")"><div class="l">SCCM e Intune com datas distantes</div><div class="v">@Fmt.Number(r.Pair("sccm", "intune")?.DatesApart ?? 0)</div><div class="d">últimos reports com mais de @SourceComparison.GapDays dias de diferença</div></a>
+    </div>
+
+    <section class="card">
+        <h3>Cobertura de cada fonte</h3>
+        <p class="sub">Dos @Fmt.Number(r.Total) equipamentos: quantos a fonte conhece, quantos reportaram em @r.WindowDays dias e quantos só ela conhece.</p>
+        <div class="tw" style="border:0"><table><thead><tr><th>Fonte</th><th>Conhece</th><th>Reportou</th><th>Sem reportar</th><th>Só aqui</th><th>Último report</th><th>Cobertura</th></tr></thead><tbody>
+            @foreach (var s in r.Sources)
+            {
+                <tr class="@(s.Enabled ? "" : "off")">
+                    <td class="nm">@s.Label</td>
+                    @if (s.Enabled)
+                    {
+                        <td class="num"><a href="@Fmt.Inv(funil: "fonte:" + s.Key)">@Fmt.Number(s.Known)</a></td>
+                        <td class="num">@Fmt.Number(s.Reporting)</td>
+                        <td class="num">@Fmt.Number(s.Silent)</td>
+                        <td class="num"><a href="@Fmt.Inv(funil: "so:" + s.Key)">@Fmt.Number(s.OnlyHere)</a></td>
+                        <td>@(s.MedianAgeDays is { } d ? $"mediana há {d} dias" : "—")<small class="asof" style="display:block">mais recente: @(s.LatestAt is { } at ? at.ToLocalTime().ToString("dd/MM HH:mm") : "—")</small></td>
+                        <td style="min-width:200px"><Bar ShowLegend="false" Label="@("Cobertura do " + s.Label)" Segments="@(new List<Seg> { new("Reportou", s.Reporting, "s-ok"), new("Sem reportar", s.Silent, "s-warn"), new("Fora da fonte", r.Total - s.Known, "c-mute", Fmt.Inv(funil: "sem:" + s.Key)) })" />
+                            <small class="asof">@Fmt.Pct(Math.Round(100.0 * s.Known / r.Total, 1)) do inventário</small></td>
+                    }
+                    else
+                    {
+                        <td colspan="6"><span class="pill m">Aguardando coleta</span></td>
+                    }
+                </tr>
+            }
+        </tbody></table></div>
+    </section>
+
+    <section class="card">
+        <h3>Idade do último report</h3>
+        <p class="sub">Quando cada fonte viu o equipamento pela última vez. Fontes que reportam por faixas muito diferentes indicam coleta atrasada ou agente parado.</p>
+        <div class="tw" style="border:0"><table><thead><tr><th>Fonte</th>@foreach (var l in SourceComparison.AgeLabels){<th>@l</th>}<th>Distribuição</th></tr></thead><tbody>
+            @foreach (var s in r.Sources.Where(x => x.Enabled))
+            {
+                <tr>
+                    <td class="nm">@s.Label</td>
+                    @for (var i = 0; i < s.AgeBuckets.Count; i++){<td class="num">@Fmt.Number(s.AgeBuckets[i])</td>}
+                    <td style="min-width:220px"><Bar ShowLegend="false" Label="@("Idade do último report no " + s.Label)" Segments="@(AgeSegs(s))" /></td>
+                </tr>
+            }
+        </tbody></table></div>
+        <div class="legend">@foreach (var (l, css) in AgeCss.Select((c, i) => (SourceComparison.AgeLabels[i], c))){<span><u class="seg @css"></u>@l</span>}</div>
+    </section>
+
+    <section class="card">
+        <h3>Quem conhece o mesmo equipamento</h3>
+        <p class="sub">Cada célula mostra quantos equipamentos as duas fontes conhecem em comum e, em destaque, quantos têm os dois últimos reports a mais de @SourceComparison.GapDays dias de distância.</p>
+        <div class="tw" style="border:0"><table class="matrix" style="min-width:640px"><thead><tr><th></th>@foreach (var c in on){<th>@c.Label</th>}</tr></thead><tbody>
+            @foreach (var row in on)
+            {
+                <tr>
+                    <td class="nm">@row.Label</td>
+                    @foreach (var col in on)
+                    {
+                        if (row.Key == col.Key)
+                        {
+                            <td class="num"><b>@Fmt.Number(row.Known)</b></td>
+                        }
+                        else
+                        {
+                            var cell = r.Pair(row.Key, col.Key);
+                            <td class="num"><a href="@Fmt.Inv(funil: $"par:{row.Key}:{col.Key}")">@Fmt.Number(cell?.Both ?? 0)</a>
+                                @if ((cell?.DatesApart ?? 0) > 0){<br /><a class="pill w" href="@Fmt.Inv(funil: $"dif:{row.Key}:{col.Key}")" title="Datas a mais de @SourceComparison.GapDays dias">@Fmt.Number(cell!.DatesApart) distantes</a>}</td>
+                        }
+                    }
+                </tr>
+            }
+        </tbody></table></div>
+    </section>
+
+    <div class="grid g2">
+        <section class="card">
+            <h3>Combinações mais comuns</h3>
+            <p class="sub">Conjuntos exatos de fontes que enxergam o mesmo equipamento.</p>
+            <div class="list">
+                @foreach (var c in r.Combos)
+                {
+                    <div class="row"><div class="t"><b>@string.Join(" + ", c.Keys.Select(SourceComparison.Label))</b><span>@Fmt.Number(c.Active) ativos no pool</span></div><div class="r"><strong>@Fmt.Number(c.Count)</strong><a class="button" href="@Fmt.Inv(funil: "combo:" + string.Join("+", c.Keys))">Ver lista</a></div></div>
+                }
+            </div>
+        </section>
+        <section class="card">
+            <h3>Maior diferença entre as datas</h3>
+            <p class="sub">Equipamentos com maior distância entre o report mais recente e o mais antigo, considerando as cinco fontes.</p>
+            <div class="list">
+                @foreach (var x in _widest)
+                {
+                    <div class="row"><div class="t"><b><a href="/dispositivo/@x.Asset.Id" style="color:inherit">@x.Asset.Name</a></b><span>@Spread(x.Asset)</span></div><span class="pill w">@x.Days dias</span></div>
+                }
+                @if (_widest.Count == 0) { <div class="row"><span class="pill ok">Nenhuma diferença relevante</span></div> }
+            </div>
+        </section>
+    </div>
+}
+else if (_snapshot is not null)
+{
+    <div class="card"><p class="hint">Ainda não há dispositivos reconciliados para comparar. Peça uma coleta na tela de saúde do Nexus.</p></div>
+}
+
+@code {
+    private static readonly string[] AgeCss = ["s-ok", "c-both", "s-warn", "s-bad", "c-mute"];
+
+    private InventorySnapshot? _snapshot;
+    private SourceComparisonReport? _report;
+    private List<(Nexus.Data.Entities.Asset Asset, int Days)> _widest = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        _snapshot = await Inventory.GetAsync();
+        _report = _snapshot.Comparison();
+        _widest = _snapshot.Views.Select(v => (v.Asset, Days: SourceComparison.Spread(v.Asset)))
+            .Where(x => x.Days >= SourceComparison.GapDays).OrderByDescending(x => x.Days).Take(8).ToList();
+    }
+
+    private static List<Seg> AgeSegs(SourceStat s) => s.AgeBuckets.Select((n, i) => new Seg(SourceComparison.AgeLabels[i], n, AgeCss[i])).ToList();
+
+    private static string Spread(Nexus.Data.Entities.Asset a) => string.Join(" · ", SourceComparison.Dates(a).Where(d => d.At is not null).OrderByDescending(d => d.At).Select(d => $"{d.Label} {d.At!.Value.ToLocalTime():dd/MM}"));
+}
