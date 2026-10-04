@@ -3,7 +3,9 @@
     <Project Path="src/Nexus.Cli/Nexus.Cli.csproj" />
     <Project Path="src/Nexus.Collectors.ActiveDirectory/Nexus.Collectors.ActiveDirectory.csproj" />
     <Project Path="src/Nexus.Collectors.Graph/Nexus.Collectors.Graph.csproj" />
+    <Project Path="src/Nexus.Collectors.Netskope/Nexus.Collectors.Netskope.csproj" />
     <Project Path="src/Nexus.Collectors.Sccm/Nexus.Collectors.Sccm.csproj" />
+    <Project Path="src/Nexus.Collectors.Xdr/Nexus.Collectors.Xdr.csproj" />
     <Project Path="src/Nexus.Core/Nexus.Core.csproj" />
     <Project Path="src/Nexus.Data/Nexus.Data.csproj" />
     <Project Path="src/Nexus.Reconciliation/Nexus.Reconciliation.csproj" />

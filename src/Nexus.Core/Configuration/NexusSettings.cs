@@ -9,6 +9,9 @@ public sealed class NexusSettings
     public DatabaseSettings Database { get; set; } = new();
     public SccmSettings Sccm { get; set; } = new();
     public ActiveDirectorySettings ActiveDirectory { get; set; } = new();
+    public XdrSettings Xdr { get; set; } = new();
+    public NetskopeSettings Netskope { get; set; } = new();
+    public NetworkSettings Network { get; set; } = new();
     public CollectionSettings Collection { get; set; } = new();
     public WebSettings Web { get; set; } = new();
     public bool DemoMode { get; set; }
@@ -57,6 +60,56 @@ public sealed class SccmSettings
     public int SlowQueryThresholdSeconds { get; set; } = 60;
 }
 
+/// <summary>Outbound proxy for the calls to Microsoft Graph and Netskope (the server may only reach the internet through the corporate proxy).</summary>
+public sealed class NetworkSettings
+{
+    /// <summary>Empty = direct connection. Example: http://proxy.azul.corp:8080.</summary>
+    public string ProxyUrl { get; set; } = "";
+
+    /// <summary>Authenticate to the proxy with the service account (Windows integrated).</summary>
+    public bool ProxyUseDefaultCredentials { get; set; } = true;
+}
+
+/// <summary>
+/// Netskope client (agent) data from the tenant REST API. The API token is stored protected (DPAPI, machine scope),
+/// never in clear text; <c>NEXUS_NETSKOPE_TOKEN</c> overrides it for development.
+/// </summary>
+public sealed class NetskopeSettings
+{
+    public SourceMode Mode { get; set; } = SourceMode.Disabled;
+
+    /// <summary>Tenant host, e.g. azul.goskope.com (without https://).</summary>
+    public string Tenant { get; set; } = "";
+
+    /// <summary>Endpoint that returns the client data ("Get Client Data"). Configurable because the API versions differ.</summary>
+    public string ClientsPath { get; set; } = "/api/v1/clients";
+
+    /// <summary>"header" sends Netskope-Api-Token (REST API v2); "query" sends token=... (REST API v1).</summary>
+    public string TokenPlacement { get; set; } = "query";
+
+    /// <summary>Paging parameters: page size and the name of the offset parameter ("skip" or "offset").</summary>
+    public int PageSize { get; set; } = 500;
+    public string OffsetParameter { get; set; } = "skip";
+
+    public string? ProtectedToken { get; set; }
+    public int TimeoutSeconds { get; set; } = 120;
+}
+
+/// <summary>
+/// Cortex XDR endpoints, read from the SQL table that the site's own PowerShell routine fills from the XDR API.
+/// The Nexus never holds the XDR API key: it only reads that table (read-only intent, integrated security).
+/// </summary>
+public sealed class XdrSettings
+{
+    public SourceMode Mode { get; set; } = SourceMode.Disabled;
+    public string SqlServer { get; set; } = "";
+    public string Database { get; set; } = "cortex_db";
+    /// <summary>Table (optionally "schema.table"; schema defaults to dbo).</summary>
+    public string Table { get; set; } = "API_Cortex_getAllEndpoints";
+    public bool TrustServerCertificate { get; set; }
+    public int CommandTimeoutSeconds { get; set; } = 60;
+}
+
 public sealed class ActiveDirectorySettings
 {
     public SourceMode Mode { get; set; } = SourceMode.Disabled;
@@ -78,6 +131,11 @@ public sealed class CollectionSettings
     public int PoliciesIntervalMinutes { get; set; } = 240;
     public int MamIntervalMinutes { get; set; } = 120;
     public int UsersIntervalMinutes { get; set; } = 240;
+    public int XdrIntervalMinutes { get; set; } = 60;
+    public int NetskopeIntervalMinutes { get; set; } = 60;
+
+    /// <summary>A device is in the active pool when the tools reported inside this window (see ADR-0006).</summary>
+    public int ActivityWindowDays { get; set; } = 30;
     public int MaxCpuPercent { get; set; } = 25;
     public int MaxMemoryMegabytes { get; set; } = 1024;
     /// <summary>Server CPU above this value postpones collections.</summary>

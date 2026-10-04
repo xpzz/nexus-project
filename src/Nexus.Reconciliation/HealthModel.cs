@@ -18,6 +18,8 @@ public enum Needs
     Policies,
     Mam,
     Users,
+    Xdr,
+    Netskope,
     /// <summary>Not collected by any job yet.</summary>
     Uncollected,
 }
@@ -32,6 +34,8 @@ public sealed record Rule(string Id, string Title, Priority Priority, string Own
         Needs.Policies => sources.Policies,
         Needs.Mam => sources.Mam,
         Needs.Users => sources.Users,
+        Needs.Xdr => sources.Xdr,
+        Needs.Netskope => sources.Netskope,
         _ => false,
     };
 
@@ -42,6 +46,8 @@ public sealed record Rule(string Id, string Title, Priority Priority, string Own
         Needs.Policies => "Políticas do Intune ainda sem coleta (job intune.policies)",
         Needs.Mam => "Proteção de aplicativos (MAM) ainda sem coleta (job intune.mam)",
         Needs.Users => "Usuários do Entra ID ainda sem coleta (job entra.users)",
+        Needs.Xdr => "Cortex XDR não configurado ou sem coleta (nexusctl xdr-configure)",
+        Needs.Netskope => "Netskope não configurado ou sem coleta (nexusctl netskope-configure)",
         _ => MissingData ?? "Dado ainda não coletado",
     };
 
@@ -96,8 +102,8 @@ public static class Management
 
 public static class States
 {
-    public const string Healthy = "Saudável", Attention = "Atenção", Risk = "Risco", Stale = "Desatualizado";
-    public static readonly string[] All = [Healthy, Attention, Risk, Stale];
+    public const string Healthy = "Saudável", Attention = "Atenção", Risk = "Risco", Unconfirmed = "Não confirmado", Stale = "Desatualizado";
+    public static readonly string[] All = [Healthy, Attention, Risk, Unconfirmed, Stale];
 }
 
 /// <summary>Pure classification of a reconciled asset: group, management mode, issues, health score and state (SPEC v1 §4–6).</summary>
@@ -107,6 +113,8 @@ public static class HealthModel
     [
         new("byodnoprot", "BYOD sem proteção comprovada (sem MDM nem MAM)", Priority.Critical, "Segurança", "Exigir proteção de apps no Acesso Condicional", Needs.Mam),
         new("rooted", "Root ou jailbreak detectado", Priority.Critical, "Segurança", "Bloquear acesso e notificar o usuário", Needs.Intune),
+        new("noxdr", "Sem agente Cortex XDR (Windows corporativo ativo)", Priority.High, "Segurança", "Instalar o agente Cortex XDR", Needs.Xdr),
+        new("nonetskope", "Sem cliente Netskope (computador corporativo ativo)", Priority.Medium, "Segurança", "Instalar o cliente Netskope", Needs.Netskope),
         new("noclient", "Cliente SCCM ausente (Windows corporativo ativo)", Priority.High, "Operações de TI", "Reinstalar via client push"),
         new("nomdm", "Windows corporativo sem Intune MDM", Priority.High, "Endpoint", "Habilitar auto-enrollment da co-gestão"),
         new("nobitlocker", "BitLocker desligado", Priority.High, "Segurança", "Aplicar perfil de criptografia", Needs.Intune),
@@ -117,7 +125,8 @@ public static class HealthModel
         new("cleval", "Falha na avaliação do cliente SCCM", Priority.Medium, "Operações de TI", "Executar reparo do cliente", Needs.Uncollected, "Avaliação do cliente SCCM ainda não é coletada"),
         new("patch", "Atualizações atrasadas (> 60 dias)", Priority.Medium, "Endpoint", "Verificar anel e janela de manutenção", Needs.Uncollected, "Estado de atualizações ainda não é coletado"),
         new("nopolicy", "Conforme sem política atribuída", Priority.Medium, "Endpoint", "Revisar atribuição de grupos", Needs.Policies),
-        new("stalecomm", "SCCM mudo, Intune ativo", Priority.Medium, "Operações de TI", "Investigar saúde do cliente"),
+        new("xdroff", "Agente XDR sem conexão ou sem reportar", Priority.Medium, "Segurança", "Reiniciar o serviço do agente ou reinstalar", Needs.Xdr),
+        new("stalecomm", "Cliente SCCM mudo, outras ferramentas ativas", Priority.Medium, "Operações de TI", "Investigar saúde do cliente SCCM"),
         new("oslow", "Sistema abaixo do mínimo", Priority.Medium, "Endpoint", "Notificar o usuário para atualizar", Needs.Uncollected, "Versão mínima exigida ainda não é configurada"),
         new("userdis", "Equipamento de usuário desabilitado", Priority.Medium, "RH + TI", "Validar devolução ou baixa", Needs.Users),
         new("review", "Reconciliação a revisar", Priority.Medium, "Operações de TI", "Revisar na fila"),
@@ -205,7 +214,7 @@ public static class HealthModel
             issues.Add("eol");
         }
 
-        if (corporate && a.IsActive && a.Coverage == "Neither" && group is Groups.Computers or Groups.Servers)
+        if (corporate && SeenRecently(a) && a.Coverage == "Neither" && group is Groups.Computers or Groups.Servers)
         {
             issues.Add("nomgr");
         }
@@ -215,10 +224,27 @@ public static class HealthModel
             issues.Add("noncomp");
         }
 
-        if (a is { InSccm: true, SccmClient: true, IsActive: true } && a.SccmLastSeenAt is { } sccmSeen && a.IntuneLastSyncAt is { } sync
-            && sync - sccmSeen > TimeSpan.FromDays(23))
+        // The SCCM client is silent while a tool that runs on the device (Intune, XDR, Netskope, protected apps) saw it much later.
+        var otherStrong = new[] { a.IntuneLastSyncAt, a.XdrLastSeenAt, a.NetskopeLastSeenAt, a.MamLastSyncAt }.Max();
+        if (a is { InSccm: true, SccmClient: true, IsActive: true } && a.SccmLastSeenAt is { } sccmSeen && otherStrong is { } latest
+            && latest - sccmSeen > TimeSpan.FromDays(23))
         {
             issues.Add("stalecomm");
+        }
+
+        if (sources.Netskope && a is { IsActive: true, InNetskope: false, Ownership: "Corporate" } && group == Groups.Computers && a.Platform is "WindowsClient" or "macOS" && (a.InSccm || a.InIntune || a.InAd))
+        {
+            issues.Add("nonetskope");
+        }
+
+        if (sources.Xdr && corporate && a.IsActive && windows && group is Groups.Computers or Groups.Servers && !a.InXdr && (a.InSccm || a.InIntune || a.InAd))
+        {
+            issues.Add("noxdr");
+        }
+
+        if (sources.Xdr && a is { InXdr: true, IsActive: true } && XdrOff(a))
+        {
+            issues.Add("xdroff");
         }
 
         if (sources.Intune && a is { IsActive: true, JailBroken: true })
@@ -259,7 +285,7 @@ public static class HealthModel
             issues.Add("review");
         }
 
-        if (!a.IsActive)
+        if (!a.IsActive && a.ActivityClass != ActivityClasses.Unconfirmed)
         {
             issues.Add("stale");
         }
@@ -267,13 +293,31 @@ public static class HealthModel
         return issues;
     }
 
+    /// <summary>
+    /// The agent is not connected, or the other tools saw the device more than a week after the agent last did
+    /// (the XDR last_seen is what separates a live agent from a stale record).
+    /// </summary>
+    public static bool XdrOff(Asset a)
+    {
+        if (!Reconciler.IsXdrConnected(a.XdrStatus))
+        {
+            return true;
+        }
+
+        var others = new[] { a.SccmLastSeenAt, a.IntuneLastSyncAt, a.EntraLastSignInAt, a.AdLastLogonAt }.Max();
+        return a.XdrLastSeenAt is { } seen && others is { } latest && latest - seen > TimeSpan.FromDays(7);
+    }
+
+    /// <summary>Any tool reported inside the window, even when the evidence is only identity-side (the gap rules still want to see those).</summary>
+    public static bool SeenRecently(Asset a) => a.IsActive || a.ActivityClass == ActivityClasses.Unconfirmed;
+
     public static int Score(IEnumerable<string> issues) => Math.Max(0, 100 - issues.Select(RuleOf).Where(r => r.Id != "stale").Sum(r => r.Weight));
 
     public static string StateOf(Asset a, IReadOnlyCollection<string> issues)
     {
         if (!a.IsActive)
         {
-            return States.Stale;
+            return a.ActivityClass == ActivityClasses.Unconfirmed ? States.Unconfirmed : States.Stale;
         }
 
         var worst = issues.Where(i => i != "stale").Select(i => RuleOf(i).Priority).DefaultIfEmpty(Priority.Low).Min();

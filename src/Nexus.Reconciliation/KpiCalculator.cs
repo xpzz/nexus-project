@@ -15,9 +15,9 @@ public sealed record Kpi(string Key, string Label, string Definition, KpiState S
     public double? Percent => State == KpiState.Available && Denominator is > 0 ? Math.Round(100.0 * Numerator!.Value / Denominator.Value, 1) : null;
 }
 
-public sealed record SourceAvailability(bool Sccm, bool Intune, bool Entra, bool ActiveDirectory, bool Policies = false, bool Mam = false, bool Users = false)
+public sealed record SourceAvailability(bool Sccm, bool Intune, bool Entra, bool ActiveDirectory, bool Policies = false, bool Mam = false, bool Users = false, bool Xdr = false, bool Netskope = false)
 {
-    public static SourceAvailability All { get; } = new(true, true, true, true, true, true, true);
+    public static SourceAvailability All { get; } = new(true, true, true, true, true, true, true, true, true);
 }
 
 public sealed record InventoryCounts(int Total, int Active, int Stale, int OnlySccm, int OnlyIntune, int Both, int Neither,

@@ -75,6 +75,18 @@ namespace Nexus.Data.Migrations.Postgres
                     b.Property<Guid>("Id")
                         .HasColumnType("uuid");
 
+                    b.Property<int>("ActiveSourceCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ActiveSources")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("ActivityClass")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
                     b.Property<bool>("AdByNameOnly")
                         .HasColumnType("boolean");
 
@@ -143,7 +155,13 @@ namespace Nexus.Data.Migrations.Postgres
                     b.Property<bool>("InIntune")
                         .HasColumnType("boolean");
 
+                    b.Property<bool>("InNetskope")
+                        .HasColumnType("boolean");
+
                     b.Property<bool>("InSccm")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("InXdr")
                         .HasColumnType("boolean");
 
                     b.Property<string>("IntuneChannel")
@@ -168,6 +186,9 @@ namespace Nexus.Data.Migrations.Postgres
                         .HasColumnType("boolean");
 
                     b.Property<DateTimeOffset?>("LastActivityAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("LastStrongActivityAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<int>("MamAppCount")
@@ -198,6 +219,20 @@ namespace Nexus.Data.Migrations.Postgres
 
                     b.Property<bool>("NeedsReview")
                         .HasColumnType("boolean");
+
+                    b.Property<bool>("NetskopeByNameOnly")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTimeOffset?>("NetskopeLastSeenAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("NetskopeStatus")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("NetskopeVersion")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
 
                     b.Property<string>("OperatingSystem")
                         .HasColumnType("text");
@@ -257,7 +292,31 @@ namespace Nexus.Data.Migrations.Postgres
                     b.Property<bool?>("UserEnabled")
                         .HasColumnType("boolean");
 
+                    b.Property<string>("XdrAgentType")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<bool>("XdrByNameOnly")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("XdrIp")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<DateTimeOffset?>("XdrLastSeenAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("XdrOperationalStatus")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("XdrStatus")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.HasKey("Id");
+
+                    b.HasIndex("ActivityClass");
 
                     b.HasIndex("Coverage");
 
@@ -856,6 +915,72 @@ namespace Nexus.Data.Migrations.Postgres
                     b.ToTable("mam_registrations", (string)null);
                 });
 
+            modelBuilder.Entity("Nexus.Data.Entities.NetskopeClientRecord", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("ClientVersion")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset>("CollectedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DeviceId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("HostName")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<DateTimeOffset?>("InstalledAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("LastEventAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ManagementId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("Manufacturer")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("Model")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("OperatingSystem")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("OsVersion")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Serial")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("Status")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Users")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("HostName");
+
+                    b.ToTable("netskope_clients", (string)null);
+                });
+
             modelBuilder.Entity("Nexus.Data.Entities.ReviewItem", b =>
                 {
                     b.Property<long>("Id")
@@ -1060,6 +1185,49 @@ namespace Nexus.Data.Migrations.Postgres
                     b.HasIndex("Status", "Id");
 
                     b.ToTable("worker_commands", (string)null);
+                });
+
+            modelBuilder.Entity("Nexus.Data.Entities.XdrEndpointRecord", b =>
+                {
+                    b.Property<string>("AgentId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("AgentStatus")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("AgentType")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset>("CollectedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("HostName")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("Ip")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<DateTimeOffset?>("LastSeenAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("OperationalStatus")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Users")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.HasKey("AgentId");
+
+                    b.HasIndex("HostName");
+
+                    b.ToTable("xdr_endpoints", (string)null);
                 });
 #pragma warning restore 612, 618
         }

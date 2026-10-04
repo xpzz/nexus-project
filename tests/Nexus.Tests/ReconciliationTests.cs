@@ -317,7 +317,7 @@ public class InventoryPipelineTests : IDisposable
 
         Assert.True(assets.Count > 400);
         Assert.Equal(links.Select(l => (l.Source, l.SourceKey)).Distinct().Count(), links.Count); // every record is in exactly one asset
-        Assert.Equal(_estate.SccmSystems.Count + _estate.IntuneDevices.Count + _estate.EntraDevices.Count + _estate.AdComputers.Count, links.Count);
+        Assert.Equal(_estate.SccmSystems.Count + _estate.IntuneDevices.Count + _estate.EntraDevices.Count + _estate.AdComputers.Count + _estate.XdrEndpoints.Count + _estate.NetskopeClients.Count, links.Count);
 
         // Renamed device + obsolete record collapse into one asset.
         Assert.Single(assets, a => a.Name.EndsWith("-NOVO"));

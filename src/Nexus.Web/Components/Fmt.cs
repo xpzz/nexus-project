@@ -31,7 +31,7 @@ public static class Fmt
         return days == 1 ? "há 1 dia" : $"há {days} dias";
     }
 
-    public static string Inv(string? grupo = null, string? gestao = null, string? estado = null, string? pendencia = null, string? funil = null, string? propriedade = null, string? q = null, string? depto = null)
+    public static string Inv(string? grupo = null, string? gestao = null, string? estado = null, string? pendencia = null, string? funil = null, string? propriedade = null, string? q = null, string? depto = null, string? atividade = null)
     {
         var parts = new List<string>();
         void Add(string key, string? value)
@@ -42,7 +42,7 @@ public static class Fmt
             }
         }
 
-        Add("grupo", grupo); Add("gestao", gestao); Add("estado", estado); Add("pendencia", pendencia); Add("funil", funil); Add("propriedade", propriedade); Add("q", q); Add("depto", depto);
+        Add("grupo", grupo); Add("gestao", gestao); Add("estado", estado); Add("pendencia", pendencia); Add("funil", funil); Add("propriedade", propriedade); Add("q", q); Add("depto", depto); Add("atividade", atividade);
         return parts.Count == 0 ? "/inventario" : "/inventario?" + string.Join("&", parts);
     }
 
@@ -56,7 +56,7 @@ public static class Fmt
 
     public static string PriorityCss(Priority p) => p switch { Priority.Critical or Priority.High => "b", Priority.Medium => "w", _ => "m" };
 
-    public static string StateCss(string state) => state switch { States.Healthy => "ok", States.Attention => "w", States.Risk => "b", _ => "m" };
+    public static string StateCss(string state) => state switch { States.Healthy => "ok", States.Attention => "w", States.Risk => "b", States.Unconfirmed => "w", _ => "m" };
 
     public static string StateSeg(string state) => state switch { States.Healthy => "s-ok", States.Attention => "s-warn", States.Risk => "s-bad", _ => "c-mute" };
 
@@ -89,6 +89,8 @@ public static class Fmt
     {
         "sccm.devices" => "SCCM",
         "ad.computers" => "Active Directory",
+        "xdr.endpoints" => "Cortex XDR",
+        "netskope.clients" => "Netskope",
         "intune.mam" => "Intune · proteção de apps (MAM)",
         "intune.policies" => "Intune · políticas e perfis",
         "entra.users" => "Entra ID · usuários",
@@ -105,6 +107,9 @@ public static class Fmt
         "CloneSuspect" => "Possível clone de máquina virtual",
         "AmbiguousName" => "Nome ambíguo no AD",
         "MultipleIntuneRecords" => "Reenrollment ou registro antigo no Intune",
+        "MultipleXdrRecords" => "Mais de um agente do XDR com o mesmo nome",
+        "MultipleNetskopeRecords" => "Mais de um cliente Netskope com o mesmo nome",
+        "MamAmbiguous" => "Proteção de apps sem dispositivo único",
         _ => kind,
     };
 }

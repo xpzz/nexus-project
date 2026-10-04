@@ -31,6 +31,8 @@
     <ProjectReference Include="..\..\src\Nexus.Cli\Nexus.Cli.csproj" />
     <ProjectReference Include="..\..\src\Nexus.Web\Nexus.Web.csproj" />
     <ProjectReference Include="..\..\src\Nexus.Collectors.Graph\Nexus.Collectors.Graph.csproj" />
+    <ProjectReference Include="..\..\src\Nexus.Collectors.Xdr\Nexus.Collectors.Xdr.csproj" />
+    <ProjectReference Include="..\..\src\Nexus.Collectors.Netskope\Nexus.Collectors.Netskope.csproj" />
     <ProjectReference Include="..\..\src\Nexus.Reconciliation\Nexus.Reconciliation.csproj" />
   </ItemGroup>
 

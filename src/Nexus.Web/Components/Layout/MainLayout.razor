@@ -19,6 +19,7 @@
             <h6>Operação</h6>
             <NavLink href="/operacao">SCCM e Intune</NavLink>
             <NavLink href="/intune">Políticas e MAM<i>@_snapshot.Intune.Policies</i></NavLink>
+            <NavLink href="/atividade">Pool ativo<i>@_snapshot.Overview().Pool.Pool</i></NavLink>
             <NavLink href="/pendencias">Pendências<i>@_snapshot.Issues.WithPending</i></NavLink>
             <h6>Configuração</h6>
             <NavLink href="/assistente">Assistente</NavLink>
@@ -73,6 +74,8 @@
         ("Active Directory", ["ad.computers"]),
         ("Intune", ["intune.devices", "intune.policies", "intune.mam"]),
         ("Entra ID", ["entra.devices", "entra.users"]),
+        ("Cortex XDR", ["xdr.endpoints"]),
+        ("Netskope", ["netskope.clients"]),
     ];
 
     /// <summary>One chip per source: the worst of its collections decides the color; the oldest success decides the age.</summary>
@@ -82,6 +85,11 @@
         foreach (var (name, jobNames) in SourceGroups)
         {
             var jobs = _snapshot.Jobs.Where(j => jobNames.Contains(j.Name)).ToList();
+            if (name is "Cortex XDR" or "Netskope" && jobs.Count == 0)
+            {
+                continue; // optional source, not configured: no chip
+            }
+
             if (jobs.Count == 0 || jobs.All(j => j.LastSuccessAt is null))
             {
                 yield return (name, "sem coleta", "m", jobs.FirstOrDefault()?.Error ?? "Ainda não coletou.");

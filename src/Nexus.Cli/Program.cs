@@ -8,6 +8,8 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Nexus.Cli;
 using Nexus.Collectors.Sccm;
+using Nexus.Collectors.Netskope;
+using Nexus.Collectors.Xdr;
 using Nexus.Core;
 using Nexus.Core.Configuration;
 using Nexus.Core.Errors;
@@ -141,6 +143,230 @@ sccmGrant.SetAction(async (parse, ct) =>
 });
 root.Subcommands.Add(sccmGrant);
 
+// xdr-configure / xdr-grant-script / xdr-grant
+var xdrServerOption = new Option<string>("--server") { Description = "Servidor SQL onde a rotina do Cortex XDR grava os endpoints." };
+var xdrDatabaseOption = new Option<string>("--database") { Description = "Banco da tabela (padrão cortex_db)." };
+var xdrTableOption = new Option<string>("--table") { Description = "Tabela, opcionalmente esquema.tabela (padrão API_Cortex_getAllEndpoints)." };
+var xdrTrustOption = new Option<bool>("--trust-server-certificate") { Description = "Aceita o certificado do servidor SQL sem validar a cadeia." };
+var xdrOffOption = new Option<bool>("--off") { Description = "Desliga a coleta do Cortex XDR." };
+var xdrConfigure = new Command("xdr-configure", "Configura a leitura da tabela de endpoints do Cortex XDR (o Nexus não guarda a chave da API do XDR).") { xdrServerOption, xdrDatabaseOption, xdrTableOption, xdrTrustOption, xdrOffOption };
+xdrConfigure.SetAction(parse =>
+{
+    if (!RequireConfig(out var settings)) return 3;
+    if (parse.GetValue(xdrOffOption))
+    {
+        settings.Xdr.Mode = SourceMode.Disabled;
+        store.Save(settings);
+        Console.WriteLine("Coleta do Cortex XDR desligada.");
+        return 0;
+    }
+
+    var server = parse.GetValue(xdrServerOption) ?? settings.Xdr.SqlServer;
+    if (string.IsNullOrWhiteSpace(server))
+    {
+        Console.Error.WriteLine("Informe o servidor SQL com --server.");
+        return 3;
+    }
+
+    try
+    {
+        settings.Xdr.SqlServer = server;
+        settings.Xdr.Database = XdrIdentifiers.Database(parse.GetValue(xdrDatabaseOption) ?? settings.Xdr.Database);
+        var table = parse.GetValue(xdrTableOption) ?? settings.Xdr.Table;
+        XdrIdentifiers.QuotedTable(table);
+        settings.Xdr.Table = table;
+    }
+    catch (ArgumentException ex)
+    {
+        Console.Error.WriteLine(ex.Message);
+        return 3;
+    }
+
+    settings.Xdr.TrustServerCertificate = parse.GetValue(xdrTrustOption) || settings.Xdr.TrustServerCertificate;
+    settings.Xdr.Mode = settings.DemoMode ? SourceMode.Simulated : SourceMode.Live;
+    store.Save(settings);
+    Console.WriteLine($"Cortex XDR: {settings.Xdr.SqlServer} / {settings.Xdr.Database} / {settings.Xdr.Table}. A coleta roda a cada {settings.Collection.XdrIntervalMinutes} minutos; use 'nexusctl collect xdr' para testar agora.");
+    return 0;
+});
+root.Subcommands.Add(xdrConfigure);
+
+var xdrGrantScript = new Command("xdr-grant-script", "Gera o T-SQL de leitura da tabela do XDR para o DBA (papel dedicado, reversível).") { sccmAccountOption, revokeOption, outputOption };
+xdrGrantScript.SetAction(async (parse, ct) =>
+{
+    if (!RequireConfig(out var settings)) return 3;
+    var account = parse.GetValue(sccmAccountOption)!;
+    var script = parse.GetValue(revokeOption)
+        ? XdrGrantScript.Revoke(settings.Xdr.Database, account)
+        : XdrGrantScript.Grant(settings.Xdr.Database, settings.Xdr.Table, account);
+    await Write(parse.GetValue(outputOption), script, ct);
+    return 0;
+});
+root.Subcommands.Add(xdrGrantScript);
+
+var xdrGrant = new Command("xdr-grant", "Aplica a concessão de leitura da tabela do XDR com a identidade de quem executa.") { sccmAccountOption };
+xdrGrant.SetAction(async (parse, ct) =>
+{
+    if (!RequireConfig(out var settings)) return 3;
+    var script = XdrGrantScript.Grant(settings.Xdr.Database, settings.Xdr.Table, parse.GetValue(sccmAccountOption)!);
+    var connection = new SqlConnectionStringBuilder(XdrConnectionFactory.BuildConnectionString(settings.Xdr))
+    {
+        InitialCatalog = "master",
+        ApplicationIntent = ApplicationIntent.ReadWrite,
+    }.ConnectionString;
+    return await ApplyBatches(connection, script, ct);
+});
+root.Subcommands.Add(xdrGrant);
+
+// network-proxy
+var proxyUrlOption = new Option<string>("--url") { Description = "Proxy de saída, ex.: http://proxy.azul.corp:8080." };
+var proxyOffOption = new Option<bool>("--off") { Description = "Remove o proxy (conexão direta)." };
+var proxyAnonOption = new Option<bool>("--no-credentials") { Description = "Não autenticar no proxy com a conta do serviço." };
+var networkProxy = new Command("network-proxy", "Define o proxy de saída usado nas chamadas ao Microsoft Graph e ao Netskope.") { proxyUrlOption, proxyOffOption, proxyAnonOption };
+networkProxy.SetAction(parse =>
+{
+    if (!RequireConfig(out var settings)) return 3;
+    if (parse.GetValue(proxyOffOption))
+    {
+        settings.Network.ProxyUrl = "";
+    }
+    else if (parse.GetValue(proxyUrlOption) is { Length: > 0 } url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
+        {
+            Console.Error.WriteLine("Informe o proxy como URL completa, por exemplo http://proxy.azul.corp:8080.");
+            return 3;
+        }
+
+        settings.Network.ProxyUrl = url;
+        settings.Network.ProxyUseDefaultCredentials = !parse.GetValue(proxyAnonOption);
+    }
+
+    store.Save(settings);
+    Console.WriteLine(settings.Network.ProxyUrl.Length == 0 ? "Conexão direta (sem proxy)." : $"Proxy: {settings.Network.ProxyUrl} ({(settings.Network.ProxyUseDefaultCredentials ? "com a conta do serviço" : "sem credenciais")}). Vale a partir da próxima coleta.");
+    return 0;
+});
+root.Subcommands.Add(networkProxy);
+
+// netskope-configure / netskope-test
+var nsTenantOption = new Option<string>("--tenant") { Description = "Tenant do Netskope, ex.: azul.goskope.com." };
+var nsPathOption = new Option<string>("--path") { Description = "Caminho do endpoint 'Get Client Data' (padrão /api/v1/clients)." };
+var nsPlacementOption = new Option<string>("--token-placement") { Description = "query (API v1: token=...) ou header (API v2: Netskope-Api-Token)." };
+var nsPageOption = new Option<int>("--page-size") { Description = "Registros por página (padrão 500).", DefaultValueFactory = _ => 0 };
+var nsOffsetOption = new Option<string>("--offset-parameter") { Description = "Nome do parâmetro de deslocamento (skip ou offset)." };
+var nsOffOption = new Option<bool>("--off") { Description = "Desliga a coleta do Netskope." };
+var nsKeepTokenOption = new Option<bool>("--keep-token") { Description = "Mantém o token já guardado, sem perguntar." };
+var netskopeConfigure = new Command("netskope-configure", "Configura a coleta dos clientes (agentes) do Netskope. O token é guardado protegido (DPAPI), nunca em texto.") { nsTenantOption, nsPathOption, nsPlacementOption, nsPageOption, nsOffsetOption, nsOffOption, nsKeepTokenOption };
+netskopeConfigure.SetAction(parse =>
+{
+    if (!RequireConfig(out var settings)) return 3;
+    var ns = settings.Netskope;
+    if (parse.GetValue(nsOffOption))
+    {
+        ns.Mode = SourceMode.Disabled;
+        store.Save(settings);
+        Console.WriteLine("Coleta do Netskope desligada.");
+        return 0;
+    }
+
+    ns.Tenant = (parse.GetValue(nsTenantOption) ?? ns.Tenant).Trim().Replace("https://", "", StringComparison.OrdinalIgnoreCase).TrimEnd('/');
+    if (string.IsNullOrWhiteSpace(ns.Tenant))
+    {
+        Console.Error.WriteLine("Informe o tenant com --tenant (ex.: azul.goskope.com).");
+        return 3;
+    }
+
+    if (parse.GetValue(nsPathOption) is { Length: > 0 } path) ns.ClientsPath = path.StartsWith('/') ? path : "/" + path;
+    if (parse.GetValue(nsPlacementOption) is { Length: > 0 } placement)
+    {
+        if (placement is not ("query" or "header"))
+        {
+            Console.Error.WriteLine("--token-placement deve ser 'query' ou 'header'.");
+            return 3;
+        }
+
+        ns.TokenPlacement = placement;
+    }
+
+    if (parse.GetValue(nsPageOption) is > 0 and var page) ns.PageSize = Math.Clamp(page, 10, 5000);
+    if (parse.GetValue(nsOffsetOption) is { Length: > 0 } offset) ns.OffsetParameter = offset;
+
+    if (!settings.DemoMode && (!parse.GetValue(nsKeepTokenOption) || string.IsNullOrEmpty(ns.ProtectedToken)))
+    {
+        var token = Environment.GetEnvironmentVariable(NetskopeToken.EnvironmentVariable) is { Length: > 0 } fromEnvironment ? fromEnvironment : ReadSecret("Token da API do Netskope (não aparece na tela): ");
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            Console.Error.WriteLine("Nenhum token informado.");
+            return 3;
+        }
+
+        try
+        {
+            ns.ProtectedToken = new DpapiSecretProtector().Protect(token.Trim());
+        }
+        catch (PlatformNotSupportedException ex)
+        {
+            Console.Error.WriteLine(ex.Message + " Em desenvolvimento use a variável NEXUS_NETSKOPE_TOKEN.");
+            return 3;
+        }
+    }
+
+    ns.Mode = settings.DemoMode ? SourceMode.Simulated : SourceMode.Live;
+    store.Save(settings);
+    Console.WriteLine($"Netskope: https://{ns.Tenant}{ns.ClientsPath} (token em {ns.TokenPlacement}, {ns.PageSize} por página). Teste com 'nexusctl netskope-test' e colete com 'nexusctl collect netskope --wait'.");
+    return 0;
+});
+root.Subcommands.Add(netskopeConfigure);
+
+var netskopeTest = new Command("netskope-test", "Lê uma página de clientes do Netskope e mostra a estrutura (nomes dos campos, sem valores sensíveis) para conferir o caminho e o mapeamento.");
+netskopeTest.SetAction(async (parse, ct) =>
+{
+    if (!RequireConfig(out var settings)) return 3;
+    var ns = settings.Netskope;
+    string? token;
+    try
+    {
+        token = NetskopeToken.Resolve(ns);
+    }
+    catch (Exception ex) when (ex is PlatformNotSupportedException or System.Security.Cryptography.CryptographicException)
+    {
+        Console.Error.WriteLine("Não foi possível ler o token guardado: " + ex.Message);
+        return 1;
+    }
+
+    if (string.IsNullOrWhiteSpace(ns.Tenant) || token is null)
+    {
+        Console.Error.WriteLine("Netskope não configurado. Rode: nexusctl netskope-configure --tenant <tenant>.");
+        return 3;
+    }
+
+    Console.WriteLine("Endereço: " + NetskopeHttpReader.BuildUrl(ns, 0, withToken: false) + $"  (token em {ns.TokenPlacement})");
+    using var http = NetworkHttp.Create(settings.Network, TimeSpan.FromSeconds(ns.TimeoutSeconds));
+    try
+    {
+        using var doc = await new NetskopeHttpReader(http, ns, token).ReadRawPageAsync(ct);
+        var root = doc.RootElement;
+        Console.WriteLine("Resposta: " + root.ValueKind + (root.ValueKind == System.Text.Json.JsonValueKind.Object ? "; campos: " + string.Join(", ", root.EnumerateObject().Select(p => p.Name)) : ""));
+        var records = NetskopeParser.Records(root).ToList();
+        Console.WriteLine($"Registros na página: {records.Count}");
+        if (records.Count > 0)
+        {
+            Console.WriteLine("Campos do primeiro registro:");
+            foreach (var path in FieldPaths(records[0], "", 0)) Console.WriteLine("  " + path);
+            var parsed = records.Select(NetskopeParser.Parse).ToList();
+            Console.WriteLine($"Reconhecidos pelo Nexus: {parsed.Count(p => p is not null)} de {records.Count}; com nome de host: {parsed.Count(p => p?.HostName is not null)}; com data do último evento: {parsed.Count(p => p?.LastEventAt is not null)}; com número de série: {parsed.Count(p => p?.Serial is not null)}.");
+            foreach (var p in parsed.Where(p => p is not null).Take(3)) Console.WriteLine($"  {p!.HostName ?? "(sem nome)"} · {p.Status ?? "—"} · último evento {p.LastEventAt?.ToLocalTime():dd/MM/yyyy HH:mm}");
+        }
+
+        return 0;
+    }
+    catch (NetskopeException ex)
+    {
+        Console.Error.WriteLine(ex.Error);
+        return 1;
+    }
+});
+root.Subcommands.Add(netskopeTest);
+
 // test
 var timeoutOption = new Option<int>("--timeout") { Description = "Segundos de espera pelo Worker.", DefaultValueFactory = _ => 120 };
 var jsonOption = new Option<bool>("--json") { Description = "Saída em JSON." };
@@ -179,13 +405,13 @@ test.SetAction(async (parse, ct) =>
 root.Subcommands.Add(test);
 
 // collect [all|sccm|ad]
-var sourceArgument = new Argument<string>("fonte") { Description = "all, sccm, ad, intune, entra ou inventory.", DefaultValueFactory = _ => "all" };
+var sourceArgument = new Argument<string>("fonte") { Description = "all, sccm, ad, intune, entra, xdr, netskope ou inventory.", DefaultValueFactory = _ => "all" };
 var waitOption = new Option<bool>("--wait") { Description = "Aguarda o fim da coleta." };
 var collect = new Command("collect", "Pede ao Worker uma coleta agora (respeita pausas e limites).") { sourceArgument, waitOption, timeoutOption };
 collect.SetAction(async (parse, ct) =>
 {
     if (!RequireConfig(out var settings)) return 3;
-    var source = parse.GetValue(sourceArgument) switch { "sccm" => "sccm", "ad" => "ad", "intune" => "intune", "entra" => "entra", "inventory" => "inventory", _ => "all" };
+    var source = parse.GetValue(sourceArgument) switch { "sccm" => "sccm", "ad" => "ad", "intune" => "intune", "entra" => "entra", "xdr" => "xdr", "netskope" => "netskope", "inventory" => "inventory", _ => "all" };
     var command = await Enqueue(settings, CommandTypes.CollectNow, source, ct);
     if (!parse.GetValue(waitOption))
     {
@@ -373,6 +599,53 @@ async Task<WorkerCommand> Enqueue(NexusSettings settings, string type, string? a
 {
     await using var db = NexusDatabase.Create(settings.Database);
     return await CommandQueue.EnqueueAsync(db, type, argument, actor, ct);
+}
+
+static string ReadSecret(string prompt)
+{
+    Console.Error.Write(prompt);
+    if (Console.IsInputRedirected)
+    {
+        return Console.ReadLine() ?? "";
+    }
+
+    var buffer = new System.Text.StringBuilder();
+    while (Console.ReadKey(intercept: true) is var key && key.Key != ConsoleKey.Enter)
+    {
+        if (key.Key == ConsoleKey.Backspace)
+        {
+            if (buffer.Length > 0) buffer.Length--;
+        }
+        else if (!char.IsControl(key.KeyChar))
+        {
+            buffer.Append(key.KeyChar);
+        }
+    }
+
+    Console.Error.WriteLine();
+    return buffer.ToString();
+}
+
+static IEnumerable<string> FieldPaths(System.Text.Json.JsonElement element, string prefix, int depth)
+{
+    if (element.ValueKind != System.Text.Json.JsonValueKind.Object || depth > 2)
+    {
+        yield break;
+    }
+
+    foreach (var property in element.EnumerateObject())
+    {
+        var path = prefix + property.Name;
+        yield return $"{path} ({property.Value.ValueKind})";
+        if (property.Value.ValueKind == System.Text.Json.JsonValueKind.Object)
+        {
+            foreach (var child in FieldPaths(property.Value, path + ".", depth + 1)) yield return child;
+        }
+        else if (property.Value.ValueKind == System.Text.Json.JsonValueKind.Array && property.Value.GetArrayLength() > 0)
+        {
+            foreach (var child in FieldPaths(property.Value[0], path + "[].", depth + 1)) yield return child;
+        }
+    }
 }
 
 static async Task<int> ApplyBatches(string connectionString, string script, CancellationToken ct)

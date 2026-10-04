@@ -1,6 +1,8 @@
 using Microsoft.SqlServer.TransactSql.ScriptDom;
 using Nexus.Cli;
 using Nexus.Collectors.Sccm;
+using Nexus.Collectors.Xdr;
+using Nexus.Core.Configuration;
 using Nexus.Simulation;
 
 namespace Nexus.Tests;
@@ -22,6 +24,9 @@ public class TSqlSyntaxTests
         yield return ["SCCM read query (extended)", SqlSccmReader.ExtendedQuery];
         yield return ["SCCM read query (hardware)", SqlSccmReader.HardwareQuery];
         yield return ["SCCM software query", SqlSccmReader.SoftwareQuery];
+        yield return ["XDR read query", SqlXdrReader.BuildQuery(new XdrSettings { Table = "dbo.API_Cortex_getAllEndpoints" })];
+        yield return ["XDR grant", XdrGrantScript.Grant("cortex_db", "API_Cortex_getAllEndpoints", account)];
+        yield return ["XDR revoke", XdrGrantScript.Revoke("cortex_db", account)];
         yield return ["SCCM simulator", SccmSimulatorScript.Create(new SyntheticEstate(20))];
     }
 

@@ -20,6 +20,14 @@
         </section>
     </div>
 
+    @if (_snapshot.Sources.Xdr)
+    {
+        <section class="card">
+            <h3>Funil do EDR (Cortex XDR)</h3><p class="sub">Windows corporativo ativo até um agente conectado e reportando.</p>
+            <div class="funnel">@foreach (var s in _xdr) { @Step(s, _xdr[0].Count) }</div>
+        </section>
+    }
+
     <section class="card">
         <h3>Saúde das fontes de dados</h3><p class="sub">Uma falha preserva o último resultado válido. A atualidade vem de quando o dispositivo reportou.</p>
         <div class="tw"><table style="min-width:700px"><thead><tr><th>Fonte</th><th>Situação</th><th>Registros</th><th>Último sucesso</th><th>Próxima</th><th>Detalhe</th></tr></thead><tbody>
@@ -38,6 +46,7 @@
     private InventorySnapshot? _snapshot;
     private List<Stage> _sccm = [];
     private List<Stage> _intune = [];
+    private List<Stage> _xdr = [];
 
     protected override async Task OnInitializedAsync()
     {
@@ -54,6 +63,18 @@
             new("Reportando em 30 dias", reporting.Count, "sccm-silencioso"),
             new("Avaliação saudável", healthy.Count, "sccm-nao-saudavel"),
             new("Patch em até 60 dias", 0, null, false, "Aguardando coleta"),
+        ];
+
+        var win = _snapshot.Views.Where(v => v.Group is Groups.Computers or Groups.Servers && v.Asset is { Ownership: "Corporate", IsActive: true, Platform: "WindowsClient" or "WindowsServer" }).ToList();
+        var withAgent = win.Where(v => v.Asset.InXdr).ToList();
+        var connected = withAgent.Where(v => Reconciler.IsXdrConnected(v.Asset.XdrStatus)).ToList();
+        var xdrReporting = connected.Where(v => v.Asset.XdrLastSeenAt is { } t && now - t <= TimeSpan.FromDays(7)).ToList();
+        _xdr =
+        [
+            new("Windows corporativo ativo", win.Count, null),
+            new("Com agente XDR", withAgent.Count, "xdr-sem-agente"),
+            new("Agente conectado", connected.Count, "xdr-desconectado"),
+            new("Reportando em 7 dias", xdrReporting.Count, "xdr-silencioso"),
         ];
 
         var corp = _snapshot.Views.Where(v => v.Group is Groups.Computers or Groups.CorpMobile).ToList();
@@ -91,7 +112,7 @@
 
     private int StagePrev(Stage s)
     {
-        var list = _sccm.Contains(s) ? _sccm : _intune;
+        var list = _sccm.Contains(s) ? _sccm : _xdr.Contains(s) ? _xdr : _intune;
         var i = list.IndexOf(s);
         return i <= 0 ? s.Count : list.Take(i).Last(x => x.Available).Count;
     }
