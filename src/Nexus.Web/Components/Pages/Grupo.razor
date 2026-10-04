@@ -1,0 +1,137 @@
+@page "/parque/{Slug}"
+@rendermode InteractiveServer
+@inject InventorySnapshotService Inventory
+@inject NavigationManager Nav
+
+<PageTitle>@_title · Azul Nexus</PageTitle>
+
+@if (_snapshot is null)
+{
+    <p class="hint">Carregando…</p>
+}
+else if (_group is null && Slug != "sem-gestao")
+{
+    <div class="ph"><div><h1>Grupo não encontrado</h1></div></div>
+}
+else
+{
+    var active = _views.Where(v => v.Asset.IsActive).ToList();
+    var mdm = active.Where(v => v.Asset.IntuneChannel == "Mdm").ToList();
+    double? score = active.Count == 0 ? null : Math.Round(active.Average(v => v.Score), 0);
+    var expected = active.Count(v => v.MeetsExpected);
+    var gp = _group ?? "sem-gestao";
+    var kpis = new List<KpiCard>
+    {
+        new("total", "Total", KpiState.Available, _views.Count, _views.Count, null, false, $"{active.Count} ativos", Fmt.Inv(grupo: gp)),
+        new("indice", "Índice de saúde", active.Count == 0 ? KpiState.NoData : KpiState.Available, (int?)score, 100, 85, false, "média dos dispositivos ativos, meta 85"),
+        new("esperada", "Cobertura esperada do grupo", active.Count == 0 || _group is Groups.External or Groups.ByodComputers ? KpiState.NoData : KpiState.Available, expected, active.Count, 95, false, _group is null ? "" : Groups.Expected(_group)),
+        new("conf", "Conformidade Intune", mdm.Count == 0 ? KpiState.NoData : KpiState.Available, mdm.Count(v => string.Equals(v.Asset.ComplianceState, "compliant", StringComparison.OrdinalIgnoreCase)), mdm.Count, 95, false, "MDM ativos conformes"),
+        new("risco", "Em risco", KpiState.Available, active.Count(v => v.State == States.Risk), active.Count, null, true, "pendência crítica ou alta", Fmt.Inv(grupo: gp, estado: States.Risk)),
+        new("stale", "Desatualizados", KpiState.Available, _views.Count - active.Count, _views.Count, null, true, "sem contato no limite de 30 dias", Fmt.Inv(grupo: gp, estado: States.Stale)),
+    };
+
+    <div class="ph">
+        <div><h1>@_title</h1><p>@_subtitle</p></div>
+        <a class="button" href="@Fmt.Inv(grupo: gp)">Abrir no inventário</a>
+    </div>
+
+    <div class="grid g3">
+        @foreach (var k in kpis) { <KpiCardView Card="k" /> }
+    </div>
+
+    <div class="grid g2">
+        <section class="card">
+            <h3>Modo de gestão</h3><p class="sub">Cada fatia abre a lista.</p>
+            <Bar Label="Modo de gestão" Segments="@(Management.All.Where(m => m != Management.OnlyMam).Select(m => new Seg(m, _views.Count(v => v.Management == m), Fmt.ManagementSeg(m), Fmt.Inv(grupo: gp, gestao: m))).ToList())" />
+            <p class="sub" style="margin:14px 0 6px">Estado</p>
+            <Bar Label="Estado" Segments="@(States.All.Select(s => new Seg(s, _views.Count(v => v.State == s), Fmt.StateSeg(s), Fmt.Inv(grupo: gp, estado: s))).ToList())" />
+        </section>
+        <section class="card">
+            <h3>Sistema e versão</h3><p class="sub">Windows 10 aparece em vermelho (fora de suporte).</p>
+            <div class="list">
+                @foreach (var os in OsGroups())
+                {
+                    <div class="row" style="padding:6px 0"><span style="flex:0 0 190px">@os.Name</span><div class="meter" style="flex:1"><i class="@(os.Eol ? "bad" : "")" style="width:@(Math.Round(100.0 * os.Count / Math.Max(1, OsGroups().Max(x => x.Count))).ToString(System.Globalization.CultureInfo.InvariantCulture))%"></i></div><b class="num" style="width:44px;text-align:right">@os.Count</b></div>
+                }
+            </div>
+        </section>
+    </div>
+
+    <div class="ttl"><h2>Agrupar por</h2>
+        <div class="tabs">
+            @foreach (var (key, label) in new[] { ("so", "Sistema"), ("modelo", "Modelo"), ("gestao", "Gestão") })
+            {
+                <a class="@(Por == key ? "on" : "")" href="@Nav.GetUriWithQueryParameter("por", key)">@label</a>
+            }
+        </div>
+    </div>
+    <div class="stackcol">
+        @foreach (var g in Buckets())
+        {
+            var act = g.Items.Where(v => v.Asset.IsActive).ToList();
+            <details class="grp">
+                <summary>
+                    <span><b>@g.Key</b> <span class="asof">@g.Items.Count dispositivos</span></span>
+                    <span style="display:flex;gap:10px;align-items:center;min-width:240px"><span style="flex:1"><Bar ShowLegend="false" Label="@("Estado em " + g.Key)" Segments="@(States.All.Select(s => new Seg(s, g.Items.Count(v => v.State == s), Fmt.StateSeg(s))).ToList())" /></span><span class="score @Fmt.ScoreClass(act.Count == 0 ? null : act.Average(v => v.Score))">@(act.Count == 0 ? "—" : Math.Round(act.Average(v => v.Score)).ToString("0"))</span></span>
+                </summary>
+                <div class="inner">
+                    <div class="tw"><table style="min-width:640px"><thead><tr><th>Os 8 piores</th><th>Gestão</th><th>Estado</th><th>Índice</th></tr></thead><tbody>
+                        @foreach (var v in g.Items.OrderBy(v => v.Score).ThenBy(v => v.Asset.Name).Take(8))
+                        {
+                            <tr><td class="nm"><a href="/dispositivo/@v.Asset.Id">@v.Asset.Name</a><small>@(v.Asset.PrimaryUser ?? "—")</small></td><td>@v.Management</td><td><span class="pill @Fmt.StateCss(v.State)">@v.State</span></td><td class="score @Fmt.ScoreClass(v.Score)">@v.Score</td></tr>
+                        }
+                    </tbody></table></div>
+                    @if (Por != "gestao") { <p style="margin:8px 0 0"><a href="@Fmt.Inv(grupo: gp, q: g.Key)">Ver todos no inventário</a></p> }
+                </div>
+            </details>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public string Slug { get; set; } = "";
+    [SupplyParameterFromQuery] public string? Por { get; set; }
+    private InventorySnapshot? _snapshot;
+    private List<AssetView> _views = [];
+    private string? _group;
+    private string _title = "Grupo";
+    private string _subtitle = "";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        Por = Por is "modelo" or "gestao" ? Por : "so";
+        _snapshot = await Inventory.GetAsync();
+        _group = Slug switch { "computadores" => Groups.Computers, "servidores" => Groups.Servers, "celulares" => Groups.CorpMobile, "externos" => Groups.External, _ => null };
+        if (Slug == "sem-gestao")
+        {
+            _views = _snapshot.Views.Where(v => v.Issues.Contains("nomgr")).ToList();
+            _title = "Corporativos sem gestão";
+            _subtitle = "Conhecidos no AD ou no Entra ID e ausentes do SCCM e do Intune. Possível lacuna: reinserir na gestão ou dar baixa.";
+        }
+        else if (_group is not null)
+        {
+            _views = _snapshot.Views.Where(v => v.Group == _group).ToList();
+            _title = Groups.Title(_group);
+            _subtitle = Groups.Description(_group) + ". Gestão esperada: " + Groups.Expected(_group) + ".";
+        }
+    }
+
+    private record OsGroup(string Name, int Count, bool Eol);
+
+    private List<OsGroup> OsGroups() => _views.GroupBy(v => v.Asset.OperatingSystem ?? v.Asset.Platform)
+        .Select(g => new OsGroup(g.Key, g.Count(), g.Any(v => HealthModel.IsWindows10(v.Asset)))).OrderByDescending(o => o.Count).Take(8).ToList();
+
+    private record Bucket(string Key, List<AssetView> Items);
+
+    private List<Bucket> Buckets()
+    {
+        Func<AssetView, string> key = Por switch
+        {
+            "modelo" => v => string.IsNullOrWhiteSpace(v.Asset.Model) ? "Sem modelo" : v.Asset.Model!,
+            "gestao" => v => v.Management,
+            _ => v => v.Asset.OperatingSystem ?? v.Asset.Platform,
+        };
+        return _views.GroupBy(key).Select(g => new Bucket(g.Key, g.ToList()))
+            .OrderBy(b => b.Items.Where(v => v.Asset.IsActive).Select(v => (double)v.Score).DefaultIfEmpty(101).Average()).Take(25).ToList();
+    }
+}

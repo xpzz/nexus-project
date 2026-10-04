@@ -86,7 +86,7 @@ public sealed class CommandProcessor(
                     : JobNames.All.Where(j => j.StartsWith(command.Argument, StringComparison.OrdinalIgnoreCase)).ToArray();
                 if (targets.Length == 0)
                 {
-                    return (false, $"Coleta desconhecida: '{command.Argument}'. Use sccm, ad ou all.");
+                    return (false, $"Coleta desconhecida: '{command.Argument}'. Use sccm, ad, intune, entra, inventory ou all.");
                 }
 
                 var outcomes = new Dictionary<string, JobOutcome>();

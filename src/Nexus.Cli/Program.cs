@@ -16,6 +16,7 @@ using Nexus.Core.Security;
 using Nexus.Data;
 using Nexus.Data.Support;
 using Nexus.Data.Entities;
+using Nexus.Reconciliation;
 
 // Exit codes: 0 ok, 1 checks with errors, 2 Worker did not respond, 3 invalid usage/environment.
 System.Globalization.CultureInfo.DefaultThreadCurrentCulture = System.Globalization.CultureInfo.DefaultThreadCurrentUICulture = new System.Globalization.CultureInfo("pt-BR");
@@ -178,13 +179,13 @@ test.SetAction(async (parse, ct) =>
 root.Subcommands.Add(test);
 
 // collect [all|sccm|ad]
-var sourceArgument = new Argument<string>("fonte") { Description = "all, sccm ou ad.", DefaultValueFactory = _ => "all" };
+var sourceArgument = new Argument<string>("fonte") { Description = "all, sccm, ad, intune, entra ou inventory.", DefaultValueFactory = _ => "all" };
 var waitOption = new Option<bool>("--wait") { Description = "Aguarda o fim da coleta." };
 var collect = new Command("collect", "Pede ao Worker uma coleta agora (respeita pausas e limites).") { sourceArgument, waitOption, timeoutOption };
 collect.SetAction(async (parse, ct) =>
 {
     if (!RequireConfig(out var settings)) return 3;
-    var source = parse.GetValue(sourceArgument) switch { "sccm" => "sccm", "ad" => "ad", _ => "all" };
+    var source = parse.GetValue(sourceArgument) switch { "sccm" => "sccm", "ad" => "ad", "intune" => "intune", "entra" => "entra", "inventory" => "inventory", _ => "all" };
     var command = await Enqueue(settings, CommandTypes.CollectNow, source, ct);
     if (!parse.GetValue(waitOption))
     {
@@ -245,6 +246,26 @@ status.SetAction(async (parse, ct) =>
     return 0;
 });
 root.Subcommands.Add(status);
+
+// kpis
+var kpis = new Command("kpis", "Mostra os indicadores de cobertura com numerador, denominador e estado (disponível, não habilitado, sem dados).");
+kpis.SetAction(async (parse, ct) =>
+{
+    if (!RequireConfig(out var settings)) return 3;
+    await using var db = NexusDatabase.Create(settings.Database);
+    var report = await InventoryReports.BuildAsync(db, ct);
+    foreach (var k in report.Kpis)
+    {
+        var value = k.State == KpiState.Available ? $"{k.Percent?.ToString("0.0") ?? "-"}% ({k.Numerator}/{k.Denominator})" : k.State == KpiState.NotEnabled ? "não habilitado" : "sem dados";
+        Console.WriteLine($"{k.Label}: {value}{(k.Note is null ? "" : " — " + k.Note)}");
+    }
+
+    var c = report.Counts;
+    Console.WriteLine($"Ativos únicos: {c.Total} (ativos {c.Active}, desatualizados {c.Stale}) · só SCCM {c.OnlySccm} · só Intune {c.OnlyIntune} · ambos {c.Both} · nenhum {c.Neither}");
+    Console.WriteLine($"SCCM sem cliente: {c.SccmWithoutClient} · para revisão: {c.Review} · pessoais: {c.PersonalDevices} · celulares corporativos: {c.CorporateMobile}");
+    return 0;
+});
+root.Subcommands.Add(kpis);
 
 // setup-code / recover-access
 var setupCode = new Command("setup-code", "Gera um novo código de configuração inicial (uso único, 24 h). Só administradores locais.");

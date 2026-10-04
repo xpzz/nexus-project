@@ -1,0 +1,160 @@
+@page "/dispositivo/{Id:guid}"
+@rendermode InteractiveServer
+@inject InventorySnapshotService Inventory
+@inject INexusDbFactory DbFactory
+
+<PageTitle>@(_view?.Asset.Name ?? "Dispositivo") · Azul Nexus</PageTitle>
+
+@if (_view is null)
+{
+    <div class="ph"><div><h1>Dispositivo não encontrado</h1><p>Ele pode ter saído do inventário na última reconciliação.</p></div></div>
+    <a class="button" href="/inventario">Voltar ao inventário</a>
+}
+else
+{
+    var a = _view.Asset;
+    var now = _now;
+    <div class="ph">
+        <div><a href="@Fmt.Inv(grupo: _view.Group)" class="hint">← @Groups.Title(_view.Group)</a><h1>@a.Name</h1><p>@(a.Manufacturer) @(a.Model) · @(a.OperatingSystem ?? a.Platform)</p></div>
+        <Ring Value="_view.Score" />
+    </div>
+
+    <div class="legend" style="margin:0">
+        <span class="pill a">@InventoryQuery.OwnershipOf(_view)</span>
+        <span class="pill @(_view.Management == Management.None ? "b" : "m")">@_view.Management</span>
+        <span class="pill @Fmt.StateCss(_view.State)">@_view.State</span>
+        @if (a.NeedsReview) { <span class="pill w">revisar vínculo</span> }
+    </div>
+
+    <section class="card">
+        <dl class="kv" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px 24px">
+            @Item("Usuário", a.PrimaryUser ?? "—")
+            @Item("Serial", a.Serial ?? "—")
+            @Item("Último contato", $"{Fmt.Ago(a.LastActivityAt, now)}")
+            @Item("Fontes", $"{new[] { a.InSccm, a.InIntune, a.InEntra, a.InAd }.Count(x => x)} de 4")
+            @Item("Gestão esperada", Groups.Expected(_view.Group))
+            @Item("Cumpre a gestão esperada", _view.MeetsExpected ? "sim" : "não")
+        </dl>
+    </section>
+
+    <div class="ttl"><h2>Encontrado em</h2></div>
+    <div class="srcs">
+        @SourceCard("SCCM", _sccm is not null, "Sem registro no SCCM." + (_view.Group is Groups.Computers or Groups.Servers && a.Platform != "macOS" ? " Esperado para este grupo." : " Este grupo não usa SCCM."),
+            _sccm is null ? [] : [("Cliente", _sccm.Client == true ? "instalado" : "sem cliente"), ("Saúde", a.SccmHealth), ("Última atividade", Fmt.Ago(_sccm.LastActiveAt, now)), ("Fabricante / modelo", $"{_sccm.Manufacturer} {_sccm.Model}"), ("Sistema", _sccm.OperatingSystem ?? "—")])
+        @SourceCard("Intune", _intune is not null, a.Ownership == "Personal" ? "Sem enrollment MDM. A proteção por MAM ainda não é coletada." : "Sem registro no Intune.",
+            _intune is null ? [] : [("Canal", ChannelLabel(a.IntuneChannel)), ("Agente", _intune.ManagementAgent ?? "—"), ("Conformidade", _intune.ComplianceState ?? "—"), ("Propriedade", _intune.OwnerType ?? "—"), ("Última sincronização", Fmt.Ago(_intune.LastSyncAt, now)), ("Registrado em", _intune.EnrolledAt?.ToLocalTime().ToString("dd/MM/yyyy") ?? "—")])
+        @SourceCard("Entra ID", _entra is not null, "Sem registro no Entra ID.",
+            _entra is null ? [] : [("Associação", TrustLabel(_entra.TrustType)), ("Último login", Fmt.Ago(_entra.LastSignInAt, now)), ("Conta habilitada", _entra.AccountEnabled == false ? "não" : "sim"), ("Propriedade", _entra.Ownership ?? "—")])
+        @SourceCard("Active Directory", _ad is not null, "Sem objeto no AD.",
+            _ad is null ? [] : [("Último logon", Fmt.Ago(_ad.LastLogonTimestamp, now)), ("Conta do computador", _ad.Enabled ? "habilitada" : "desabilitada"), ("Vínculo", a.AdByNameOnly ? "só pelo nome (baixa confiança)" : "forte"), ("Caminho", _ad.DistinguishedName)])
+    </div>
+
+    <div class="ttl"><h2>Pendências</h2></div>
+    <section class="card">
+        <div class="list">
+            @foreach (var id in _view.Issues)
+            {
+                var r = HealthModel.RuleOf(id);
+                <div class="row"><div class="t"><b>@r.Title</b><span>@r.Action · responsável sugerido: @r.Owner</span></div><span class="pill @Fmt.PriorityCss(r.Priority)">@Fmt.PriorityLabel(r.Priority)</span></div>
+            }
+            @if (_view.Issues.Count == 0) { <div class="row"><span class="pill ok">Nenhuma pendência</span></div> }
+        </div>
+    </section>
+
+    <div class="grid g2">
+        <section class="card">
+            <h3>Controles de conformidade</h3>
+            <p class="sub">Só o que o Nexus já coleta aparece com valor.</p>
+            <div class="list">
+                <div class="row"><span>Conformidade no Intune</span>@if (a.IntuneChannel == "Mdm") {<span class="pill @(string.Equals(a.ComplianceState, "compliant", StringComparison.OrdinalIgnoreCase) ? "ok" : "b")">@(a.ComplianceState ?? "sem estado")</span>} else {<span class="pill m">sem MDM</span>}</div>
+                <div class="row"><span>Cliente SCCM saudável</span>@if (a.InSccm) {<span class="pill @(a.SccmHealth == "Healthy" ? "ok" : "w")">@a.SccmHealth</span>} else {<span class="pill m">não se aplica</span>}</div>
+                <div class="row"><span>Sistema suportado</span>@if (a.Platform == "WindowsClient") {<span class="pill @(HealthModel.IsWindows10(a) ? "b" : "ok")">@(HealthModel.IsWindows10(a) ? "Windows 10 fora de suporte" : "suportado")</span>} else {<span class="pill m">não avaliado</span>}</div>
+                <div class="row"><span>Criptografia, EDR, patch</span><span class="pill m">Aguardando coleta</span></div>
+                @if (_view.Group is Groups.ByodMobile or Groups.ByodComputers) { <div class="row"><span>MAM, PIN, root ou jailbreak</span><span class="pill m">Aguardando coleta</span></div> }
+            </div>
+        </section>
+        <section class="card">
+            <h3>Último evento de cada fonte</h3>
+            <p class="sub">Quando cada fonte viu o dispositivo.</p>
+            <div class="list">
+                @foreach (var (name, at) in Timeline(a))
+                {
+                    <div class="row"><span>@name</span><span class="asof">@Fmt.Ago(at, now) · @at?.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</span></div>
+                }
+            </div>
+        </section>
+    </div>
+
+    <div class="ttl"><h2>Como os registros foram ligados</h2></div>
+    <section class="card">
+        <div class="list">
+            @foreach (var l in _links)
+            {
+                <div class="row"><div class="t"><b>@Fmt.JobLabel(l.Source == "sccm" ? "sccm.devices" : l.Source == "intune" ? "intune.devices" : l.Source == "entra" ? "entra.devices" : "ad.computers") · @l.SourceKey</b><span>@(l.Reason ?? "Registro de origem do ativo.")</span></div><span class="pill @(l.Confidence == "High" ? "ok" : l.Confidence == "Medium" ? "w" : "m")">confiança @(l.Confidence == "High" ? "alta" : l.Confidence == "Medium" ? "média" : "baixa")</span></div>
+            }
+        </div>
+        @foreach (var r in _review) { <div class="note" style="margin-top:10px"><b>@Fmt.ReviewKind(r.Kind):</b> @r.Detail</div> }
+    </section>
+    <div class="note">Somente leitura. Dados pessoais em BYOD: o Nexus não coleta telefone, IMEI nem localização.</div>
+}
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+    private AssetView? _view;
+    private DateTimeOffset _now;
+    private List<AssetLink> _links = [];
+    private List<ReviewItem> _review = [];
+    private SccmDeviceRecord? _sccm;
+    private IntuneDeviceRecord? _intune;
+    private EntraDeviceRecord? _entra;
+    private AdComputerRecord? _ad;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var snapshot = await Inventory.GetAsync();
+        _now = snapshot.LoadedAt;
+        _view = snapshot.Find(Id);
+        if (_view is null)
+        {
+            return;
+        }
+
+        await using var db = DbFactory.Create();
+        _links = await db.AssetLinks.AsNoTracking().Where(l => l.AssetId == Id).OrderBy(l => l.Source).ToListAsync();
+        string? Key(string source) => _links.FirstOrDefault(l => l.Source == source)?.SourceKey;
+        _sccm = int.TryParse(Key("sccm"), out var rid) ? await db.SccmDevices.AsNoTracking().FirstOrDefaultAsync(r => r.ResourceId == rid) : null;
+        var iid = Key("intune");
+        _intune = iid is null ? null : await db.IntuneDevices.AsNoTracking().FirstOrDefaultAsync(r => r.Id == iid);
+        var eid = Key("entra");
+        _entra = eid is null ? null : await db.EntraDevices.AsNoTracking().FirstOrDefaultAsync(r => r.Id == eid);
+        _ad = Guid.TryParse(Key("ad"), out var gid) ? await db.AdComputers.AsNoTracking().FirstOrDefaultAsync(r => r.ObjectGuid == gid) : null;
+        var refs = _links.Select(l => $"{l.Source}:{l.SourceKey}").ToHashSet();
+        _review = (await db.ReviewItems.AsNoTracking().ToListAsync()).Where(r => (r.Sources ?? "").Split(',').Any(refs.Contains)).ToList();
+    }
+
+    private static IEnumerable<(string, DateTimeOffset?)> Timeline(Asset a) => new (string, DateTimeOffset?)[]
+    {
+        ("SCCM · última atividade do cliente", a.SccmLastSeenAt), ("Intune · última sincronização", a.IntuneLastSyncAt),
+        ("Entra ID · último login", a.EntraLastSignInAt), ("Active Directory · último logon", a.AdLastLogonAt),
+    }.Where(t => t.Item2 is not null).OrderByDescending(t => t.Item2);
+
+    private static string ChannelLabel(string c) => c switch { "Mdm" => "MDM", "TenantAttach" => "Tenant attach (não é MDM)", "SecurityManagement" => "Defender (não é MDM)", _ => "Outro" };
+    private static string TrustLabel(string? t) => t switch { "ServerAd" => "Híbrido", "AzureAd" => "Ingressado", "Workplace" => "Registrado", _ => t ?? "—" };
+
+    private RenderFragment Item(string label, string value) => __builder => { <div><dt>@label</dt><dd style="text-align:left;font-weight:500">@value</dd></div> };
+
+    private RenderFragment SourceCard(string name, bool found, string missing, IEnumerable<(string, string)> rows) => __builder =>
+    {
+        <div class="sc @(found ? "" : "off")">
+            <h4>@name<span class="pill @(found ? "ok" : "m")">@(found ? "encontrado" : "não encontrado")</span></h4>
+            @if (found)
+            {
+                <dl class="kv">@foreach (var (k, v) in rows){<dt>@k</dt><dd>@v</dd>}</dl>
+            }
+            else
+            {
+                <span style="font-size:12.5px">@missing</span>
+            }
+        </div>
+    };
+}

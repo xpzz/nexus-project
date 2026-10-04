@@ -1,0 +1,39 @@
+<div class="stack" role="img" aria-label="@Label">
+    @foreach (var s in Segments.Where(s => s.Count > 0))
+    {
+        if (s.Href is not null)
+        {
+            <a class="seg @s.Css" style="flex:@s.Count" href="@s.Href" title="@s.Label: @s.Count"></a>
+        }
+        else
+        {
+            <i class="seg @s.Css" style="flex:@s.Count" title="@s.Label: @s.Count"></i>
+        }
+    }
+    @if (Segments.All(s => s.Count == 0))
+    {
+        <i class="seg c-mute" style="flex:1;opacity:.35"></i>
+    }
+</div>
+@if (ShowLegend)
+{
+    <div class="legend">
+        @foreach (var s in Segments)
+        {
+            if (s.Href is not null)
+            {
+                <a href="@s.Href"><u class="seg @s.Css"></u>@s.Label <b>@Fmt.Number(s.Count)</b></a>
+            }
+            else
+            {
+                <span><u class="seg @s.Css"></u>@s.Label <b>@Fmt.Number(s.Count)</b></span>
+            }
+        }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<Seg> Segments { get; set; } = [];
+    [Parameter] public string Label { get; set; } = "Distribuição";
+    [Parameter] public bool ShowLegend { get; set; } = true;
+}

@@ -71,6 +71,9 @@ public sealed class CollectionSettings
 {
     public int SccmIntervalMinutes { get; set; } = 30;
     public int ActiveDirectoryIntervalMinutes { get; set; } = 240;
+    /// <summary>Intune and Entra ID (SPEC §10: 30 to 60 minutes for Intune).</summary>
+    public int GraphIntervalMinutes { get; set; } = 60;
+    public int ReconcileIntervalMinutes { get; set; } = 15;
     public int MaxCpuPercent { get; set; } = 25;
     public int MaxMemoryMegabytes { get; set; } = 1024;
     /// <summary>Server CPU above this value postpones collections.</summary>

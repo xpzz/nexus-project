@@ -1,0 +1,99 @@
+@page "/operacao"
+@rendermode InteractiveServer
+@inject InventorySnapshotService Inventory
+
+<PageTitle>SCCM e Intune · Azul Nexus</PageTitle>
+
+<div class="ph">
+    <div><h1>SCCM e Intune</h1><p>Onde os dispositivos se perdem entre ser descoberto e estar gerenciado. Cada etapa mostra a perda e abre a lista de quem caiu nela.</p></div>
+</div>
+
+@if (_snapshot is not null)
+{
+    <div class="grid g2">
+        <section class="card">
+            <h3>Funil do cliente SCCM</h3><p class="sub">Descobertos, cliente, comunicação em 30 dias, avaliação.</p>
+            <div class="funnel">@foreach (var s in _sccm) { @Step(s, _sccm[0].Count) }</div>
+        </section>
+        <section class="card">
+            <h3>Funil do Intune</h3><p class="sub">Computadores e celulares corporativos até a conformidade.</p>
+            <div class="funnel">@foreach (var s in _intune) { @Step(s, _intune[0].Count) }</div>
+        </section>
+    </div>
+
+    <section class="card">
+        <h3>Saúde das fontes de dados</h3><p class="sub">Uma falha preserva o último resultado válido. A atualidade vem de quando o dispositivo reportou.</p>
+        <div class="tw"><table style="min-width:700px"><thead><tr><th>Fonte</th><th>Situação</th><th>Registros</th><th>Último sucesso</th><th>Próxima</th><th>Detalhe</th></tr></thead><tbody>
+            @foreach (var j in _snapshot.Jobs)
+            {
+                <tr><td class="nm">@Fmt.JobLabel(j.Name)</td><td><span class="pill @HealthView.Css(j.Status)">@(j.Status ?? "—")</span></td><td class="num">@(j.Records?.ToString("N0") ?? "—")</td><td class="num">@Fmt.Ago(j.LastSuccessAt, _snapshot.LoadedAt)</td><td class="num">@j.NextRunAt?.ToLocalTime().ToString("dd/MM HH:mm")</td><td class="detail">@j.Error</td></tr>
+            }
+        </tbody></table></div>
+    </section>
+    <div class="note">Aguardando coleta: workloads de co-gestão, patch por idade, políticas atribuídas e a tendência de 12 semanas. O Nexus ainda não guarda histórico por semana.</div>
+}
+
+@code {
+    private record Stage(string Label, int Count, string? DropFilter, bool Available = true, string? Detail = null);
+
+    private InventorySnapshot? _snapshot;
+    private List<Stage> _sccm = [];
+    private List<Stage> _intune = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        _snapshot = await Inventory.GetAsync();
+        var now = _snapshot.LoadedAt;
+        var sccm = _snapshot.Views.Where(v => v.Asset.InSccm && v.Asset.SccmHealth != "Obsolete").ToList();
+        var withClient = sccm.Where(v => v.Asset.SccmClient).ToList();
+        var reporting = withClient.Where(v => v.Asset.SccmLastSeenAt is { } t && now - t <= TimeSpan.FromDays(30)).ToList();
+        var healthy = reporting.Where(v => v.Asset.SccmHealth == "Healthy").ToList();
+        _sccm =
+        [
+            new("Descobertos", sccm.Count, null),
+            new("Cliente instalado", withClient.Count, "sccm-sem-cliente"),
+            new("Reportando em 30 dias", reporting.Count, "sccm-silencioso"),
+            new("Avaliação saudável", healthy.Count, "sccm-nao-saudavel"),
+            new("Patch em até 60 dias", 0, null, false, "Aguardando coleta"),
+        ];
+
+        var corp = _snapshot.Views.Where(v => v.Group is Groups.Computers or Groups.CorpMobile).ToList();
+        var entra = corp.Where(v => v.Asset.InEntra).ToList();
+        var mdm = entra.Where(v => v.Asset.IntuneChannel == "Mdm").ToList();
+        var sync = mdm.Where(v => v.Asset.IntuneLastSyncAt is { } t && now - t <= TimeSpan.FromDays(7)).ToList();
+        var conforme = sync.Where(v => string.Equals(v.Asset.ComplianceState, "compliant", StringComparison.OrdinalIgnoreCase)).ToList();
+        _intune =
+        [
+            new("Corporativos", corp.Count, null),
+            new("Registrados no Entra ID", entra.Count, "intune-fora-entra"),
+            new("Intune MDM", mdm.Count, "intune-sem-mdm"),
+            new("Sincronizou em 7 dias", sync.Count, "intune-sem-sync"),
+            new("Com política atribuída", 0, null, false, "Aguardando coleta"),
+            new("Conforme", conforme.Count, "intune-nao-conforme"),
+        ];
+    }
+
+    private RenderFragment Step(Stage s, int top) => __builder =>
+    {
+        var width = top == 0 ? 0 : Math.Round(100.0 * s.Count / top);
+        <div class="fstep @(s.Available ? "" : "off")">
+            <div><b>@s.Label</b><small>@(s.Available ? Fmt.Number(s.Count) : s.Detail)</small></div>
+            <div class="bar"><i style="width:@(width.ToString(System.Globalization.CultureInfo.InvariantCulture))%"></i></div>
+            <div class="loss">
+                @if (s.Available && s.DropFilter is not null)
+                {
+                    var prev = StagePrev(s);
+                    var lost = prev - s.Count;
+                    <a href="@Fmt.Inv(funil: s.DropFilter)">@(lost > 0 ? $"perdeu {Fmt.Number(lost)}" : "sem perda")</a>
+                }
+            </div>
+        </div>
+    };
+
+    private int StagePrev(Stage s)
+    {
+        var list = _sccm.Contains(s) ? _sccm : _intune;
+        var i = list.IndexOf(s);
+        return i <= 0 ? s.Count : list.Take(i).Last(x => x.Available).Count;
+    }
+}

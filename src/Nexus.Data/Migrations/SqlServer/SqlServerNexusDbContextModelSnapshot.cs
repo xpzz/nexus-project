@@ -70,6 +70,184 @@ namespace Nexus.Data.Migrations.SqlServer
                     b.ToTable("ad_computers", (string)null);
                 });
 
+            modelBuilder.Entity("Nexus.Data.Entities.Asset", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("AdByNameOnly")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("AdEnabled")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTimeOffset?>("AdLastLogonAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("ComplianceState")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("Confidence")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .HasColumnType("nvarchar(8)");
+
+                    b.Property<string>("Coverage")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<string>("Department")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<DateTimeOffset?>("EntraLastSignInAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("EntraTrustType")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<bool>("InAd")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("InEntra")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("InIntune")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("InSccm")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("IntuneChannel")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("nvarchar(24)");
+
+                    b.Property<DateTimeOffset?>("IntuneLastSyncAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTimeOffset?>("LastActivityAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Manufacturer")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("Model")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<bool>("NeedsReview")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("OperatingSystem")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("OsVersion")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Ownership")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<string>("OwnershipSource")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("Platform")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("PrimaryUser")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<bool>("SccmClient")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("SccmHealth")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<DateTimeOffset?>("SccmLastSeenAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Serial")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Coverage");
+
+                    b.HasIndex("Name");
+
+                    b.HasIndex("Platform");
+
+                    b.ToTable("assets", (string)null);
+                });
+
+            modelBuilder.Entity("Nexus.Data.Entities.AssetLink", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<Guid>("AssetId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Confidence")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .HasColumnType("nvarchar(8)");
+
+                    b.Property<string>("Evidence")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("nvarchar(24)");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<string>("SourceKey")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AssetId");
+
+                    b.HasIndex("Source", "SourceKey");
+
+                    b.ToTable("asset_links", (string)null);
+                });
+
             modelBuilder.Entity("Nexus.Data.Entities.AuditEvent", b =>
                 {
                     b.Property<long>("Id")
@@ -99,6 +277,54 @@ namespace Nexus.Data.Migrations.SqlServer
                     b.HasIndex("At");
 
                     b.ToTable("audit_events", (string)null);
+                });
+
+            modelBuilder.Entity("Nexus.Data.Entities.EntraDeviceRecord", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<bool?>("AccountEnabled")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTimeOffset>("CollectedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid?>("DeviceId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("DisplayName")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<DateTimeOffset?>("LastSignInAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("OperatingSystem")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("OperatingSystemVersion")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("Ownership")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<DateTimeOffset?>("RegisteredAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("TrustType")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DeviceId");
+
+                    b.ToTable("entra_devices", (string)null);
                 });
 
             modelBuilder.Entity("Nexus.Data.Entities.HealthResultRecord", b =>
@@ -159,6 +385,75 @@ namespace Nexus.Data.Migrations.SqlServer
                     b.ToTable("health_results", (string)null);
                 });
 
+            modelBuilder.Entity("Nexus.Data.Entities.IntuneDeviceRecord", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<Guid?>("AzureAdDeviceId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("CollectedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("ComplianceState")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("DeviceName")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<DateTimeOffset?>("EnrolledAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("EnrollmentType")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<DateTimeOffset?>("LastSyncAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("ManagementAgent")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("Manufacturer")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("Model")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("OperatingSystem")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("OsVersion")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("OwnerType")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("SerialNumber")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("UserPrincipalName")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AzureAdDeviceId");
+
+                    b.ToTable("intune_devices", (string)null);
+                });
+
             modelBuilder.Entity("Nexus.Data.Entities.JobState", b =>
                 {
                     b.Property<string>("Name")
@@ -195,6 +490,35 @@ namespace Nexus.Data.Migrations.SqlServer
                     b.ToTable("job_states", (string)null);
                 });
 
+            modelBuilder.Entity("Nexus.Data.Entities.ReviewItem", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Detail")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("nvarchar(1024)");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("Sources")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("review_items", (string)null);
+                });
+
             modelBuilder.Entity("Nexus.Data.Entities.SccmDeviceRecord", b =>
                 {
                     b.Property<int>("ResourceId")
@@ -209,12 +533,26 @@ namespace Nexus.Data.Migrations.SqlServer
                     b.Property<bool?>("Client")
                         .HasColumnType("bit");
 
+                    b.Property<int?>("ClientActiveStatus")
+                        .HasColumnType("int");
+
                     b.Property<DateTimeOffset>("CollectedAt")
                         .HasColumnType("datetimeoffset");
 
                     b.Property<string>("Domain")
                         .HasMaxLength(256)
                         .HasColumnType("nvarchar(256)");
+
+                    b.Property<DateTimeOffset?>("LastActiveAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Manufacturer")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("Model")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
 
                     b.Property<string>("Name")
                         .HasMaxLength(256)
@@ -226,6 +564,10 @@ namespace Nexus.Data.Migrations.SqlServer
                     b.Property<string>("OperatingSystem")
                         .HasMaxLength(256)
                         .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("Serial")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
 
                     b.Property<string>("SmbiosGuid")
                         .HasMaxLength(64)
