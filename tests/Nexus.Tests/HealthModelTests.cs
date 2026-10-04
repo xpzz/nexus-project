@@ -188,3 +188,42 @@ public class InventoryQueryTests
         Assert.Equal("B", sorted[0].Asset.Name);
     }
 }
+
+public class AccessPolicyTests
+{
+    private static Nexus.Web.Setup.AccessDecision Decide(string path, bool role, bool open, bool setup) =>
+        Nexus.Web.Setup.AccessPolicy.Decide(path, role, open, setup);
+
+    [Theory]
+    [InlineData("/painel")]
+    [InlineData("/inventario")]
+    [InlineData("/dispositivo/abc")]
+    [InlineData("/_blazor")]
+    public void InventoryScreensAreOpenToAnonymousVisitorsByDefault(string path) =>
+        Assert.Equal(Nexus.Web.Setup.AccessDecision.Allow, Decide(path, role: false, open: true, setup: true));
+
+    [Theory]
+    [InlineData("/assistente")]
+    [InlineData("/saude")]
+    [InlineData("/diagnostico")]
+    public void OperatorScreensNeedTheSetupRoleEvenWhenInventoryIsOpen(string path)
+    {
+        Assert.Equal(Nexus.Web.Setup.AccessDecision.RequireSetupAccess, Decide(path, role: false, open: true, setup: true));
+        Assert.Equal(Nexus.Web.Setup.AccessDecision.Allow, Decide(path, role: true, open: true, setup: true));
+    }
+
+    [Fact]
+    public void ClosingOpenAccessSendsEveryoneToTheSetupCode()
+    {
+        Assert.Equal(Nexus.Web.Setup.AccessDecision.RequireSetupAccess, Decide("/painel", role: false, open: false, setup: true));
+        Assert.Equal(Nexus.Web.Setup.AccessDecision.Closed, Decide("/painel", role: false, open: false, setup: false));
+        Assert.Equal(Nexus.Web.Setup.AccessDecision.Allow, Decide("/painel", role: true, open: false, setup: true));
+    }
+
+    [Fact]
+    public void AfterSetupModeEndsOperatorScreensStayClosedButInventoryStaysOpen()
+    {
+        Assert.Equal(Nexus.Web.Setup.AccessDecision.Closed, Decide("/saude", role: false, open: true, setup: false));
+        Assert.Equal(Nexus.Web.Setup.AccessDecision.Allow, Decide("/painel", role: false, open: true, setup: false));
+    }
+}

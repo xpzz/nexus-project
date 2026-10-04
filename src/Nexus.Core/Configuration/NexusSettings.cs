@@ -98,4 +98,11 @@ public sealed class WebSettings
 
     /// <summary>Thumbprint of the server certificate in LocalMachine\My, used in "service" hosting.</summary>
     public string? CertificateThumbprint { get; set; }
+
+    /// <summary>
+    /// While there is no SSO, the inventory screens are open to anyone who can reach the site (read-only).
+    /// Configuration, health actions and diagnostics always need the server itself (localhost) or the one-time setup code.
+    /// Set to false to also close the inventory screens behind setup mode.
+    /// </summary>
+    public bool OpenAccess { get; set; } = true;
 }
