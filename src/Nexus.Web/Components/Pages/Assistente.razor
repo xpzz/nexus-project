@@ -1,5 +1,6 @@
 @page "/assistente"
 @rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = Nexus.Web.Setup.SetupAccessMiddleware.SetupRole)]
 @inject INexusDbFactory DbFactory
 @inject SettingsProvider Settings
 @inject Nexus.Core.NexusPaths Paths

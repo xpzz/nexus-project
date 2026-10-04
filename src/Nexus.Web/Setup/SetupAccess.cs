@@ -35,6 +35,12 @@ public sealed class SetupAccessMiddleware(RequestDelegate next)
             return;
         }
 
+        // The server itself is always a trusted operator (setup role for this request only; nothing is stored).
+        if (IsLocal(context) && !context.User.IsInRole(SetupRole))
+        {
+            context.User = new ClaimsPrincipal(new ClaimsIdentity([new Claim(ClaimTypes.Name, "local"), new Claim(ClaimTypes.Role, SetupRole)], "local"));
+        }
+
         bool setupMode;
         try
         {
@@ -48,16 +54,14 @@ public sealed class SetupAccessMiddleware(RequestDelegate next)
             return;
         }
 
-        if (setupMode)
+        switch (AccessPolicy.Decide(path, context.User.IsInRole(SetupRole), settings.Current.Web.OpenAccess, setupMode))
         {
-            if (IsLocal(context) || context.User.IsInRole(SetupRole))
-            {
+            case AccessDecision.Allow:
                 await next(context);
                 return;
-            }
-
-            context.Response.Redirect(AccessPath);
-            return;
+            case AccessDecision.RequireSetupAccess:
+                context.Response.Redirect(AccessPath);
+                return;
         }
 
         // SSO with Microsoft Entra ID is delivered in increment 0.6; until then access stays closed.
@@ -81,5 +85,38 @@ public sealed class SetupAccessMiddleware(RequestDelegate next)
         context.Response.StatusCode = (int)status;
         context.Response.ContentType = "text/plain; charset=utf-8";
         await context.Response.WriteAsync(message);
+    }
+}
+
+public enum AccessDecision
+{
+    Allow,
+    RequireSetupAccess,
+    Closed,
+}
+
+/// <summary>
+/// Who may open what while there is no SSO. Inventory screens are read-only and open by default;
+/// everything that changes state or exposes the environment needs the setup role (localhost or the one-time code).
+/// </summary>
+public static class AccessPolicy
+{
+    private static readonly string[] OperatorOnly = ["/assistente", "/saude", "/diagnostico"];
+
+    public static bool IsOperatorOnly(string path) => OperatorOnly.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase));
+
+    public static AccessDecision Decide(string path, bool hasSetupRole, bool openAccess, bool setupMode)
+    {
+        if (hasSetupRole && (setupMode || openAccess))
+        {
+            return AccessDecision.Allow;
+        }
+
+        if (openAccess && !IsOperatorOnly(path))
+        {
+            return AccessDecision.Allow;
+        }
+
+        return setupMode ? AccessDecision.RequireSetupAccess : AccessDecision.Closed;
     }
 }

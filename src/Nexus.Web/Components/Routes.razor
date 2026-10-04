@@ -1,6 +1,14 @@
 <Router AppAssembly="typeof(Program).Assembly">
     <Found Context="routeData">
-        <RouteView RouteData="routeData" DefaultLayout="typeof(Layout.MainLayout)" />
+        <AuthorizeRouteView RouteData="routeData" DefaultLayout="typeof(Layout.MainLayout)">
+            <NotAuthorized>
+                <div class="card narrow">
+                    <h2>Área do operador</h2>
+                    <p>Esta tela muda a configuração ou mostra detalhes do ambiente. Abra o site no próprio servidor ou use o código de configuração gerado na instalação.</p>
+                    <a class="button primary" href="/configuracao/acesso">Informar o código de configuração</a>
+                </div>
+            </NotAuthorized>
+        </AuthorizeRouteView>
         <FocusOnNavigate RouteData="routeData" Selector="h1" />
     </Found>
 </Router>

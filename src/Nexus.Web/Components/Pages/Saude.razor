@@ -1,5 +1,6 @@
 @page "/saude"
 @rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = Nexus.Web.Setup.SetupAccessMiddleware.SetupRole)]
 @implements IDisposable
 @inject INexusDbFactory DbFactory
 @inject SettingsProvider Settings
