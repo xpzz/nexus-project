@@ -1,3 +1,4 @@
+using Nexus.Collectors.Graph;
 using Nexus.Data.Entities;
 
 namespace Nexus.Reconciliation;
@@ -501,7 +502,7 @@ public static class Reconciler
         }
 
         var byUserPlatform = assets.Where(a => a.IntuneUserId is not null && a.InIntune).GroupBy(a => (a.IntuneUserId!, FamilyOf(a.Platform))).ToDictionary(g => g.Key, g => g.ToList());
-        foreach (var group in registrations.Where(r => r.UserId is not null).GroupBy(r => (r.UserId!, Platform: r.DeviceType ?? "Other")))
+        foreach (var group in registrations.Where(r => GraphIds.IsUsable(r.UserId)).GroupBy(r => (r.UserId!, Platform: r.DeviceType ?? "Other")))
         {
             var candidates = byUserPlatform.GetValueOrDefault((group.Key.Item1, group.Key.Platform)) ?? [];
             if (candidates.Count == 1)
@@ -543,6 +544,32 @@ public static class Reconciler
                 assets.Add(mamOnly);
                 links.Add(new AssetLink { AssetId = id, Source = "mam", SourceKey = key, Evidence = "mam-registration", Confidence = mamOnly.Confidence, Reason = "Aparelho conhecido apenas pela proteção de aplicativos." });
             }
+        }
+
+        // Registrations Graph returns without a usable user (null, blank or zero GUID) cannot be tied to anyone: each device still becomes a MAM-only
+        // asset, flagged by the missing user (data-quality page) instead of being dropped or failing the run.
+        var orphans = registrations.Where(r => !GraphIds.IsUsable(r.UserId)).GroupBy(r => (r.DeviceTag ?? r.DeviceName ?? r.Id, Platform: r.DeviceType ?? "Other")).ToList();
+        foreach (var device in orphans)
+        {
+            var key = "tag:" + device.Key.Item1;
+            var id = previous.TryGetValue(("mam", key), out var p) && !used.Contains(p) ? p : Guid.NewGuid();
+            used.Add(id);
+            var first = device.First();
+            var mamOnly = new Asset
+            {
+                Id = id, Name = first.DeviceName ?? device.Key.Item1, Platform = device.Key.Platform == "Windows" ? "WindowsClient" : device.Key.Platform, Ownership = "Personal", OwnershipSource = "mam",
+                IntuneChannel = "None", Coverage = "OnlyMam", Confidence = "Low", UpdatedAt = input.Now, OperatingSystem = device.Key.Platform, OsVersion = first.PlatformVersion,
+            };
+            Apply(mamOnly, device.ToList());
+            assets.Add(mamOnly);
+            links.Add(new AssetLink { AssetId = id, Source = "mam", SourceKey = key, Evidence = "mam-registration", Confidence = "Low", Reason = "Aparelho conhecido apenas pela proteção de aplicativos, sem usuário associado." });
+        }
+
+        if (orphans.Count > 0)
+        {
+            review.Add(new ReviewDraft("MamWithoutUser",
+                $"{orphans.Count} aparelho(s) com proteção de aplicativos e sem usuário associado no registro. Foram contados como aparelhos próprios (MAM apenas); confirme de quem são.",
+                orphans.Take(20).Select(o => $"mam:tag:{o.Key.Item1}").ToList()));
         }
 
         void Apply(Asset asset, List<MamRegistrationRecord> regs)

@@ -161,8 +161,9 @@ public sealed class HttpGraphReader(GraphHttpClient client) : IGraphReader
         }
     }
 
-    private async Task<Dictionary<string, string>> ReadGroupNamesAsync(IReadOnlyList<string> groupIds, CancellationToken cancellationToken)
+    private async Task<Dictionary<string, string>> ReadGroupNamesAsync(IReadOnlyList<string> rawGroupIds, CancellationToken cancellationToken)
     {
+        var groupIds = GraphIds.Clean(rawGroupIds);
         var names = new Dictionary<string, string>();
         if (groupIds.Count == 0)
         {
@@ -185,8 +186,9 @@ public sealed class HttpGraphReader(GraphHttpClient client) : IGraphReader
         return names;
     }
 
-    public async IAsyncEnumerable<DevicePolicyState> ReadDevicePolicyStatesAsync(IReadOnlyList<string> managedDeviceIds, [EnumeratorCancellation] CancellationToken cancellationToken)
+    public async IAsyncEnumerable<DevicePolicyState> ReadDevicePolicyStatesAsync(IReadOnlyList<string> rawManagedDeviceIds, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
+        var managedDeviceIds = GraphIds.Clean(rawManagedDeviceIds);
         foreach (var chunk in managedDeviceIds.Chunk(100))
         {
             var requests = new List<(string, string)>(chunk.Length * 2);
@@ -245,8 +247,14 @@ public sealed class HttpGraphReader(GraphHttpClient client) : IGraphReader
         }
     }
 
-    public async IAsyncEnumerable<EntraUser> ReadUsersAsync(IReadOnlyList<string> userIds, [EnumeratorCancellation] CancellationToken cancellationToken)
+    public async IAsyncEnumerable<EntraUser> ReadUsersAsync(IReadOnlyList<string> rawUserIds, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
+        var userIds = GraphIds.Clean(rawUserIds);
+        if (userIds.Count == 0)
+        {
+            yield break;
+        }
+
         var responses = await client.BatchGetAsync(userIds.Select(u => (u, $"/users/{u}?$select=id,userPrincipalName,displayName,department,accountEnabled")).ToList(), cancellationToken);
         foreach (var r in responses.Where(r => r.Status == 200 && r.Body is not null))
         {

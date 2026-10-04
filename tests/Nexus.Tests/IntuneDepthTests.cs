@@ -90,7 +90,7 @@ public class GraphDepthTests
             {
                 return Json("""
                     {"value":[{"@odata.type":"#microsoft.graph.windows10CompliancePolicy","id":"p1","displayName":"Windows - Conformidade","version":3,"lastModifiedDateTime":"2026-09-01T10:00:00Z",
-                      "assignments":[{"target":{"@odata.type":"#microsoft.graph.groupAssignmentTarget","groupId":"g1"}},{"target":{"@odata.type":"#microsoft.graph.exclusionGroupAssignmentTarget","groupId":"g1"}},{"target":{"@odata.type":"#microsoft.graph.allDevicesAssignmentTarget"}}]}]}
+                      "assignments":[{"target":{"@odata.type":"#microsoft.graph.groupAssignmentTarget","groupId":"11111111-1111-1111-1111-111111111111"}},{"target":{"@odata.type":"#microsoft.graph.exclusionGroupAssignmentTarget","groupId":"11111111-1111-1111-1111-111111111111"}},{"target":{"@odata.type":"#microsoft.graph.allDevicesAssignmentTarget"}}]}]}
                     """);
             }
 
@@ -131,10 +131,10 @@ public class GraphDepthTests
             return Json("{\"responses\":[" + string.Join(",", responses) + "]}");
         });
         var states = new List<DevicePolicyState>();
-        await foreach (var s in new HttpGraphReader(Client(handler)).ReadDevicePolicyStatesAsync(["dev-a", "dev-b"], default)) states.Add(s);
+        await foreach (var s in new HttpGraphReader(Client(handler)).ReadDevicePolicyStatesAsync(["aaaaaaaa-0000-0000-0000-00000000000a", "bbbbbbbb-0000-0000-0000-00000000000b"], default)) states.Add(s);
         Assert.Equal(4, states.Count);
-        Assert.Contains(states, s => s is { ManagedDeviceId: "dev-b", Kind: "compliance", State: "nonCompliant", SettingCount: 12 });
-        Assert.Contains(states, s => s is { ManagedDeviceId: "dev-a", Kind: "configuration", PolicyName: "BitLocker", State: "error" });
+        Assert.Contains(states, s => s is { ManagedDeviceId: "bbbbbbbb-0000-0000-0000-00000000000b", Kind: "compliance", State: "nonCompliant", SettingCount: 12 });
+        Assert.Contains(states, s => s is { ManagedDeviceId: "aaaaaaaa-0000-0000-0000-00000000000a", Kind: "configuration", PolicyName: "BitLocker", State: "error" });
     }
 
     [Fact]
@@ -146,7 +146,7 @@ public class GraphDepthTests
             var ids = doc.RootElement.GetProperty("requests").EnumerateArray().Select(x => x.GetProperty("id").GetString()!);
             return Json("{\"responses\":[" + string.Join(",", ids.Select(id => Resp(id, 403, """{"error":{"code":"Forbidden"}}"""))) + "]}");
         });
-        var ex = await Assert.ThrowsAsync<GraphException>(async () => { await foreach (var _ in new HttpGraphReader(Client(handler)).ReadDevicePolicyStatesAsync(["d"], default)) { } });
+        var ex = await Assert.ThrowsAsync<GraphException>(async () => { await foreach (var _ in new HttpGraphReader(Client(handler)).ReadDevicePolicyStatesAsync(["aaaaaaaa-0000-0000-0000-00000000000a"], default)) { } });
         Assert.Contains("DeviceManagementConfiguration", ex.Error.ToString());
     }
 
@@ -166,11 +166,72 @@ public class GraphDepthTests
     [Fact]
     public async Task UsersAreResolvedInBatch()
     {
-        var handler = new StubHandler(_ => Json("""{"responses":[{"id":"u1","status":200,"body":{"id":"u1","userPrincipalName":"ana@x","displayName":"Ana","department":"TI","accountEnabled":false}},{"id":"u2","status":404}]}"""));
+        var handler = new StubHandler(_ => Json("""{"responses":[{"id":"0a0a0a0a-0000-0000-0000-000000000001","status":200,"body":{"id":"0a0a0a0a-0000-0000-0000-000000000001","userPrincipalName":"ana@x","displayName":"Ana","department":"TI","accountEnabled":false}},{"id":"0a0a0a0a-0000-0000-0000-000000000002","status":404}]}"""));
         var users = new List<EntraUser>();
-        await foreach (var u in new HttpGraphReader(Client(handler)).ReadUsersAsync(["u1", "u2"], default)) users.Add(u);
+        await foreach (var u in new HttpGraphReader(Client(handler)).ReadUsersAsync(["0a0a0a0a-0000-0000-0000-000000000001", "0a0a0a0a-0000-0000-0000-000000000002"], default)) users.Add(u);
         var u1 = Assert.Single(users);
         Assert.Equal(("TI", false), (u1.Department, u1.AccountEnabled));
+    }
+
+    private static readonly string Zero = Guid.Empty.ToString();
+
+    [Fact]
+    public void GraphIdsKeepOnlyUsableGuidsOnceEach()
+    {
+        var a = Guid.NewGuid().ToString("N").ToUpperInvariant();
+        var clean = GraphIds.Clean([null, "", "   ", Zero, "not-a-guid", a, a.ToLowerInvariant(), "/users/../x", Guid.Parse(a).ToString("B")]);
+        Assert.Equal([Guid.Parse(a).ToString("D")], clean);
+        Assert.False(GraphIds.IsUsable(null));
+        Assert.False(GraphIds.IsUsable(Zero));
+        Assert.True(GraphIds.IsUsable(Guid.NewGuid().ToString()));
+    }
+
+    [Fact]
+    public async Task UsersWithBlankZeroOrRepeatedIdsNeverReachTheBatch()
+    {
+        var good = "0a0a0a0a-0000-0000-0000-000000000001";
+        var sent = new List<string>();
+        var handler = new StubHandler(r =>
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(r.Content!.ReadAsStringAsync().Result);
+            var reqs = doc.RootElement.GetProperty("requests").EnumerateArray().Select(x => (Id: x.GetProperty("id").GetString()!, Url: x.GetProperty("url").GetString()!)).ToList();
+            sent.AddRange(reqs.Select(q => q.Url));
+            return Json("{\"responses\":[" + string.Join(",", reqs.Select(q => Resp(q.Id, 200, "{\"id\":\"" + q.Id + "\",\"userPrincipalName\":\"a@x\"}"))) + "]}");
+        });
+        var users = new List<EntraUser>();
+        await foreach (var u in new HttpGraphReader(Client(handler)).ReadUsersAsync([null!, "", Zero, good, good.ToUpperInvariant(), "x y"], default)) users.Add(u);
+        Assert.Single(users);
+        Assert.Single(sent);
+        Assert.Contains(good, sent[0]);
+    }
+
+    [Fact]
+    public async Task NoUsableIdMeansNoRequestAtAll()
+    {
+        var calls = 0;
+        var handler = new StubHandler(_ => { calls++; return Json("{\"responses\":[]}"); });
+        var reader = new HttpGraphReader(Client(handler));
+        await foreach (var _ in reader.ReadUsersAsync(["", Zero], default)) { }
+        await foreach (var _ in reader.ReadDevicePolicyStatesAsync([Zero, ""], default)) { }
+        Assert.Equal(0, calls);
+    }
+
+    [Fact]
+    public async Task BatchDropsMalformedEntriesInsteadOfLettingGraphRejectTheWholeBatch()
+    {
+        var sentIds = new List<string>();
+        var handler = new StubHandler(r =>
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(r.Content!.ReadAsStringAsync().Result);
+            var ids = doc.RootElement.GetProperty("requests").EnumerateArray().Select(x => x.GetProperty("id").GetString()!).ToList();
+            sentIds.AddRange(ids);
+            return Json("{\"responses\":[" + string.Join(",", ids.Select(id => Resp(id, 200, "{}"))) + "]}");
+        });
+        var client = Client(handler);
+        var result = await client.BatchGetAsync([("ok", "/users/1"), ("", "/users/2"), ("dup", "/users/3"), ("dup", "/users/4"), ("hole", "/users//x"), ("abs", "https://evil.test/x"), ("proto", "//evil.test/x"), ("   ", "/users/5")], default);
+        Assert.Equal(["ok", "dup"], sentIds);
+        Assert.Equal(2, result.Count);
+        Assert.Equal(6, client.DroppedRequests);
     }
 }
 

@@ -376,7 +376,7 @@ public sealed class JobRunner(
         {
             var fromDevices = await db.IntuneDevices.AsNoTracking().Where(d => d.UserId != null).Select(d => d.UserId!).Distinct().ToListAsync(cancellationToken);
             var fromMam = await db.MamRegistrations.AsNoTracking().Where(r => r.UserId != null).Select(r => r.UserId!).Distinct().ToListAsync(cancellationToken);
-            ids = fromDevices.Concat(fromMam).Distinct().ToList();
+            ids = GraphIds.Clean(fromDevices.Concat(fromMam)); // blank, zero-GUID and repeated ids would break the $batch request
         }
 
         var rows = new Dictionary<string, EntraUserRecord>();
