@@ -15,7 +15,7 @@ namespace Nexus.Worker.Health;
 public sealed class GraphAccessCheck(NexusSettings settings, NexusPaths paths, ISourceFactory sources) : IHealthCheck
 {
     public const string CheckName = "Azure: Entra ID e Intune";
-    private const int ActivePhase = 1;
+    private const int ActivePhase = 2; // policies, MAM and users are read now
 
     public string Name => CheckName;
 

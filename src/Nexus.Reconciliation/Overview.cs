@@ -121,14 +121,17 @@ public static class OverviewBuilder
         var mdm = active.Where(v => v.Asset.IntuneChannel == "Mdm").ToList();
         var byod = active.Where(v => v.Group is Groups.ByodMobile or Groups.ByodComputers).ToList();
         var anyMgmt = src.Sccm || src.Intune;
+        var winEncryptable = active.Where(v => v is { Group: Groups.Computers } && v.Asset is { Platform: "WindowsClient", IntuneChannel: "Mdm", IsEncrypted: not null }).ToList();
 
         var highlights = new List<KpiCard>
         {
             Make("gestao", "Cobertura de gestão", anyMgmt, corporate.Count(v => v.Management != Management.None), corporate.Count, 98, "corporativos ativos com alguma gestão", "SCCM ou Intune ainda sem coleta"),
             Make("conformidade", "Conformidade Intune", src.Intune, mdm.Count(v => string.Equals(v.Asset.ComplianceState, "compliant", StringComparison.OrdinalIgnoreCase)), mdm.Count, 95, "dispositivos MDM ativos conformes", "Intune ainda sem coleta"),
             Make("patch", "Patch em até 30 dias", false, 0, 0, 90, "", "Estado de atualizações ainda não é coletado"),
-            Make("cripto", "Criptografia e EDR", false, 0, 0, 98, "", "BitLocker e Defender ainda não são coletados"),
-            Make("byod", "BYOD protegido", false, 0, 0, 90, "", "Proteção de aplicativos (MAM) ainda não é coletada"),
+            Make("cripto", "Criptografia (BitLocker)", src.Intune && winEncryptable.Count > 0, winEncryptable.Count(v => v.Asset.IsEncrypted == true), winEncryptable.Count, 98,
+                "Windows MDM ativos com BitLocker ligado (EDR ainda não é coletado)", "Intune ainda sem estado de criptografia"),
+            Make("byod", "BYOD protegido", src.Intune && src.Mam, byod.Count(v => v.Asset.IntuneChannel == "Mdm" || v.Asset.HasMam), byod.Count, 90,
+                "BYOD ativos com MDM ou proteção de aplicativos (MAM)", "Proteção de aplicativos (MAM) ainda sem coleta"),
         };
 
         var cogestao = Make("cogestao", "Co-gestão Windows", src.Sccm && src.Intune, winClients.Count(v => v.Management == Management.CoManaged), winClients.Count, 95, "Windows ativos com SCCM e Intune MDM");
@@ -140,6 +143,7 @@ public static class OverviewBuilder
             healthy,
             new("semgestao", "Corporativos sem gestão", anyMgmt ? KpiState.Available : KpiState.NotEnabled, views.Count(v => v.Issues.Contains("nomgr")), views.Count, null, true, "no AD ou Entra, fora do SCCM e do Intune", "/inventario?pendencia=nomgr"),
             new("win10", "Windows 10 restantes", KpiState.Available, views.Count(v => v.Issues.Contains("eol")), views.Count, null, true, "fora de suporte desde out/2025", "/inventario?pendencia=eol"),
+            new("politicas", "Perfis ou políticas com falha", src.Policies ? KpiState.Available : KpiState.NotEnabled, views.Count(v => v.Asset.CompliancePoliciesFailed > 0 || v.Asset.ConfigProfilesFailed > 0), views.Count(v => v.Asset.PoliciesCollected), null, true, "dispositivos com política ou perfil em erro, conflito ou não conforme", "/inventario?pendencia=cfgfail"),
             new("altas", "Pendências críticas e altas", KpiState.Available, views.Count(v => v.State == States.Risk), views.Count, null, true, "dispositivos em risco", "/inventario?estado=Risco"),
         };
 
@@ -158,7 +162,7 @@ public static class OverviewBuilder
         }).ToList();
 
         var index = s.Issues;
-        var top = HealthModel.Rules.Where(r => r.Available && r.Id != "stale")
+        var top = HealthModel.Rules.Where(r => r.IsAvailable(s.Sources) && r.Id != "stale")
             .Select(r => new RuleCount(r, index.Rule(r.Id), Groups.All.ToDictionary(g => g, g => index.RuleInGroup(g, r.Id))))
             .Where(r => r.Devices > 0).OrderBy(r => r.Rule.Priority).ThenByDescending(r => r.Devices).Take(6).ToList();
 

@@ -313,7 +313,7 @@ public class InventoryPipelineTests : IDisposable
         await CollectAllAsync();
         await using var db = _db.Create();
         var assets = await db.Assets.ToListAsync();
-        var links = await db.AssetLinks.ToListAsync();
+        var links = (await db.AssetLinks.ToListAsync()).Where(l => l.Source != "mam").ToList(); // MAM links are evidence, not source records
 
         Assert.True(assets.Count > 400);
         Assert.Equal(links.Select(l => (l.Source, l.SourceKey)).Distinct().Count(), links.Count); // every record is in exactly one asset

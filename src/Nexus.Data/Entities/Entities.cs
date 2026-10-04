@@ -15,6 +15,8 @@ public static class CommandTypes
     public const string CollectNow = "CollectNow";
     public const string PauseCollectors = "PauseCollectors";
     public const string ResumeCollectors = "ResumeCollectors";
+    /// <summary>Argument: asset id. Reads installed software for that device from SCCM and Intune.</summary>
+    public const string FetchInventory = "FetchInventory";
 }
 
 public enum CommandStatus
@@ -97,6 +99,21 @@ public sealed class SccmDeviceRecord
     public string? Model { get; set; }
     public DateTimeOffset? LastActiveAt { get; set; }
     public int? ClientActiveStatus { get; set; }
+    public string? ClientVersion { get; set; }
+    public DateTimeOffset? LastPolicyRequestAt { get; set; }
+    public DateTimeOffset? LastHwScanAt { get; set; }
+    public DateTimeOffset? LastSwScanAt { get; set; }
+    public DateTimeOffset? LastDdrAt { get; set; }
+    public string? LastLogonUser { get; set; }
+    public string? AdSite { get; set; }
+    public string? OsVersion { get; set; }
+    public DateTimeOffset? LastBootAt { get; set; }
+    public string? CpuName { get; set; }
+    public int? CpuCores { get; set; }
+    public long? MemoryMb { get; set; }
+    public long? DiskTotalMb { get; set; }
+    public long? DiskFreeMb { get; set; }
+    public string? BiosVersion { get; set; }
     public DateTimeOffset CollectedAt { get; set; }
 }
 
@@ -134,7 +151,127 @@ public sealed class IntuneDeviceRecord
     public DateTimeOffset? EnrolledAt { get; set; }
     public string? ComplianceState { get; set; }
     public string? UserPrincipalName { get; set; }
+    public string? UserId { get; set; }
+    public bool? IsEncrypted { get; set; }
+    /// <summary>Graph reports "True", "False" or "Unknown".</summary>
+    public string? JailBroken { get; set; }
+    public bool? IsSupervised { get; set; }
+    public long? TotalStorageBytes { get; set; }
+    public long? FreeStorageBytes { get; set; }
+    public long? PhysicalMemoryBytes { get; set; }
+    public string? DeviceRegistrationState { get; set; }
+    public bool? AutopilotEnrolled { get; set; }
+    public DateTimeOffset? ComplianceGraceExpiresAt { get; set; }
     public DateTimeOffset CollectedAt { get; set; }
+}
+
+/// <summary>Entra user behind a device or a MAM registration: department and whether the account is enabled.</summary>
+public sealed class EntraUserRecord
+{
+    public string Id { get; set; } = "";
+    public string? UserPrincipalName { get; set; }
+    public string? DisplayName { get; set; }
+    public string? Department { get; set; }
+    public bool? AccountEnabled { get; set; }
+    public DateTimeOffset CollectedAt { get; set; }
+}
+
+public static class PolicyKinds
+{
+    public const string Compliance = "compliance", Configuration = "configuration", SettingsCatalog = "settings",
+        MamIos = "mam-ios", MamAndroid = "mam-android", MamWindows = "mam-windows";
+
+    public static string Title(string kind) => kind switch
+    {
+        Compliance => "Conformidade",
+        Configuration => "Perfil de configuração",
+        SettingsCatalog => "Catálogo de configurações",
+        MamIos => "Proteção de apps (iOS)",
+        MamAndroid => "Proteção de apps (Android)",
+        MamWindows => "Proteção de apps (Windows)",
+        _ => kind,
+    };
+
+    public static bool IsMam(string kind) => kind.StartsWith("mam-", StringComparison.Ordinal);
+}
+
+/// <summary>Intune policy or profile (compliance, configuration, settings catalog, app protection) with where it is assigned.</summary>
+public sealed class IntunePolicyRecord
+{
+    /// <summary>"kind:id", unique across kinds.</summary>
+    public string Key { get; set; } = "";
+    public string Kind { get; set; } = "";
+    public string PolicyId { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string? Description { get; set; }
+    public string? Platform { get; set; }
+    public int? Version { get; set; }
+    public DateTimeOffset? LastModifiedAt { get; set; }
+    /// <summary>Readable summary: "Todos os dispositivos; Grupo: X; Exclui: Y".</summary>
+    public string? Assignments { get; set; }
+    public bool AssignedToAll { get; set; }
+    public int AssignmentCount { get; set; }
+    public DateTimeOffset CollectedAt { get; set; }
+}
+
+/// <summary>State of one policy on one device (compliance policy or configuration profile), as Intune reports it.</summary>
+public sealed class IntuneDevicePolicyState
+{
+    public long Id { get; set; }
+    public string IntuneDeviceId { get; set; } = "";
+    public string Kind { get; set; } = "";
+    public string? PolicyId { get; set; }
+    public string PolicyName { get; set; } = "";
+    /// <summary>compliant, nonCompliant, error, conflict, notApplicable, pending, unknown...</summary>
+    public string State { get; set; } = "";
+    public string? Platform { get; set; }
+    public int? SettingCount { get; set; }
+    public int? Version { get; set; }
+    public DateTimeOffset CollectedAt { get; set; }
+}
+
+/// <summary>App protection (MAM) registration: one app instance of one user on one device, with the policies applied.</summary>
+public sealed class MamRegistrationRecord
+{
+    public string Id { get; set; } = "";
+    public string? UserId { get; set; }
+    public string? DeviceName { get; set; }
+    public string? DeviceTag { get; set; }
+    /// <summary>iOS, Android or Windows.</summary>
+    public string? DeviceType { get; set; }
+    public string? AppIdentifier { get; set; }
+    public string? AppVersion { get; set; }
+    public string? PlatformVersion { get; set; }
+    public DateTimeOffset? LastSyncAt { get; set; }
+    public DateTimeOffset? CreatedAt { get; set; }
+    public string? FlaggedReasons { get; set; }
+    public string? AppliedPolicies { get; set; }
+    public string? IntendedPolicies { get; set; }
+    public DateTimeOffset CollectedAt { get; set; }
+}
+
+/// <summary>Software found on one device, fetched on demand when someone opens the device (too large to collect for the whole estate).</summary>
+public sealed class InstalledSoftwareRecord
+{
+    public long Id { get; set; }
+    public Guid AssetId { get; set; }
+    /// <summary>sccm or intune.</summary>
+    public string Source { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string? Version { get; set; }
+    public string? Publisher { get; set; }
+    public DateTimeOffset? InstalledOn { get; set; }
+    public long? SizeBytes { get; set; }
+}
+
+public sealed class InventoryFetch
+{
+    public Guid AssetId { get; set; }
+    public DateTimeOffset RequestedAt { get; set; }
+    public DateTimeOffset? FetchedAt { get; set; }
+    /// <summary>Pending, Done or Failed.</summary>
+    public string Status { get; set; } = "Pending";
+    public string? Message { get; set; }
 }
 
 /// <summary>Entra device as read in the last successful collection.</summary>
@@ -202,6 +339,27 @@ public sealed class Asset
     /// <summary>High, Medium or Low: the weakest evidence that joined records into this asset.</summary>
     public string Confidence { get; set; } = "High";
     public bool NeedsReview { get; set; }
+
+    public string? IntuneUserId { get; set; }
+    public bool? UserEnabled { get; set; }
+    public bool? IsEncrypted { get; set; }
+    public bool? JailBroken { get; set; }
+    public bool HasMam { get; set; }
+    public int MamAppCount { get; set; }
+    public DateTimeOffset? MamLastSyncAt { get; set; }
+    public string? MamPolicies { get; set; }
+    public bool PoliciesCollected { get; set; }
+    public int CompliancePolicies { get; set; }
+    public int CompliancePoliciesFailed { get; set; }
+    public int ConfigProfiles { get; set; }
+    public int ConfigProfilesFailed { get; set; }
+    public DateTimeOffset? SccmLastPolicyAt { get; set; }
+    public DateTimeOffset? SccmLastHwScanAt { get; set; }
+    public string? SccmClientVersion { get; set; }
+    public long? MemoryMb { get; set; }
+    public long? DiskTotalMb { get; set; }
+    public long? DiskFreeMb { get; set; }
+    public string? CpuName { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }
 

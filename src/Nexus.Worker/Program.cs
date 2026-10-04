@@ -45,6 +45,7 @@ try
     builder.Services.AddSingleton<ISourceFactory, SourceFactory>();
     builder.Services.AddSingleton<CollectionGate>();
     builder.Services.AddSingleton<JobRunner>();
+    builder.Services.AddSingleton<InventoryFetcher>();
     builder.Services.AddSingleton<HealthRunner>();
     builder.Services.AddHostedService<CommandProcessor>();
     builder.Services.AddHostedService<Scheduler>();

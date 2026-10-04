@@ -9,7 +9,11 @@ public sealed record ReconcileInput(
     IReadOnlyList<EntraDeviceRecord> Entra,
     IReadOnlyList<AssetLink> PreviousLinks,
     DateTimeOffset Now,
-    TimeSpan ActivityWindow);
+    TimeSpan ActivityWindow,
+    IReadOnlyList<EntraUserRecord>? Users = null,
+    IReadOnlyList<IntuneDevicePolicyState>? PolicyStates = null,
+    IReadOnlyList<MamRegistrationRecord>? Mam = null,
+    bool PoliciesCollected = false);
 
 public sealed record ReviewDraft(string Kind, string Detail, IReadOnlyList<string> Sources);
 
@@ -193,6 +197,7 @@ public static class Reconciler
         var used = new HashSet<Guid>();
         var assets = new List<Asset>();
         var links = new List<AssetLink>();
+        var lookups = Lookups.From(input);
 
         foreach (var c in components)
         {
@@ -205,7 +210,7 @@ public static class Reconciler
             }
 
             used.Add(id);
-            var asset = BuildAsset(id, c, input, flagged, evidenceOf);
+            var asset = BuildAsset(id, c, input, flagged, evidenceOf, lookups);
             assets.Add(asset);
             links.AddRange(c.Select(n =>
             {
@@ -214,10 +219,11 @@ public static class Reconciler
             }));
         }
 
+        AttachMam(input, assets, links, previous, used, review);
         return new ReconcileResult(assets, links, review);
     }
 
-    private static Asset BuildAsset(Guid id, List<Node> c, ReconcileInput input, HashSet<string> flagged, Dictionary<string, (string, string, string?)> evidenceOf)
+    private static Asset BuildAsset(Guid id, List<Node> c, ReconcileInput input, HashSet<string> flagged, Dictionary<string, (string, string, string?)> evidenceOf, Lookups lookups)
     {
         var sccm = c.Where(n => n.Source == Sccm).Select(n => (SccmDeviceRecord)n.Record)
             .OrderBy(r => r.Obsolete == true).ThenByDescending(r => r.LastActiveAt ?? DateTimeOffset.MinValue).ToList();
@@ -279,10 +285,178 @@ public static class Reconciler
         var hasMdm = asset.IntuneChannel == "Mdm";
         asset.Coverage = (hasClient, hasMdm) switch { (true, true) => "Both", (true, false) => "OnlySccm", (false, true) => "OnlyIntune", _ => "Neither" };
 
+        ApplyDetails(asset, primarySccm, primaryIntune, ad.FirstOrDefault(), lookups);
+
         var weakest = c.Where(n => n.Source != Ad).Select(n => evidenceOf[n.Ref].Item2 switch { "Low" => 2, "Medium" => 1, _ => 0 }).DefaultIfEmpty(0).Max();
         asset.Confidence = weakest switch { 2 => "Low", 1 => "Medium", _ => "High" };
         asset.NeedsReview = c.Any(n => flagged.Contains(n.Ref));
         return asset;
+    }
+
+    /// <summary>Lookups built once per run: users and policy counts per Intune device.</summary>
+    private sealed class Lookups
+    {
+        public Dictionary<string, EntraUserRecord> UsersById { get; init; } = [];
+        public Dictionary<string, EntraUserRecord> UsersByUpn { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, (int Compliance, int ComplianceFailed, int Config, int ConfigFailed)> Policies { get; init; } = [];
+        public bool PoliciesCollected { get; init; }
+
+        public static Lookups From(ReconcileInput input)
+        {
+            var users = input.Users ?? [];
+            var policies = new Dictionary<string, (int, int, int, int)>();
+            foreach (var g in (input.PolicyStates ?? []).GroupBy(p => p.IntuneDeviceId))
+            {
+                int Applied(string kind) => g.Count(p => p.Kind == kind && !IsNotApplied(p.State));
+                int Failed(string kind) => g.Count(p => p.Kind == kind && IsFailed(p.State));
+                policies[g.Key] = (Applied(PolicyKindsForReconcile.Compliance), Failed(PolicyKindsForReconcile.Compliance), Applied(PolicyKindsForReconcile.Configuration), Failed(PolicyKindsForReconcile.Configuration));
+            }
+
+            return new Lookups
+            {
+                UsersById = users.GroupBy(u => u.Id).ToDictionary(g => g.Key, g => g.First()),
+                UsersByUpn = users.Where(u => !string.IsNullOrEmpty(u.UserPrincipalName)).GroupBy(u => u.UserPrincipalName!, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase),
+                Policies = policies,
+                PoliciesCollected = input.PoliciesCollected,
+            };
+        }
+    }
+
+    private static class PolicyKindsForReconcile
+    {
+        public const string Compliance = "compliance", Configuration = "configuration";
+    }
+
+    public static bool IsNotApplied(string state) => state is "notApplicable" or "notAssigned" or "unknown";
+
+    public static bool IsFailed(string state) => state is "nonCompliant" or "error" or "conflict" or "failed";
+
+    private static void ApplyDetails(Asset asset, SccmDeviceRecord? sccm, IntuneDeviceRecord? intune, AdComputerRecord? ad, Lookups lookups)
+    {
+        if (sccm is not null)
+        {
+            asset.SccmLastPolicyAt = sccm.LastPolicyRequestAt;
+            asset.SccmLastHwScanAt = sccm.LastHwScanAt;
+            asset.SccmClientVersion = sccm.ClientVersion;
+            asset.CpuName = sccm.CpuName;
+            asset.MemoryMb = sccm.MemoryMb;
+            asset.DiskTotalMb = sccm.DiskTotalMb;
+            asset.DiskFreeMb = sccm.DiskFreeMb;
+            asset.OsVersion = sccm.OsVersion ?? asset.OsVersion;
+        }
+
+        if (intune is not null)
+        {
+            asset.IntuneUserId = intune.UserId;
+            asset.IsEncrypted = intune.IsEncrypted;
+            asset.JailBroken = intune.JailBroken switch { "True" => true, "False" => false, _ => null };
+            asset.MemoryMb ??= intune.PhysicalMemoryBytes is { } mem ? mem / (1024 * 1024) : null;
+            asset.DiskTotalMb ??= intune.TotalStorageBytes is { } total ? total / (1024 * 1024) : null;
+            asset.DiskFreeMb ??= intune.FreeStorageBytes is { } free ? free / (1024 * 1024) : null;
+
+            var user = intune.UserId is { } uid && lookups.UsersById.TryGetValue(uid, out var byId) ? byId
+                : intune.UserPrincipalName is { } upn && lookups.UsersByUpn.TryGetValue(upn, out var byUpn) ? byUpn : null;
+            if (user is not null)
+            {
+                asset.Department = user.Department;
+                asset.UserEnabled = user.AccountEnabled;
+                asset.PrimaryUser ??= user.UserPrincipalName;
+            }
+
+            if (lookups.PoliciesCollected)
+            {
+                asset.PoliciesCollected = true;
+                var (compliance, complianceFailed, config, configFailed) = lookups.Policies.GetValueOrDefault(intune.Id);
+                asset.CompliancePolicies = compliance;
+                asset.CompliancePoliciesFailed = complianceFailed;
+                asset.ConfigProfiles = config;
+                asset.ConfigProfilesFailed = configFailed;
+            }
+        }
+        else if (sccm?.LastLogonUser is { Length: > 0 } logon)
+        {
+            asset.PrimaryUser ??= logon;
+        }
+    }
+
+    private static string FamilyOf(string platform) => platform switch { "WindowsClient" or "WindowsServer" => "Windows", _ => platform };
+
+    /// <summary>
+    /// App protection (MAM) registrations belong to a user and a device tag. They join an asset only when the user has exactly one
+    /// Intune device of that platform; otherwise each device tag becomes its own asset (a personal device protected only by MAM),
+    /// and an ambiguous user goes to the review queue.
+    /// </summary>
+    private static void AttachMam(ReconcileInput input, List<Asset> assets, List<AssetLink> links, Dictionary<(string, string), Guid> previous, HashSet<Guid> used, List<ReviewDraft> review)
+    {
+        var registrations = input.Mam ?? [];
+        if (registrations.Count == 0)
+        {
+            return;
+        }
+
+        var byUserPlatform = assets.Where(a => a.IntuneUserId is not null && a.InIntune).GroupBy(a => (a.IntuneUserId!, FamilyOf(a.Platform))).ToDictionary(g => g.Key, g => g.ToList());
+        foreach (var group in registrations.Where(r => r.UserId is not null).GroupBy(r => (r.UserId!, Platform: r.DeviceType ?? "Other")))
+        {
+            var candidates = byUserPlatform.GetValueOrDefault((group.Key.Item1, group.Key.Platform)) ?? [];
+            if (candidates.Count == 1)
+            {
+                var asset = candidates[0];
+                Apply(asset, group.ToList());
+                links.Add(new AssetLink
+                {
+                    AssetId = asset.Id, Source = "mam", SourceKey = $"{group.Key.Item1}|{group.Key.Platform}", Evidence = "user-platform", Confidence = "Medium",
+                    Reason = "O usuário tem um único dispositivo desta plataforma no Intune.",
+                });
+                continue;
+            }
+
+            foreach (var device in group.GroupBy(r => r.DeviceTag ?? r.DeviceName ?? r.Id))
+            {
+                var key = "tag:" + device.Key;
+                var id = previous.TryGetValue(("mam", key), out var p) && !used.Contains(p) ? p : Guid.NewGuid();
+                used.Add(id);
+                var first = device.First();
+                var mamOnly = new Asset
+                {
+                    Id = id, Name = first.DeviceName ?? device.Key, Platform = group.Key.Platform, Ownership = "Personal", OwnershipSource = "mam",
+                    IntuneChannel = "None", Coverage = "OnlyMam", Confidence = candidates.Count > 1 ? "Low" : "High", UpdatedAt = input.Now,
+                    PrimaryUser = input.Users?.FirstOrDefault(u => u.Id == group.Key.Item1)?.UserPrincipalName ?? group.Key.Item1,
+                    Department = input.Users?.FirstOrDefault(u => u.Id == group.Key.Item1)?.Department,
+                    UserEnabled = input.Users?.FirstOrDefault(u => u.Id == group.Key.Item1)?.AccountEnabled,
+                    IntuneUserId = group.Key.Item1, OperatingSystem = group.Key.Platform, OsVersion = first.PlatformVersion,
+                };
+                Apply(mamOnly, device.ToList());
+                mamOnly.IsActive = mamOnly.LastActivityAt is { } last && input.Now - last <= input.ActivityWindow;
+                if (candidates.Count > 1)
+                {
+                    mamOnly.NeedsReview = true;
+                    review.Add(new ReviewDraft("MamAmbiguous",
+                        $"O usuário tem {candidates.Count} dispositivos {group.Key.Platform} no Intune; os registros de proteção de apps do aparelho {mamOnly.Name} não foram associados a nenhum deles.",
+                        [$"mam:{key}"]));
+                }
+
+                assets.Add(mamOnly);
+                links.Add(new AssetLink { AssetId = id, Source = "mam", SourceKey = key, Evidence = "mam-registration", Confidence = mamOnly.Confidence, Reason = "Aparelho conhecido apenas pela proteção de aplicativos." });
+            }
+        }
+
+        void Apply(Asset asset, List<MamRegistrationRecord> regs)
+        {
+            asset.HasMam = true;
+            asset.MamAppCount = regs.Count;
+            asset.MamLastSyncAt = regs.Max(r => r.LastSyncAt);
+            asset.MamPolicies = string.Join("; ", regs.SelectMany(r => (r.AppliedPolicies ?? "").Split("; ", StringSplitOptions.RemoveEmptyEntries)).Distinct().Take(8));
+            if (asset.LastActivityAt is null || asset.MamLastSyncAt > asset.LastActivityAt)
+            {
+                asset.LastActivityAt = asset.MamLastSyncAt;
+            }
+
+            asset.IsActive = asset.LastActivityAt is { } seen && input.Now - seen <= input.ActivityWindow;
+            if (asset is { InSccm: false, InIntune: false })
+            {
+                asset.Coverage = "OnlyMam";
+            }
+        }
     }
 
     private static string? Pick(IEnumerable<string?> values) => values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));

@@ -54,7 +54,7 @@
             <div class="list">
                 @foreach (var r in HealthModel.Rules.Where(r => r.Id is "byodnoprot" or "rooted" or "oslow"))
                 {
-                    <div class="row"><div class="t"><b>@r.Title</b><span>@r.Action · @r.Owner</span></div><span class="pill m">@(r.Available ? "ativa" : "Aguardando coleta")</span></div>
+                    <div class="row"><div class="t"><b>@r.Title</b><span>@r.Action · @r.Owner</span></div><span class="pill m">@(r.IsAvailable(_snapshot!.Sources) ? "ativa" : "Aguardando coleta")</span></div>
                 }
             </div>
         </section>

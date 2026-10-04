@@ -74,6 +74,10 @@ public sealed class CollectionSettings
     /// <summary>Intune and Entra ID (SPEC §10: 30 to 60 minutes for Intune).</summary>
     public int GraphIntervalMinutes { get; set; } = 60;
     public int ReconcileIntervalMinutes { get; set; } = 15;
+    /// <summary>Policy catalog and per-device policy states (heavy: one batched call per 10 devices).</summary>
+    public int PoliciesIntervalMinutes { get; set; } = 240;
+    public int MamIntervalMinutes { get; set; } = 120;
+    public int UsersIntervalMinutes { get; set; } = 240;
     public int MaxCpuPercent { get; set; } = 25;
     public int MaxMemoryMegabytes { get; set; } = 1024;
     /// <summary>Server CPU above this value postpones collections.</summary>

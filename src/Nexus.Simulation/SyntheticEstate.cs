@@ -133,7 +133,15 @@ public sealed class SyntheticEstate
                 "mdm", personal ? "userEnrollment" : "appleBulkWithUser", personal ? "personal" : "company", Now.AddHours(-random.Next(1, 200)), Now.AddDays(-random.Next(10, 400)),
                 "compliant", $"mobile{m}@corp.azul.sim", null));
         }
+
+        Enrich(seed);
     }
+
+    public List<IntunePolicy> Policies { get; } = [];
+    public List<DevicePolicyState> PolicyStates { get; } = [];
+    public List<MamRegistration> MamRegistrations { get; } = [];
+    public List<EntraUser> Users { get; } = [];
+    public Dictionary<string, List<DetectedApp>> DetectedApps { get; } = [];
 
     public List<SccmSystem> SccmSystems { get; } = [];
     public List<AdComputer> AdComputers { get; } = [];
@@ -141,11 +149,202 @@ public sealed class SyntheticEstate
     public List<EntraDevice> EntraDevices { get; } = [];
     public Dictionary<int, string> Serials { get; } = [];
 
-    public ISccmReader CreateSccmReader() => new InMemorySccmReader(SccmSystems);
+    public ISccmReader CreateSccmReader() => new InMemorySccmReader(SccmSystems, SoftwareFor);
 
     public IDirectoryReader CreateDirectoryReader() => new FakeDirectoryReader(AdComputers);
 
-    public IGraphReader CreateGraphReader() => new FakeGraphReader(IntuneDevices, EntraDevices);
+    public IGraphReader CreateGraphReader() => new FakeGraphReader(IntuneDevices, EntraDevices)
+    {
+        Policies = Policies, PolicyStates = PolicyStates, MamRegistrations = MamRegistrations, Users = Users, DetectedApps = DetectedApps,
+    };
+
+    /// <summary>Installed programs for one SCCM device: a common base plus a few that depend on the device (deterministic).</summary>
+    public IReadOnlyList<SccmSoftware> SoftwareFor(int resourceId)
+    {
+        var r = new Random(HashCode.Combine(resourceId, 77));
+        var list = new List<SccmSoftware>
+        {
+            new("Microsoft 365 Apps for enterprise", "16.0.17928", "Microsoft Corporation", Now.AddDays(-r.Next(30, 300))),
+            new("Microsoft Edge", "129.0.2792.52", "Microsoft Corporation", Now.AddDays(-r.Next(1, 20))),
+            new("Microsoft Teams", "24243.1309", "Microsoft Corporation", Now.AddDays(-r.Next(1, 40))),
+            new("Configuration Manager Client", "5.00.9128.1000", "Microsoft Corporation", Now.AddDays(-r.Next(60, 500))),
+            new("Microsoft Defender for Endpoint", "10.8210", "Microsoft Corporation", Now.AddDays(-r.Next(60, 500))),
+            new("7-Zip", "23.01", "Igor Pavlov", Now.AddDays(-r.Next(60, 800))),
+        };
+        foreach (var extra in new[] { ("Google Chrome", "129.0.6668.71", "Google LLC"), ("Adobe Acrobat Reader", "24.003.20112", "Adobe"), ("Zoom Workplace", "6.2.0", "Zoom Video Communications"),
+                     ("VLC media player", "3.0.21", "VideoLAN"), ("Notepad++", "8.6.9", "Notepad++ Team"), ("Java 8 Update 421", "8.0.4210.9", "Oracle Corporation"), ("AnyDesk", "8.0.15", "philandro Software") })
+        {
+            if (r.NextDouble() < .45)
+            {
+                list.Add(new SccmSoftware(extra.Item1, extra.Item2, extra.Item3, Now.AddDays(-r.Next(5, 900))));
+            }
+        }
+
+        return list.OrderBy(x => x.Name).ToList();
+    }
+
+    private static int StableHash(string text) => text.Aggregate(17, (h, c) => unchecked(h * 31 + c));
+
+    private void Enrich(int seed)
+    {
+        var random = new Random(seed ^ 0x5EED); // separate stream: the original estate stays exactly as it was
+
+        // SCCM: client details and hardware.
+        var cpus = new[] { ("Intel(R) Core(TM) i5-1235U", 10), ("Intel(R) Core(TM) i7-1355U", 10), ("AMD Ryzen 5 PRO 6650U", 6), ("Intel(R) Xeon(R) Silver 4310", 12) };
+        for (var i = 0; i < SccmSystems.Count; i++)
+        {
+            var s = SccmSystems[i];
+            var server = s.OperatingSystem?.Contains("Server", StringComparison.OrdinalIgnoreCase) == true;
+            var win10 = s.OperatingSystem?.Contains("Windows 10", StringComparison.OrdinalIgnoreCase) == true;
+            var cpu = server ? cpus[3] : cpus[random.Next(0, 3)];
+            var memory = server ? new[] { 32768, 65536 }[random.Next(2)] : new[] { 8192, 16384, 32768 }[random.Next(3)];
+            var disk = server ? 512000 : new[] { 238000, 476000 }[random.Next(2)];
+            var active = s.LastActiveAt;
+            SccmSystems[i] = s with
+            {
+                ClientVersion = s.Client == true ? "5.00.9128.1000" : null,
+                LastPolicyRequestAt = active?.AddMinutes(-random.Next(1, 90)),
+                LastDdrAt = active?.AddHours(-random.Next(0, 20)),
+                LastHwScanAt = active?.AddDays(-random.Next(0, 6)),
+                LastSwScanAt = active?.AddDays(-random.Next(0, 9)),
+                LastLogonUser = server ? null : $"CORP\\user{s.ResourceId % 997}",
+                AdSite = new[] { "Barueri", "Campinas", "Recife", "Porto-Alegre" }[random.Next(4)],
+                OsVersion = server ? "10.0.20348" : win10 ? "10.0.19045" : "10.0.22631",
+                LastBootAt = active?.AddDays(-random.Next(0, 25)),
+                CpuName = cpu.Item1,
+                CpuCores = cpu.Item2,
+                MemoryMb = memory,
+                DiskTotalMb = disk,
+                DiskFreeMb = (long)(disk * (0.08 + random.NextDouble() * 0.7)),
+                BiosVersion = $"{s.Manufacturer?.Split(' ')[0]} {random.Next(1, 3)}.{random.Next(0, 30)}.{random.Next(0, 9)}",
+            };
+        }
+
+        // Entra users and Intune device extras.
+        var userIds = new Dictionary<string, EntraUser>();
+        var depts = new[] { "Operações", "Comercial", "Finanças", "TI", "RH", "Manutenção", "Logística", "Jurídico" };
+        for (var i = 0; i < IntuneDevices.Count; i++)
+        {
+            var d = IntuneDevices[i];
+            var userId = d.UserId ?? GuidFrom(seed, 9000 + i, 12).ToString();
+            var windows = d.OperatingSystem == "Windows";
+            var mobile = d.OperatingSystem is "iOS" or "Android";
+            var total = windows ? 476_000_000_000L : 128_000_000_000L;
+            IntuneDevices[i] = d with
+            {
+                UserId = userId,
+                IsEncrypted = windows ? random.NextDouble() < .92 : true,
+                JailBroken = mobile ? (random.NextDouble() < .02 ? "True" : "False") : "Unknown",
+                IsSupervised = d.OperatingSystem == "iOS" ? d.OwnerType == "company" : null,
+                TotalStorageBytes = total,
+                FreeStorageBytes = (long)(total * (0.1 + random.NextDouble() * .6)),
+                PhysicalMemoryBytes = windows ? 16L * 1024 * 1024 * 1024 : 6L * 1024 * 1024 * 1024,
+                DeviceRegistrationState = "registered",
+                AutopilotEnrolled = windows ? random.NextDouble() < .6 : null,
+                ComplianceGraceExpiresAt = d.ComplianceState == "noncompliant" ? Now.AddDays(random.Next(1, 20)) : null,
+            };
+            if (!userIds.ContainsKey(userId))
+            {
+                userIds[userId] = new EntraUser(userId, d.UserPrincipalName ?? $"user{i}@corp.azul.sim", $"Usuário {i}", depts[random.Next(depts.Length)], random.NextDouble() > .03);
+            }
+        }
+
+        // Policy catalog.
+        IntunePolicy P(string kind, string name, string platform, string assign, bool all = false, int count = 1) =>
+            new(kind, GuidFrom(seed, StableHash(name), 13).ToString(), name, null, platform, random.Next(1, 9), Now.AddDays(-random.Next(3, 300)), assign, all, count);
+        Policies.AddRange(
+        [
+            P("compliance", "Windows - Conformidade corporativa", "Windows", "Grupo: Notebooks - Produção; Exclui: Dispositivos de teste", false, 2),
+            P("compliance", "macOS - Conformidade corporativa", "macOS", "Grupo: Macs corporativos"),
+            P("compliance", "iOS - Conformidade corporativa", "iOS", "Grupo: Celulares corporativos"),
+            P("compliance", "Android - Conformidade corporativa", "Android", "Grupo: Celulares corporativos"),
+            P("compliance", "Celulares BYOD - Conformidade mínima", "iOS, Android", "Grupo: BYOD"),
+            P("configuration", "Windows - BitLocker (criptografia de disco)", "Windows", "Todos os dispositivos", true),
+            P("configuration", "Windows - Defender e firewall", "Windows", "Todos os dispositivos", true),
+            P("configuration", "Windows - Wi-Fi corporativo", "Windows", "Grupo: Notebooks - Produção"),
+            P("configuration", "Windows - Anel de atualização (Produção)", "Windows", "Grupo: Notebooks - Produção; Exclui: Piloto"),
+            P("configuration", "iOS - Restrições de dispositivo", "iOS", "Grupo: Celulares corporativos"),
+            P("configuration", "Android - Perfil de trabalho", "Android", "Grupo: Celulares corporativos"),
+            P("configuration", "macOS - FileVault", "macOS", "Grupo: Macs corporativos"),
+            P("settings", "Windows - Linha de base de segurança", "windows10", "Grupo: Notebooks - Produção"),
+            P("mam-ios", "iOS - Proteção de apps corporativos", "iOS", "Grupo: BYOD"),
+            P("mam-android", "Android - Proteção de apps corporativos", "Android", "Grupo: BYOD"),
+            P("mam-windows", "Windows - Proteção de dados (Edge)", "Windows", "Grupo: BYOD"),
+        ]);
+
+        // Per-device policy states.
+        DevicePolicyState Ps(string device, string kind, string name, string state, string platform) =>
+            new(device, kind, GuidFrom(seed, StableHash(name), 13).ToString(), name, state, platform, random.Next(4, 40), 1);
+        foreach (var d in IntuneDevices.Where(d => d.ManagementAgent?.Contains("mdm", StringComparison.OrdinalIgnoreCase) == true))
+        {
+            var failing = d.ComplianceState == "noncompliant";
+            var noPolicy = random.NextDouble() < .04 && !failing;
+            switch (d.OperatingSystem)
+            {
+                case "Windows":
+                    if (!noPolicy)
+                    {
+                        PolicyStates.Add(Ps(d.Id, "compliance", "Windows - Conformidade corporativa", failing ? "nonCompliant" : "compliant", "windows10AndLater"));
+                    }
+
+                    PolicyStates.Add(Ps(d.Id, "configuration", "Windows - BitLocker (criptografia de disco)", d.IsEncrypted == false ? "error" : "compliant", "windows10AndLater"));
+                    PolicyStates.Add(Ps(d.Id, "configuration", "Windows - Defender e firewall", random.NextDouble() < .04 ? "conflict" : "compliant", "windows10AndLater"));
+                    PolicyStates.Add(Ps(d.Id, "configuration", "Windows - Wi-Fi corporativo", "compliant", "windows10AndLater"));
+                    PolicyStates.Add(Ps(d.Id, "configuration", "Windows - Anel de atualização (Produção)", random.NextDouble() < .05 ? "pending" : "compliant", "windows10AndLater"));
+                    break;
+                case "iOS":
+                case "Android":
+                    var ios = d.OperatingSystem == "iOS";
+                    var byod = d.OwnerType == "personal";
+                    PolicyStates.Add(Ps(d.Id, "compliance", byod ? "Celulares BYOD - Conformidade mínima" : ios ? "iOS - Conformidade corporativa" : "Android - Conformidade corporativa", failing ? "nonCompliant" : "compliant", ios ? "iOS" : "androidForWork"));
+                    if (!byod)
+                    {
+                        PolicyStates.Add(Ps(d.Id, "configuration", ios ? "iOS - Restrições de dispositivo" : "Android - Perfil de trabalho", random.NextDouble() < .06 ? "error" : "compliant", ios ? "iOS" : "androidWorkProfile"));
+                    }
+
+                    break;
+                default:
+                    PolicyStates.Add(Ps(d.Id, "compliance", "macOS - Conformidade corporativa", "compliant", "macOS"));
+                    break;
+            }
+        }
+
+        // MAM: most personal phones also run protected apps; 25 users have MAM and no MDM.
+        var apps = new[] { ("com.microsoft.office.outlook", "Outlook"), ("com.microsoft.teams", "Teams"), ("com.microsoft.emmx", "Edge"), ("com.microsoft.skydrive", "OneDrive") };
+        var personalPhones = IntuneDevices.Where(d => d.OwnerType == "personal" && d.OperatingSystem is "iOS" or "Android").ToList();
+        void Register(string userId, string platform, string deviceName, string tag, int appCount)
+        {
+            var policy = platform == "iOS" ? "iOS - Proteção de apps corporativos" : platform == "Android" ? "Android - Proteção de apps corporativos" : "Windows - Proteção de dados (Edge)";
+            for (var a = 0; a < appCount; a++)
+            {
+                MamRegistrations.Add(new MamRegistration($"{tag}-{a}", userId, deviceName, tag, platform, apps[a].Item1, $"{random.Next(4, 9)}.{random.Next(0, 99)}.{random.Next(0, 9)}",
+                    platform == "iOS" ? "17.5" : "13", Now.AddHours(-random.Next(1, 400)), Now.AddDays(-random.Next(20, 300)),
+                    random.NextDouble() < .05 ? "Sistema abaixo da versão mínima" : null, policy, policy));
+            }
+        }
+
+        foreach (var phone in personalPhones.Where(_ => random.NextDouble() < .7))
+        {
+            Register(phone.UserId!, phone.OperatingSystem!, phone.DeviceName ?? "BYOD", "tag-" + phone.Id[..8], random.Next(2, 5));
+        }
+
+        for (var k = 0; k < 25; k++)
+        {
+            var userId = GuidFrom(seed, 8000 + k, 14).ToString();
+            var ios = k % 2 == 0;
+            userIds[userId] = new EntraUser(userId, $"byod{k}@corp.azul.sim", $"Usuário BYOD {k}", depts[random.Next(depts.Length)], true);
+            Register(userId, ios ? "iOS" : "Android", ios ? $"iPhone de byod{k}" : $"Android de byod{k}", $"solo-{k}", random.Next(1, 4));
+        }
+
+        Users.AddRange(userIds.Values);
+
+        // Applications Intune detected on Windows devices.
+        var names = new[] { ("Microsoft 365 Apps", "16.0.17928"), ("Google Chrome", "129.0.6668"), ("Zoom", "6.2.0"), ("Adobe Reader", "24.003"), ("7-Zip", "23.01"), ("Java 8", "8.0.421"), ("Slack", "4.40.133") };
+        foreach (var d in IntuneDevices.Where(d => d.OperatingSystem == "Windows"))
+        {
+            DetectedApps[d.Id] = names.Where(_ => random.NextDouble() < .7).Select(n => new DetectedApp(n.Item1, n.Item2, null, random.Next(20, 900) * 1_000_000L)).ToList();
+        }
+    }
 
     private static Guid GuidFrom(int seed, int index, int salt)
     {
@@ -154,8 +353,10 @@ public sealed class SyntheticEstate
         return new Guid(bytes);
     }
 
-    private sealed class InMemorySccmReader(IEnumerable<SccmSystem> systems) : ISccmReader
+    private sealed class InMemorySccmReader(IEnumerable<SccmSystem> systems, Func<int, IReadOnlyList<SccmSoftware>> software) : ISccmReader
     {
+        public Task<IReadOnlyList<SccmSoftware>> ReadSoftwareAsync(int resourceId, CancellationToken cancellationToken) => Task.FromResult(software(resourceId));
+
         public async IAsyncEnumerable<SccmSystem> ReadSystemsAsync([EnumeratorCancellation] CancellationToken cancellationToken)
         {
             foreach (var system in systems)

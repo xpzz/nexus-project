@@ -15,7 +15,7 @@
     <select name="grupo" aria-label="Grupo" data-auto><option value="">Grupo</option>@foreach (var g in Groups.All){<option value="@g" selected="@(Grupo == g)">@Groups.Title(g)</option>}<option value="byod" selected="@(Grupo == "byod")">BYOD (celulares e computadores)</option><option value="sem-gestao" selected="@(Grupo == "sem-gestao")">Sem gestão</option></select>
     <select name="gestao" aria-label="Gestão" data-auto><option value="">Gestão</option>@foreach (var m in Management.All.Where(m => m != Management.OnlyMam)){<option value="@m" selected="@(Gestao == m)">@m</option>}</select>
     <select name="estado" aria-label="Estado" data-auto><option value="">Estado</option><option value="ativos" selected="@(Estado == "ativos")">Ativos</option>@foreach (var s in States.All){<option value="@s" selected="@(Estado == s)">@s</option>}</select>
-    <select name="pendencia" aria-label="Pendência" data-auto><option value="">Pendência</option>@foreach (var r in HealthModel.Rules.Where(r => r.Available)){<option value="@r.Id" selected="@(Pendencia == r.Id)">@r.Title</option>}</select>
+    <select name="pendencia" aria-label="Pendência" data-auto><option value="">Pendência</option>@foreach (var r in HealthModel.Rules.Where(r => r.IsAvailable(Src))){<option value="@r.Id" selected="@(Pendencia == r.Id)">@r.Title</option>}</select>
     @if (!string.IsNullOrEmpty(Funil)) { <input type="hidden" name="funil" value="@Funil" /> }
     @if (!string.IsNullOrEmpty(Ordem)) { <input type="hidden" name="ordem" value="@Ordem" /> }
     @if (Desc) { <input type="hidden" name="desc" value="true" /> }
@@ -85,6 +85,7 @@
     [SupplyParameterFromQuery] public int Pagina { get; set; }
 
     private InventorySnapshot? _snapshot;
+    private SourceAvailability Src => _snapshot?.Sources ?? SourceAvailability.All;
     private List<AssetView> _rows = [];
     private List<AssetView> _page = [];
     private DateTimeOffset _now;

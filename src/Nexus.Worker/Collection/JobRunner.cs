@@ -1,6 +1,7 @@
 using Nexus.Data.Support;
 using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
+using Nexus.Collectors.Graph;
 using Nexus.Collectors.Sccm;
 using Nexus.Core.Configuration;
 using Nexus.Data;
@@ -15,9 +16,13 @@ public static class JobNames
     public const string ActiveDirectory = "ad.computers";
     public const string Intune = "intune.devices";
     public const string Entra = "entra.devices";
+    public const string Mam = "intune.mam";
+    public const string Users = "entra.users";
+    public const string Policies = "intune.policies";
     public const string Reconcile = "inventory.reconcile";
-    public static readonly string[] All = [Sccm, ActiveDirectory, Intune, Entra, Reconcile];
-    public static readonly string[] Collections = [Sccm, ActiveDirectory, Intune, Entra];
+    // Order matters: users are resolved from the devices and MAM registrations collected just before.
+    public static readonly string[] All = [Sccm, ActiveDirectory, Intune, Entra, Mam, Users, Policies, Reconcile];
+    public static readonly string[] Collections = [Sccm, ActiveDirectory, Intune, Entra, Mam, Users, Policies];
 }
 
 public sealed record JobOutcome(string Status, int? Records, string? Message);
@@ -48,6 +53,9 @@ public sealed class JobRunner(
         JobNames.Sccm => TimeSpan.FromMinutes(settings.Collection.SccmIntervalMinutes),
         JobNames.ActiveDirectory => TimeSpan.FromMinutes(settings.Collection.ActiveDirectoryIntervalMinutes),
         JobNames.Intune or JobNames.Entra => TimeSpan.FromMinutes(settings.Collection.GraphIntervalMinutes),
+        JobNames.Mam => TimeSpan.FromMinutes(settings.Collection.MamIntervalMinutes),
+        JobNames.Users => TimeSpan.FromMinutes(settings.Collection.UsersIntervalMinutes),
+        JobNames.Policies => TimeSpan.FromMinutes(settings.Collection.PoliciesIntervalMinutes),
         JobNames.Reconcile => TimeSpan.FromMinutes(settings.Collection.ReconcileIntervalMinutes),
         _ => throw new ArgumentOutOfRangeException(nameof(job), job, "Coleta desconhecida."),
     };
@@ -95,6 +103,9 @@ public sealed class JobRunner(
                 JobNames.ActiveDirectory => await CollectDirectoryAsync(settings, now, cancellationToken),
                 JobNames.Intune => await CollectIntuneAsync(settings, now, cancellationToken),
                 JobNames.Entra => await CollectEntraAsync(settings, now, cancellationToken),
+                JobNames.Mam => await CollectMamAsync(settings, now, cancellationToken),
+                JobNames.Users => await CollectUsersAsync(settings, now, cancellationToken),
+                JobNames.Policies => await CollectPoliciesAsync(settings, now, cancellationToken),
                 JobNames.Reconcile => await ReconcileAsync(cancellationToken),
                 _ => throw new ArgumentOutOfRangeException(nameof(job)),
             };
@@ -150,8 +161,15 @@ public sealed class JobRunner(
                 Manufacturer = d.Manufacturer, Model = d.Model, OperatingSystem = d.OperatingSystem, OsVersion = d.OsVersion,
                 ManagementAgent = d.ManagementAgent, EnrollmentType = d.EnrollmentType, OwnerType = d.OwnerType,
                 LastSyncAt = d.LastSyncAt, EnrolledAt = d.EnrolledAt, ComplianceState = d.ComplianceState,
-                UserPrincipalName = d.UserPrincipalName, CollectedAt = now,
+                UserPrincipalName = d.UserPrincipalName, UserId = d.UserId, IsEncrypted = d.IsEncrypted, JailBroken = d.JailBroken, IsSupervised = d.IsSupervised,
+                TotalStorageBytes = d.TotalStorageBytes, FreeStorageBytes = d.FreeStorageBytes, PhysicalMemoryBytes = d.PhysicalMemoryBytes,
+                DeviceRegistrationState = d.DeviceRegistrationState, AutopilotEnrolled = d.AutopilotEnrolled, ComplianceGraceExpiresAt = d.ComplianceGraceExpiresAt, CollectedAt = now,
             };
+        }
+
+        if (reader is HttpGraphReader { UsedExtendedDeviceFields: false })
+        {
+            logger.LogWarning("Este tenant recusou os campos estendidos dos dispositivos (criptografia, armazenamento, jailbreak); coletado só o básico.");
         }
 
         await ReplaceAsync<IntuneDeviceRecord>(rows.Values.ToList(), cancellationToken);
@@ -190,25 +208,28 @@ public sealed class JobRunner(
             return null;
         }
 
-        var rows = new List<SccmDeviceRecord>();
+        var rows = new Dictionary<int, SccmDeviceRecord>(); // one row per ResourceID even if a joined view repeats it
         await foreach (var s in reader.ReadSystemsAsync(cancellationToken))
         {
-            rows.Add(new SccmDeviceRecord
+            rows[s.ResourceId] = new SccmDeviceRecord
             {
                 ResourceId = s.ResourceId, Name = s.Name, Domain = s.Domain, Client = s.Client, Active = s.Active,
                 Obsolete = s.Obsolete, AadDeviceId = s.AadDeviceId, SmbiosGuid = s.SmbiosGuid,
                 OperatingSystem = s.OperatingSystem, Serial = s.Serial, Manufacturer = s.Manufacturer, Model = s.Model,
                 LastActiveAt = s.LastActiveAt, ClientActiveStatus = s.ClientActiveStatus, CollectedAt = now,
-            });
+                ClientVersion = s.ClientVersion, LastPolicyRequestAt = s.LastPolicyRequestAt, LastHwScanAt = s.LastHwScanAt, LastSwScanAt = s.LastSwScanAt,
+                LastDdrAt = s.LastDdrAt, LastLogonUser = s.LastLogonUser, AdSite = s.AdSite, OsVersion = s.OsVersion, LastBootAt = s.LastBootAt,
+                CpuName = s.CpuName, CpuCores = s.CpuCores, MemoryMb = s.MemoryMb, DiskTotalMb = s.DiskTotalMb, DiskFreeMb = s.DiskFreeMb, BiosVersion = s.BiosVersion,
+            };
         }
 
-        if (reader is SqlSccmReader { UsedExtendedQuery: false, FallbackReason: { } reason })
+        if (reader is SqlSccmReader { FallbackReason: { } reason })
         {
             logger.LogWarning("{Reason}", reason);
         }
 
         _slowQueryObserved = queryGate.SlowQueryObserved;
-        await ReplaceAsync<SccmDeviceRecord>(rows, cancellationToken);
+        await ReplaceAsync<SccmDeviceRecord>(rows.Values.ToList(), cancellationToken);
         return rows.Count;
     }
 
@@ -234,6 +255,105 @@ public sealed class JobRunner(
 
         await ReplaceAsync<AdComputerRecord>(rows.Values.ToList(), cancellationToken);
         return rows.Count;
+    }
+
+    private async Task<int?> CollectMamAsync(NexusSettings settings, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var reader = sources.CreateGraphReader(settings);
+        if (reader is null)
+        {
+            return null;
+        }
+
+        var rows = new Dictionary<string, MamRegistrationRecord>();
+        await foreach (var r in reader.ReadMamRegistrationsAsync(cancellationToken))
+        {
+            rows[r.Id] = new MamRegistrationRecord
+            {
+                Id = r.Id, UserId = r.UserId, DeviceName = r.DeviceName, DeviceTag = r.DeviceTag, DeviceType = r.DeviceType, AppIdentifier = r.AppIdentifier,
+                AppVersion = r.AppVersion, PlatformVersion = r.PlatformVersion, LastSyncAt = r.LastSyncAt, CreatedAt = r.CreatedAt, FlaggedReasons = r.FlaggedReasons,
+                AppliedPolicies = r.AppliedPolicies, IntendedPolicies = r.IntendedPolicies, CollectedAt = now,
+            };
+        }
+
+        await ReplaceAsync<MamRegistrationRecord>(rows.Values.ToList(), cancellationToken);
+        return rows.Count;
+    }
+
+    private async Task<int?> CollectUsersAsync(NexusSettings settings, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var reader = sources.CreateGraphReader(settings);
+        if (reader is null)
+        {
+            return null;
+        }
+
+        List<string> ids;
+        await using (var db = dbFactory.Create())
+        {
+            var fromDevices = await db.IntuneDevices.AsNoTracking().Where(d => d.UserId != null).Select(d => d.UserId!).Distinct().ToListAsync(cancellationToken);
+            var fromMam = await db.MamRegistrations.AsNoTracking().Where(r => r.UserId != null).Select(r => r.UserId!).Distinct().ToListAsync(cancellationToken);
+            ids = fromDevices.Concat(fromMam).Distinct().ToList();
+        }
+
+        var rows = new Dictionary<string, EntraUserRecord>();
+        foreach (var chunk in ids.Chunk(200))
+        {
+            await foreach (var u in reader.ReadUsersAsync(chunk, cancellationToken))
+            {
+                rows[u.Id] = new EntraUserRecord
+                {
+                    Id = u.Id, UserPrincipalName = u.UserPrincipalName, DisplayName = u.DisplayName, Department = u.Department, AccountEnabled = u.AccountEnabled, CollectedAt = now,
+                };
+            }
+        }
+
+        await ReplaceAsync<EntraUserRecord>(rows.Values.ToList(), cancellationToken);
+        return rows.Count;
+    }
+
+    private async Task<int?> CollectPoliciesAsync(NexusSettings settings, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var reader = sources.CreateGraphReader(settings);
+        if (reader is null)
+        {
+            return null;
+        }
+
+        var policies = new Dictionary<string, IntunePolicyRecord>();
+        await foreach (var p in reader.ReadPoliciesAsync(cancellationToken))
+        {
+            var key = $"{p.Kind}:{p.Id}";
+            policies[key] = new IntunePolicyRecord
+            {
+                Key = key, Kind = p.Kind, PolicyId = p.Id, Name = p.Name, Description = p.Description, Platform = p.Platform, Version = p.Version,
+                LastModifiedAt = p.LastModifiedAt, Assignments = p.Assignments, AssignedToAll = p.AssignedToAll, AssignmentCount = p.AssignmentCount, CollectedAt = now,
+            };
+        }
+
+        List<string> deviceIds;
+        await using (var db = dbFactory.Create())
+        {
+            deviceIds = await db.IntuneDevices.AsNoTracking().Where(d => d.ManagementAgent != null && d.ManagementAgent.ToLower().Contains("mdm")).Select(d => d.Id).ToListAsync(cancellationToken);
+        }
+
+        var states = new List<IntuneDevicePolicyState>();
+        foreach (var chunk in deviceIds.Chunk(500))
+        {
+            await foreach (var s in reader.ReadDevicePolicyStatesAsync(chunk, cancellationToken))
+            {
+                states.Add(new IntuneDevicePolicyState
+                {
+                    IntuneDeviceId = s.ManagedDeviceId, Kind = s.Kind, PolicyId = s.PolicyId, PolicyName = s.PolicyName, State = s.State,
+                    Platform = s.Platform, SettingCount = s.SettingCount, Version = s.Version, CollectedAt = now,
+                });
+            }
+        }
+
+        // Both tables change together or not at all: a half-read run never replaces a good snapshot.
+        await ReplaceAsync<IntunePolicyRecord>(policies.Values.ToList(), cancellationToken);
+        await ReplaceAsync<IntuneDevicePolicyState>(states, cancellationToken);
+        return policies.Count;
     }
 
     private async Task ReplaceAsync<T>(List<T> rows, CancellationToken cancellationToken) where T : class
