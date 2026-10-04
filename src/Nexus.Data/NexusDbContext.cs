@@ -33,6 +33,8 @@ public abstract class NexusDbContext(DbContextOptions options) : DbContext(optio
     public DbSet<RawRecordVersion> RawRecordVersions => Set<RawRecordVersion>();
     public DbSet<EvidenceTimelineEntry> EvidenceTimeline => Set<EvidenceTimelineEntry>();
     public DbSet<AssetChange> AssetChanges => Set<AssetChange>();
+    public DbSet<SavedView> SavedViews => Set<SavedView>();
+    public DbSet<ProtectionException> ProtectionExceptions => Set<ProtectionException>();
 
     protected override void OnModelCreating(ModelBuilder model)
     {
@@ -258,6 +260,27 @@ public abstract class NexusDbContext(DbContextOptions options) : DbContext(optio
             e.Property(x => x.NewValue).HasMaxLength(512);
             e.HasIndex(x => new { x.AssetId, x.At });
             e.HasIndex(x => x.At);
+        });
+
+        model.Entity<SavedView>(e =>
+        {
+            e.ToTable("saved_views");
+            e.Property(x => x.Name).HasMaxLength(120);
+            e.Property(x => x.Query).HasMaxLength(2000);
+            e.Property(x => x.Owner).HasMaxLength(256);
+            e.HasIndex(x => x.Owner);
+        });
+
+        model.Entity<ProtectionException>(e =>
+        {
+            e.ToTable("protection_exceptions");
+            e.Property(x => x.SubjectKind).HasMaxLength(16);
+            e.Property(x => x.SubjectId).HasMaxLength(64);
+            e.Property(x => x.SubjectName).HasMaxLength(256);
+            e.Property(x => x.Control).HasMaxLength(32);
+            e.Property(x => x.Reason).HasMaxLength(1000);
+            e.Property(x => x.ApprovedBy).HasMaxLength(256);
+            e.HasIndex(x => new { x.Control, x.SubjectId });
         });
 
         model.Entity<InventoryFetch>(e =>

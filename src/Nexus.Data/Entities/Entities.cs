@@ -531,3 +531,33 @@ public sealed class AssetChange
     public string? NewValue { get; set; }
     public Guid RunId { get; set; }
 }
+
+/// <summary>A named inventory filter, shareable by URL. Visible to its owner and, when shared, to everyone who can read the inventory.</summary>
+public sealed class SavedView
+{
+    public long Id { get; set; }
+    public string Name { get; set; } = "";
+    /// <summary>Query string of the inventory page (filters, sort and columns), without the leading question mark.</summary>
+    public string Query { get; set; } = "";
+    public string Owner { get; set; } = "";
+    public bool Shared { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+}
+
+/// <summary>An approved exception to a protection requirement (for example a user without MAM). It does not hide the gap: the gap shows as "excepted" with the reason.</summary>
+public sealed class ProtectionException
+{
+    public long Id { get; set; }
+    /// <summary>user or device.</summary>
+    public string SubjectKind { get; set; } = "";
+    /// <summary>Entra user id or asset id.</summary>
+    public string SubjectId { get; set; } = "";
+    public string SubjectName { get; set; } = "";
+    /// <summary>What is excepted: mam, mdm, compliance or edge.</summary>
+    public string Control { get; set; } = "";
+    public string Reason { get; set; } = "";
+    public string ApprovedBy { get; set; } = "";
+    public DateTimeOffset ApprovedAt { get; set; }
+    public DateTimeOffset? ExpiresAt { get; set; }
+    public bool Active { get; set; } = true;
+}

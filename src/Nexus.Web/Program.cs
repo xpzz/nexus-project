@@ -83,6 +83,8 @@ builder.Services.AddAuthentication(SetupAccessMiddleware.Scheme)
         o.LoginPath = SetupAccessMiddleware.AccessPath;
     });
 builder.Services.AddAuthorization();
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped(sp => { var http = sp.GetRequiredService<IHttpContextAccessor>().HttpContext; return Nexus.Web.Setup.CurrentAccess.From(http?.User, http?.Connection.RemoteIpAddress?.ToString()); });
 builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 
@@ -151,6 +153,8 @@ app.MapPost("/dispositivo/{id:guid}/inventario", async (Guid id, INexusDbFactory
 
     return Results.Redirect($"/dispositivo/{id}#software");
 }).DisableAntiforgery();
+
+app.MapInventoryEndpoints();
 
 app.MapGet("/diagnostico", async (HttpContext context, SettingsProvider settings, CancellationToken ct) =>
 {

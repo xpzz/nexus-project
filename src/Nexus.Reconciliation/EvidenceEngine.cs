@@ -61,6 +61,39 @@ public static class OperationalStates
     };
 
     public static bool IsActive(string state) => state is Confirmed or Probable;
+
+    /// <summary>A symbol next to the name so the state never depends on color alone.</summary>
+    public static string Icon(string state) => state switch
+    {
+        Confirmed => "✔",
+        Probable => "◐",
+        NoRecent => "○",
+        Inactive => "⊘",
+        Conflicting => "⚠",
+        Decommissioned => "✕",
+        _ => "?",
+    };
+
+    /// <summary>Pill class: ok, a (accent), w (attention), b (problem), m (neutral).</summary>
+    public static string Css(string state) => state switch
+    {
+        Confirmed => "ok",
+        Probable => "a",
+        NoRecent => "w",
+        Conflicting => "b",
+        _ => "m",
+    };
+}
+
+/// <summary>The most recent report among the tools that know the asset, for the "last evidence" column.</summary>
+public static class LastEvidence
+{
+    public static (string Label, DateTimeOffset At)? Of(Asset a)
+    {
+        // Telemetry first: a device that reports itself says more than the identity side that merely knows it.
+        var latest = ActivityModel.Signals(a).Where(s => s.At is not null).OrderByDescending(s => s.Strong).ThenByDescending(s => s.At).FirstOrDefault();
+        return latest is null ? null : (latest.Label, latest.At!.Value);
+    }
 }
 
 public enum SignalTier { Telemetry, Identity }
