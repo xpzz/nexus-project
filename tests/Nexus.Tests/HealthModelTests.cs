@@ -12,7 +12,7 @@ public class HealthModelTests
         Id = Guid.NewGuid(), Name = "PC", Platform = "WindowsClient", Ownership = "Corporate", OperatingSystem = os, OsVersion = version, IsActive = active, ComplianceState = "compliant",
         Coverage = coverage, InSccm = coverage is "Both" or "OnlySccm", SccmClient = coverage is "Both" or "OnlySccm", SccmHealth = coverage is "Both" or "OnlySccm" ? "Healthy" : "NotApplicable",
         InIntune = coverage is "Both" or "OnlyIntune", IntuneChannel = coverage is "Both" or "OnlyIntune" ? "Mdm" : "None", InAd = true,
-        InXdr = true, XdrStatus = "CONNECTED",
+        InXdr = true, XdrStatus = "CONNECTED", InNetskope = true,
     };
 
     [Fact]
@@ -50,7 +50,7 @@ public class HealthModelTests
         Assert.Equal(States.Risk, pc.State);
         Assert.Equal(80, pc.Score);
 
-        var mac = new Asset { Platform = "macOS", Ownership = "Corporate", IsActive = true, InIntune = true, IntuneChannel = "Mdm", Coverage = "OnlyIntune" };
+        var mac = new Asset { Platform = "macOS", Ownership = "Corporate", IsActive = true, InIntune = true, IntuneChannel = "Mdm", Coverage = "OnlyIntune", InNetskope = true };
         Assert.True(AssetView.From(mac, All).MeetsExpected);
         Assert.Empty(AssetView.From(mac, All).Issues);
     }

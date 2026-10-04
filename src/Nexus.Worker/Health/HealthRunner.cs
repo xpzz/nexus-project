@@ -4,6 +4,7 @@ using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Nexus.Collectors.ActiveDirectory;
 using Nexus.Collectors.Sccm;
+using Nexus.Collectors.Netskope;
 using Nexus.Collectors.Xdr;
 using Nexus.Core.Configuration;
 using Nexus.Collectors.Graph;
@@ -70,6 +71,16 @@ public sealed class HealthRunner(SettingsProvider settingsProvider, INexusDbFact
         var directory = sources.CreateDirectoryReader(settings.ActiveDirectory) ?? new FakeDirectoryReader([]);
         yield return new DirectoryHealthCheck(settings.ActiveDirectory, directory);
         yield return new GraphAccessCheck(settings, paths, sources);
+        switch (settings.Netskope.Mode)
+        {
+            case SourceMode.Live:
+                yield return new NetskopeAccessCheck(settings.Netskope, () => sources.CreateNetskopeReader(settings), clock);
+                break;
+            case SourceMode.Simulated:
+                yield return new StaticCheck(NetskopeAccessCheck.CheckName, HealthStatus.Ok, "Fonte simulada (modo demonstração).");
+                break;
+        }
+
         switch (settings.Xdr.Mode)
         {
             case SourceMode.Live:

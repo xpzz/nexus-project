@@ -43,6 +43,7 @@ public sealed class SettingsStore(NexusPaths paths)
     {
         var copy = JsonSerializer.Deserialize<NexusSettings>(JsonSerializer.Serialize(settings, JsonOptions), JsonOptions)!;
         copy.Database.ProtectedPassword = null;
+        copy.Netskope.ProtectedToken = null;
         return JsonSerializer.Serialize(copy, JsonOptions);
     }
 
@@ -52,6 +53,7 @@ public sealed class SettingsStore(NexusPaths paths)
         var imported = JsonSerializer.Deserialize<NexusSettings>(json, JsonOptions)
             ?? throw new InvalidDataException("Arquivo de configuração vazio ou inválido.");
         imported.Database.ProtectedPassword = current.Database.ProtectedPassword;
+        imported.Netskope.ProtectedToken = current.Netskope.ProtectedToken;
         return imported;
     }
 }

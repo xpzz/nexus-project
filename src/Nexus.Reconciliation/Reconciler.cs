@@ -14,7 +14,8 @@ public sealed record ReconcileInput(
     IReadOnlyList<IntuneDevicePolicyState>? PolicyStates = null,
     IReadOnlyList<MamRegistrationRecord>? Mam = null,
     bool PoliciesCollected = false,
-    IReadOnlyList<XdrEndpointRecord>? Xdr = null);
+    IReadOnlyList<XdrEndpointRecord>? Xdr = null,
+    IReadOnlyList<NetskopeClientRecord>? Netskope = null);
 
 public sealed record ReviewDraft(string Kind, string Detail, IReadOnlyList<string> Sources);
 
@@ -28,7 +29,7 @@ public sealed record ReconcileResult(IReadOnlyList<Asset> Assets, IReadOnlyList<
 /// </summary>
 public static class Reconciler
 {
-    public const string Sccm = "sccm", Intune = "intune", Entra = "entra", Ad = "ad", Xdr = "xdr";
+    public const string Sccm = "sccm", Intune = "intune", Entra = "entra", Ad = "ad", Xdr = "xdr", Netskope = "netskope";
 
     private sealed class Node(string source, string key, object record)
     {
@@ -46,6 +47,7 @@ public static class Reconciler
         nodes.AddRange(input.Entra.Select(r => new Node(Entra, r.Id, r)));
         nodes.AddRange(input.Ad.Select(r => new Node(Ad, r.ObjectGuid.ToString(), r)));
         nodes.AddRange((input.Xdr ?? []).Select(r => new Node(Xdr, r.AgentId, r)));
+        nodes.AddRange((input.Netskope ?? []).Select(r => new Node(Netskope, r.Id, r)));
 
         var parent = nodes.ToDictionary(n => n.Ref, n => n.Ref);
         var evidenceOf = nodes.ToDictionary(n => n.Ref, _ => ("none", "High", (string?)null));
@@ -93,8 +95,21 @@ public static class Reconciler
             }
         }
 
+        // 1b. Netskope reports the identifier the management tool gave the device. When it is an Entra device id or an Intune device id, it is a strong key.
+        var byAad = nodes.Where(n => n.Source is Sccm or Intune or Entra && AadId(n) is not null).GroupBy(n => AadId(n)!.Value).ToDictionary(g => g.Key, g => g.First());
+        var byIntuneId = nodes.Where(n => n.Source == Intune && Guid.TryParse(((IntuneDeviceRecord)n.Record).Id, out _))
+            .GroupBy(n => Guid.Parse(((IntuneDeviceRecord)n.Record).Id)).ToDictionary(g => g.Key, g => g.First());
+        foreach (var net in nodes.Where(n => n.Source == Netskope))
+        {
+            if (Guid.TryParse(((NetskopeClientRecord)net.Record).ManagementId, out var managementGuid) && managementGuid != Guid.Empty
+                && (byAad.GetValueOrDefault(managementGuid) ?? byIntuneId.GetValueOrDefault(managementGuid)) is { } target)
+            {
+                Union(target, net, "management-id", "High", "O ID de gerenciamento do cliente Netskope é o ID do dispositivo no Entra ID ou no Intune.");
+            }
+        }
+
         // 2. Valid serial (+ compatible maker). Two distinct SCCM devices with one serial are not merged.
-        foreach (var group in nodes.Where(n => n.Source is Sccm or Intune && ValidSerial(SerialOf(n)) is not null)
+        foreach (var group in nodes.Where(n => n.Source is Sccm or Intune or Netskope && ValidSerial(SerialOf(n)) is not null)
                      .GroupBy(n => ValidSerial(SerialOf(n))!))
         {
             var members = group.ToList();
@@ -158,12 +173,12 @@ public static class Reconciler
         var mgmtByName = nodes.Where(n => n.Source is Sccm or Intune or Entra && NameKey(NameOf(n)) is { Length: > 0 })
             .GroupBy(n => NameKey(NameOf(n)))
             .ToDictionary(g => g.Key, g => g.GroupBy(n => Find(n.Ref)).Select(c => c.ToList()).ToList());
-        var supportByName = nodes.Where(n => n.Source is Ad or Xdr && NameKey(NameOf(n)) is { Length: > 0 }).GroupBy(n => NameKey(NameOf(n)));
+        var supportByName = nodes.Where(n => n.Source is Ad or Xdr or Netskope && NameKey(NameOf(n)) is { Length: > 0 }).GroupBy(n => NameKey(NameOf(n)));
         const string nameReason = "Só o nome coincide (evidência de apoio, não identifica o dispositivo).";
         foreach (var group in supportByName)
         {
             var ads = group.Where(n => n.Source == Ad).ToList();
-            var xdrs = group.Where(n => n.Source == Xdr).ToList();
+            var xdrs = group.Where(n => n.Source is Xdr or Netskope).ToList(); // endpoint agents (XDR, Netskope)
             if (mgmtByName.TryGetValue(group.Key, out var comps))
             {
                 if (comps.Count == 1)
@@ -186,7 +201,7 @@ public static class Reconciler
                 else
                 {
                     review.Add(new ReviewDraft("AmbiguousName",
-                        $"O nome {group.Key} coincide com {ads.Count} objeto(s) do AD, {xdrs.Count} agente(s) do XDR e {comps.Count} dispositivo(s) de gerenciamento. Nada foi associado.",
+                        $"O nome {group.Key} coincide com {ads.Count} objeto(s) do AD, {xdrs.Count} agente(s) (XDR ou Netskope) e {comps.Count} dispositivo(s) de gerenciamento. Nada foi associado.",
                         ads.Concat(xdrs).Concat(comps.SelectMany(c => c)).Select(n => n.Ref).ToList()));
                 }
 
@@ -203,7 +218,7 @@ public static class Reconciler
             }
             else if (ads.Count > 1 && xdrs.Count > 0)
             {
-                review.Add(new ReviewDraft("AmbiguousName", $"O nome {group.Key} coincide com {ads.Count} objetos do AD e {xdrs.Count} agente(s) do XDR. Nada foi associado.", ads.Concat(xdrs).Select(n => n.Ref).ToList()));
+                review.Add(new ReviewDraft("AmbiguousName", $"O nome {group.Key} coincide com {ads.Count} objetos do AD e {xdrs.Count} agente(s) (XDR ou Netskope). Nada foi associado.", ads.Concat(xdrs).Select(n => n.Ref).ToList()));
             }
             else if (ads.Count == 0)
             {
@@ -237,6 +252,13 @@ public static class Reconciler
             review.Add(new ReviewDraft("MultipleXdrRecords",
                 $"{c.Count(n => n.Source == Xdr)} agentes do XDR com o mesmo nome (reinstalação ou agente antigo). Contado como um dispositivo.",
                 c.Where(n => n.Source == Xdr).Select(n => n.Ref).ToList()));
+        }
+
+        foreach (var c in components.Where(c => c.Count(n => n.Source == Netskope) > 1))
+        {
+            review.Add(new ReviewDraft("MultipleNetskopeRecords",
+                $"{c.Count(n => n.Source == Netskope)} clientes Netskope para o mesmo equipamento (reinstalação ou cliente antigo). Contado como um dispositivo.",
+                c.Where(n => n.Source == Netskope).Select(n => n.Ref).ToList()));
         }
 
         var flagged = review.SelectMany(r => r.Sources).ToHashSet();
@@ -281,25 +303,34 @@ public static class Reconciler
         var xdr = c.Where(n => n.Source == Xdr).Select(n => (XdrEndpointRecord)n.Record)
             .OrderByDescending(r => IsXdrConnected(r.AgentStatus)).ThenByDescending(r => r.LastSeenAt ?? DateTimeOffset.MinValue).ToList();
 
+        var netskope = c.Where(n => n.Source == Netskope).Select(n => (NetskopeClientRecord)n.Record)
+            .OrderByDescending(r => r.LastEventAt ?? DateTimeOffset.MinValue).ToList();
+
         var primarySccm = sccm.FirstOrDefault();
         var primaryIntune = intune.FirstOrDefault();
         var primaryEntra = entra.FirstOrDefault();
         var primaryAd = ad.FirstOrDefault();
         var primaryXdr = xdr.FirstOrDefault();
+        var primaryNetskope = netskope.FirstOrDefault();
 
         var asset = new Asset
         {
             Id = id,
-            Name = primarySccm?.Name ?? primaryIntune?.DeviceName ?? primaryEntra?.DisplayName ?? primaryAd?.Name ?? ShortName(primaryXdr?.HostName) ?? "(sem nome)",
-            Serial = sccm.Select(r => ValidSerial(r.Serial)).Concat(intune.Select(r => ValidSerial(r.SerialNumber))).FirstOrDefault(s => s is not null),
-            Manufacturer = Pick(sccm.Select(r => r.Manufacturer).Concat(intune.Select(r => r.Manufacturer))),
-            Model = Pick(sccm.Select(r => r.Model).Concat(intune.Select(r => r.Model))),
+            Name = primarySccm?.Name ?? primaryIntune?.DeviceName ?? primaryEntra?.DisplayName ?? primaryAd?.Name ?? ShortName(primaryXdr?.HostName) ?? ShortName(primaryNetskope?.HostName) ?? "(sem nome)",
+            Serial = sccm.Select(r => ValidSerial(r.Serial)).Concat(intune.Select(r => ValidSerial(r.SerialNumber))).Concat(netskope.Select(r => ValidSerial(r.Serial))).FirstOrDefault(s => s is not null),
+            Manufacturer = Pick(sccm.Select(r => r.Manufacturer).Concat(intune.Select(r => r.Manufacturer)).Concat(netskope.Select(r => r.Manufacturer))),
+            Model = Pick(sccm.Select(r => r.Model).Concat(intune.Select(r => r.Model)).Concat(netskope.Select(r => r.Model))),
             PrimaryUser = primaryIntune?.UserPrincipalName,
             UpdatedAt = input.Now,
             InSccm = sccm.Count > 0,
             InIntune = intune.Count > 0,
             InEntra = entra.Count > 0,
             InAd = ad.Count > 0,
+            InNetskope = netskope.Count > 0,
+            NetskopeByNameOnly = c.Any(n => n.Source == Netskope && evidenceOf[n.Ref].Item1 == "name"),
+            NetskopeStatus = primaryNetskope?.Status,
+            NetskopeVersion = primaryNetskope?.ClientVersion,
+            NetskopeLastSeenAt = primaryNetskope?.LastEventAt,
             InXdr = xdr.Count > 0,
             XdrByNameOnly = c.Any(n => n.Source == Xdr && evidenceOf[n.Ref].Item1 == "name"),
             XdrStatus = primaryXdr?.AgentStatus,
@@ -313,9 +344,9 @@ public static class Reconciler
             EntraTrustType = primaryEntra?.TrustType,
         };
 
-        asset.OperatingSystem = primarySccm?.OperatingSystem ?? primaryIntune?.OperatingSystem ?? primaryEntra?.OperatingSystem ?? primaryAd?.OperatingSystem;
-        asset.OsVersion = primaryIntune?.OsVersion ?? primaryEntra?.OperatingSystemVersion ?? primaryAd?.OperatingSystemVersion;
-        asset.Platform = PlatformOf(primaryIntune?.OperatingSystem ?? primarySccm?.OperatingSystem ?? primaryEntra?.OperatingSystem ?? primaryAd?.OperatingSystem);
+        asset.OperatingSystem = primarySccm?.OperatingSystem ?? primaryIntune?.OperatingSystem ?? primaryEntra?.OperatingSystem ?? primaryAd?.OperatingSystem ?? primaryNetskope?.OperatingSystem;
+        asset.OsVersion = primaryIntune?.OsVersion ?? primaryEntra?.OperatingSystemVersion ?? primaryAd?.OperatingSystemVersion ?? primaryNetskope?.OsVersion;
+        asset.Platform = PlatformOf(primaryIntune?.OperatingSystem ?? primarySccm?.OperatingSystem ?? primaryEntra?.OperatingSystem ?? primaryAd?.OperatingSystem ?? primaryNetskope?.OperatingSystem);
 
         (asset.Ownership, asset.OwnershipSource) = OwnershipOf(primaryIntune, primaryEntra, asset);
 
@@ -334,8 +365,7 @@ public static class Reconciler
         asset.EntraLastSignInAt = primaryEntra?.LastSignInAt;
         asset.AdLastLogonAt = primaryAd?.LastLogonTimestamp;
 
-        asset.LastActivityAt = new[] { asset.SccmLastSeenAt, asset.IntuneLastSyncAt, asset.EntraLastSignInAt, asset.AdLastLogonAt, asset.XdrLastSeenAt }.Max();
-        asset.IsActive = asset.LastActivityAt is { } last && input.Now - last <= input.ActivityWindow;
+        ActivityModel.Apply(asset, input.Now, input.ActivityWindow);
 
         var hasClient = asset.SccmClient;
         var hasMdm = asset.IntuneChannel == "Mdm";
@@ -343,7 +373,7 @@ public static class Reconciler
 
         ApplyDetails(asset, primarySccm, primaryIntune, ad.FirstOrDefault(), lookups);
 
-        var weakest = c.Where(n => n.Source is Sccm or Intune or Entra).Select(n => evidenceOf[n.Ref].Item2 switch { "Low" => 2, "Medium" => 1, _ => 0 }).DefaultIfEmpty(0).Max();
+        var weakest = c.Where(n => n.Source is Sccm or Intune or Entra || (n.Source == Netskope && evidenceOf[n.Ref].Item1 != "name")).Select(n => evidenceOf[n.Ref].Item2 switch { "Low" => 2, "Medium" => 1, _ => 0 }).DefaultIfEmpty(0).Max();
         asset.Confidence = weakest switch { 2 => "Low", 1 => "Medium", _ => "High" };
         asset.NeedsReview = c.Any(n => flagged.Contains(n.Ref));
         return asset;
@@ -482,7 +512,6 @@ public static class Reconciler
                     IntuneUserId = group.Key.Item1, OperatingSystem = group.Key.Platform, OsVersion = first.PlatformVersion,
                 };
                 Apply(mamOnly, device.ToList());
-                mamOnly.IsActive = mamOnly.LastActivityAt is { } last && input.Now - last <= input.ActivityWindow;
                 if (candidates.Count > 1)
                 {
                     mamOnly.NeedsReview = true;
@@ -502,12 +531,7 @@ public static class Reconciler
             asset.MamAppCount = regs.Count;
             asset.MamLastSyncAt = regs.Max(r => r.LastSyncAt);
             asset.MamPolicies = string.Join("; ", regs.SelectMany(r => (r.AppliedPolicies ?? "").Split("; ", StringSplitOptions.RemoveEmptyEntries)).Distinct().Take(8));
-            if (asset.LastActivityAt is null || asset.MamLastSyncAt > asset.LastActivityAt)
-            {
-                asset.LastActivityAt = asset.MamLastSyncAt;
-            }
-
-            asset.IsActive = asset.LastActivityAt is { } seen && input.Now - seen <= input.ActivityWindow;
+            ActivityModel.Apply(asset, input.Now, input.ActivityWindow);
             if (asset is { InSccm: false, InIntune: false })
             {
                 asset.Coverage = "OnlyMam";
@@ -545,7 +569,7 @@ public static class Reconciler
             }
         }
 
-        return asset.InSccm || asset.InAd ? ("Corporate", "domain") : asset.InXdr ? ("Corporate", "xdr") : ("Unknown", null);
+        return asset.InSccm || asset.InAd ? ("Corporate", "domain") : asset.InXdr ? ("Corporate", "xdr") : asset.InNetskope ? ("Corporate", "netskope") : ("Unknown", null);
     }
 
     public static string PlatformOf(string? os)
@@ -619,6 +643,7 @@ public static class Reconciler
     {
         SccmDeviceRecord s => s.Serial,
         IntuneDeviceRecord i => i.SerialNumber,
+        NetskopeClientRecord ns => ns.Serial,
         _ => null,
     };
 
@@ -629,6 +654,7 @@ public static class Reconciler
         EntraDeviceRecord e => e.DisplayName ?? "",
         AdComputerRecord a => a.Name,
         XdrEndpointRecord x => x.HostName ?? "",
+        NetskopeClientRecord ns => ns.HostName ?? "",
         _ => "",
     };
 
@@ -680,7 +706,7 @@ public static class Reconciler
     {
         static string? Norm(string? v) => string.IsNullOrWhiteSpace(v) ? null : v.Trim().ToLowerInvariant();
         // Only the manufacturer is compared: model strings differ between SCCM (machine type) and Intune (marketing name).
-        var makers = members.Select(m => Norm(m.Record is SccmDeviceRecord s ? s.Manufacturer : ((IntuneDeviceRecord)m.Record).Manufacturer))
+        var makers = members.Select(m => Norm(m.Record switch { SccmDeviceRecord s => s.Manufacturer, IntuneDeviceRecord i => i.Manufacturer, NetskopeClientRecord n => n.Manufacturer, _ => null }))
             .Where(v => v is not null).Select(v => v!.Split(' ', ',', '.')[0]).Distinct().ToArray();
         return makers.Length <= 1;
     }

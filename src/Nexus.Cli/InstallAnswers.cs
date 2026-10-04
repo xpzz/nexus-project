@@ -59,6 +59,7 @@ public sealed class InstallAnswers
         if (DemoMode)
         {
             current.Xdr.Mode = SourceMode.Simulated;
+            current.Netskope.Mode = SourceMode.Simulated;
         }
 
         current.ActiveDirectory.Mode = DemoMode ? SourceMode.Simulated : ActiveDirectory.Mode;

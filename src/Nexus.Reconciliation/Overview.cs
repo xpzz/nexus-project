@@ -16,6 +16,15 @@ public sealed record KpiCard(string Key, string Label, KpiState State, int? Nume
     public double? MissingPoints => Percent is { } p && Target is { } t ? Math.Max(0, Math.Round(t - p, 1)) : null;
 }
 
+/// <summary>How one tool sees the active pool: devices it knows that reported in the window, knows but are silent, or does not know at all.</summary>
+public sealed record PoolSource(string Key, string Label, bool Enabled, bool Strong, int Reporting, int Silent, int Absent);
+
+/// <summary>The active pool and how each activity class and each tool contributes to it (ADR-0006).</summary>
+public sealed record PoolSummary(int WindowDays, int Pool, int Confirmed, int Single, int Unconfirmed, int Inactive, IReadOnlyList<PoolSource> Sources)
+{
+    public static PoolSummary Empty { get; } = new(30, 0, 0, 0, 0, 0, []);
+}
+
 public sealed record GroupCard(string Group, int Total, int Active, double? Score, int AtRisk, int Stale, int Pending, IReadOnlyDictionary<string, int> ByManagement, IReadOnlyDictionary<string, int> ByState);
 
 public sealed record RuleCount(Rule Rule, int Devices, IReadOnlyDictionary<string, int> ByGroup);
@@ -23,7 +32,7 @@ public sealed record RuleCount(Rule Rule, int Devices, IReadOnlyDictionary<strin
 public sealed record OverviewReport(
     double? ParkScore, string Headline, int BelowTarget, double AtRiskPercent,
     IReadOnlyList<KpiCard> Highlights, IReadOnlyList<KpiCard> Kpis, IReadOnlyList<GroupCard> Groups,
-    IReadOnlyDictionary<string, int> States, IReadOnlyList<RuleCount> TopRules, int Total, int Active);
+    IReadOnlyDictionary<string, int> States, IReadOnlyList<RuleCount> TopRules, int Total, int Active, PoolSummary Pool);
 
 public sealed record FailingPolicy(string Kind, string Name, int Failed, int Total);
 
@@ -41,7 +50,7 @@ public sealed record JobSummary(string Name, string? Status, DateTimeOffset? Las
 /// Immutable result of one reconciliation read. Everything the screens ask repeatedly (counts per group and rule, lookups, the overview)
 /// is computed once per snapshot, so a page render never walks the whole inventory more than once.
 /// </summary>
-public sealed class InventorySnapshot(IReadOnlyList<AssetView> views, IReadOnlyList<ReviewItem> review, IReadOnlyList<JobSummary> jobs, SourceAvailability sources, DateTimeOffset loadedAt, IntuneSummary? intune = null)
+public sealed class InventorySnapshot(IReadOnlyList<AssetView> views, IReadOnlyList<ReviewItem> review, IReadOnlyList<JobSummary> jobs, SourceAvailability sources, DateTimeOffset loadedAt, IntuneSummary? intune = null, int windowDays = 30)
 {
     private readonly Lazy<Dictionary<Guid, AssetView>> _byId = new(() => views.ToDictionary(v => v.Asset.Id));
     private readonly Lazy<IssueIndex> _issues = new(() => IssueIndex.Build(views));
@@ -52,6 +61,7 @@ public sealed class InventorySnapshot(IReadOnlyList<AssetView> views, IReadOnlyL
     public SourceAvailability Sources { get; } = sources;
     public DateTimeOffset LoadedAt { get; } = loadedAt;
     public IntuneSummary Intune { get; } = intune ?? IntuneSummary.Empty;
+    public int WindowDays { get; } = windowDays;
 
     public static InventorySnapshot Empty { get; } = new([], [], [], new SourceAvailability(false, false, false, false), DateTimeOffset.MinValue);
 
@@ -121,6 +131,30 @@ public static class OverviewBuilder
             : new KpiCard(key, label, KpiState.Available, num, den, target, lower, context, link);
     }
 
+    private static readonly (string Key, string Label, bool Strong, Func<Asset, bool> Known, Func<SourceAvailability, bool> Enabled)[] PoolSources =
+    [
+        ("sccm", "SCCM", true, a => a.InSccm, x => x.Sccm),
+        ("intune", "Intune", true, a => a.InIntune, x => x.Intune),
+        ("xdr", "Cortex XDR", true, a => a.InXdr, x => x.Xdr),
+        ("netskope", "Netskope", true, a => a.InNetskope, x => x.Netskope),
+        ("mam", "Intune MAM", true, a => a.HasMam, x => x.Mam),
+        ("entra", "Entra ID", false, a => a.InEntra, x => x.Entra),
+        ("ad", "Active Directory", false, a => a.InAd, x => x.ActiveDirectory),
+    ];
+
+    private static PoolSummary BuildPool(IReadOnlyList<AssetView> views, SourceAvailability src, int windowDays)
+    {
+        var pool = views.Where(v => v.Asset.IsActive).ToList();
+        var sources = PoolSources.Select(p =>
+        {
+            var reporting = pool.Count(v => (v.Asset.ActiveSources ?? "").Split(',').Contains(p.Key));
+            var known = pool.Count(v => p.Known(v.Asset));
+            return new PoolSource(p.Key, p.Label, p.Enabled(src), p.Strong, reporting, Math.Max(0, known - reporting), pool.Count - Math.Max(known, reporting));
+        }).ToList();
+        return new PoolSummary(windowDays, pool.Count, views.Count(v => v.Asset.ActivityClass == ActivityClasses.Confirmed), views.Count(v => v.Asset.ActivityClass == ActivityClasses.Single),
+            views.Count(v => v.Asset.ActivityClass == ActivityClasses.Unconfirmed), views.Count(v => v.Asset.ActivityClass == ActivityClasses.Inactive), sources);
+    }
+
     public static OverviewReport Build(InventorySnapshot s)
     {
         var views = s.Views;
@@ -179,13 +213,14 @@ public static class OverviewBuilder
             .Select(r => new RuleCount(r, index.Rule(r.Id), Groups.All.ToDictionary(g => g, g => index.RuleInGroup(g, r.Id))))
             .Where(r => r.Devices > 0).OrderBy(r => r.Rule.Priority).ThenByDescending(r => r.Devices).Take(6).ToList();
 
-        return new OverviewReport(active.Count == 0 ? null : Math.Round(active.Average(v => v.Score), 0), headline, below, atRiskPct, highlights, kpis, groups, states, top, views.Count, active.Count);
+        var pool = BuildPool(views, src, s.WindowDays);
+        return new OverviewReport(active.Count == 0 ? null : Math.Round(active.Average(v => v.Score), 0), headline, below, atRiskPct, highlights, kpis, groups, states, top, views.Count, active.Count, pool);
     }
 }
 
 public static class InventorySnapshotLoader
 {
-    public static async Task<InventorySnapshot> LoadAsync(INexusDbFactory dbFactory, TimeProvider clock, CancellationToken cancellationToken)
+    public static async Task<InventorySnapshot> LoadAsync(INexusDbFactory dbFactory, TimeProvider clock, CancellationToken cancellationToken, int windowDays = 30)
     {
         await using var db = dbFactory.Create();
         var sources = await InventoryReports.AvailabilityAsync(db, cancellationToken);
@@ -201,7 +236,7 @@ public static class InventorySnapshotLoader
         var mamCount = await db.MamRegistrations.CountAsync(cancellationToken);
         var mamUsers = await db.MamRegistrations.Where(r => r.UserId != null).Select(r => r.UserId).Distinct().CountAsync(cancellationToken);
         var intune = new IntuneSummary(kinds.ToDictionary(k => k.Key, k => k.Count), states.Sum(x => x.Count), states.Where(x => Reconciler.IsFailed(x.State)).Sum(x => x.Count), mamCount, mamUsers, failing);
-        return new InventorySnapshot(assets.Select(a => AssetView.From(a, sources)).ToList(), review, jobs, sources, clock.GetUtcNow(), intune);
+        return new InventorySnapshot(assets.Select(a => AssetView.From(a, sources)).ToList(), review, jobs, sources, clock.GetUtcNow(), intune, windowDays);
     }
 }
 
@@ -209,7 +244,7 @@ public static class InventorySnapshotLoader
 /// Serves the last snapshot immediately and refreshes it in the background once it is older than a minute (stale-while-revalidate),
 /// so no page waits for the database after the first load. Collections run every 15 to 240 minutes, so a minute of staleness is invisible.
 /// </summary>
-public sealed class InventorySnapshotService(INexusDbFactory dbFactory, TimeProvider clock)
+public sealed class InventorySnapshotService(INexusDbFactory dbFactory, TimeProvider clock, Func<int>? windowDays = null)
 {
     private static readonly TimeSpan Ttl = TimeSpan.FromSeconds(60);
     private readonly SemaphoreSlim _lock = new(1, 1);
@@ -226,7 +261,7 @@ public sealed class InventorySnapshotService(INexusDbFactory dbFactory, TimeProv
             {
                 if (_snapshot.LoadedAt == DateTimeOffset.MinValue)
                 {
-                    _snapshot = await InventorySnapshotLoader.LoadAsync(dbFactory, clock, cancellationToken);
+                    _snapshot = await InventorySnapshotLoader.LoadAsync(dbFactory, clock, cancellationToken, windowDays?.Invoke() ?? 30);
                 }
             }
             finally
@@ -243,7 +278,7 @@ public sealed class InventorySnapshotService(INexusDbFactory dbFactory, TimeProv
             {
                 try
                 {
-                    _snapshot = await InventorySnapshotLoader.LoadAsync(dbFactory, clock, CancellationToken.None);
+                    _snapshot = await InventorySnapshotLoader.LoadAsync(dbFactory, clock, CancellationToken.None, windowDays?.Invoke() ?? 30);
                 }
                 catch (Exception)
                 {

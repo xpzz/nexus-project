@@ -23,6 +23,7 @@ public abstract class NexusDbContext(DbContextOptions options) : DbContext(optio
     public DbSet<ReviewItem> ReviewItems => Set<ReviewItem>();
     public DbSet<EntraUserRecord> EntraUsers => Set<EntraUserRecord>();
     public DbSet<XdrEndpointRecord> XdrEndpoints => Set<XdrEndpointRecord>();
+    public DbSet<NetskopeClientRecord> NetskopeClients => Set<NetskopeClientRecord>();
     public DbSet<IntunePolicyRecord> IntunePolicies => Set<IntunePolicyRecord>();
     public DbSet<IntuneDevicePolicyState> IntuneDevicePolicyStates => Set<IntuneDevicePolicyState>();
     public DbSet<MamRegistrationRecord> MamRegistrations => Set<MamRegistrationRecord>();
@@ -128,6 +129,25 @@ public abstract class NexusDbContext(DbContextOptions options) : DbContext(optio
             e.Property(x => x.OperationalStatus).HasMaxLength(64);
             e.Property(x => x.AgentType).HasMaxLength(64);
             e.Property(x => x.Ip).HasMaxLength(256);
+            e.Property(x => x.Users).HasMaxLength(512);
+            e.HasIndex(x => x.HostName);
+        });
+
+        model.Entity<NetskopeClientRecord>(e =>
+        {
+            e.ToTable("netskope_clients");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasMaxLength(128).ValueGeneratedNever();
+            e.Property(x => x.DeviceId).HasMaxLength(128);
+            e.Property(x => x.HostName).HasMaxLength(256);
+            e.Property(x => x.OperatingSystem).HasMaxLength(128);
+            e.Property(x => x.OsVersion).HasMaxLength(64);
+            e.Property(x => x.Serial).HasMaxLength(128);
+            e.Property(x => x.Manufacturer).HasMaxLength(128);
+            e.Property(x => x.Model).HasMaxLength(128);
+            e.Property(x => x.ClientVersion).HasMaxLength(64);
+            e.Property(x => x.Status).HasMaxLength(64);
+            e.Property(x => x.ManagementId).HasMaxLength(128);
             e.Property(x => x.Users).HasMaxLength(512);
             e.HasIndex(x => x.HostName);
         });
@@ -240,6 +260,10 @@ public abstract class NexusDbContext(DbContextOptions options) : DbContext(optio
             e.Property(x => x.Coverage).HasMaxLength(16);
             e.Property(x => x.Confidence).HasMaxLength(8);
             e.Property(x => x.IntuneUserId).HasMaxLength(64);
+            e.Property(x => x.NetskopeStatus).HasMaxLength(64);
+            e.Property(x => x.NetskopeVersion).HasMaxLength(64);
+            e.Property(x => x.ActivityClass).HasMaxLength(16);
+            e.Property(x => x.ActiveSources).HasMaxLength(128);
             e.Property(x => x.XdrStatus).HasMaxLength(64);
             e.Property(x => x.XdrOperationalStatus).HasMaxLength(64);
             e.Property(x => x.XdrAgentType).HasMaxLength(64);
@@ -249,6 +273,7 @@ public abstract class NexusDbContext(DbContextOptions options) : DbContext(optio
             e.Property(x => x.CpuName).HasMaxLength(256);
             e.HasIndex(x => x.Coverage);
             e.HasIndex(x => x.Platform);
+            e.HasIndex(x => x.ActivityClass);
             e.HasIndex(x => x.Name);
         });
 

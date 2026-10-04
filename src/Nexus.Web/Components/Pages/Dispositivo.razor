@@ -44,10 +44,13 @@ else
 
     <div class="ttl"><h2>Último report por fonte</h2><span class="asof">Quando cada ferramenta ouviu falar do dispositivo</span></div>
     <section class="card">
-        <div class="tw" style="border:0"><table style="min-width:520px"><thead><tr><th>Fonte</th><th>Evento</th><th>Quando</th><th>Há</th></tr></thead><tbody>
+        <p class="sub">Atividade: <span class="pill @(a.ActivityClass switch { "Confirmed" => "ok", "Single" => "a", "Unconfirmed" => "w", _ => "m" })">@ActivityClasses.Title(a.ActivityClass)</span> · @ActivityClasses.Explain(a.ActivityClass) @(a.IsActive ? "Está no pool ativo." : "Fora do pool ativo.") Janela de @_windowDays dias.</p>
+        <div class="tw" style="border:0"><table style="min-width:620px"><thead><tr><th>Fonte</th><th>Evento</th><th>Quando</th><th>Há</th><th>Na janela</th><th>Evidência</th></tr></thead><tbody>
             @foreach (var r in Reports())
             {
-                <tr><td>@r.Source</td><td>@r.Event</td><td class="num">@(r.At?.ToLocalTime().ToString("dd/MM/yyyy HH:mm") ?? "—")</td><td class="num">@Fmt.Ago(r.At, now)</td></tr>
+                <tr><td>@r.Source</td><td>@r.Event</td><td class="num">@(r.At?.ToLocalTime().ToString("dd/MM/yyyy HH:mm") ?? "—")</td><td class="num">@Fmt.Ago(r.At, now)</td>
+                    <td>@(r.Signal is null ? "—" : r.At is { } t && now - t <= TimeSpan.FromDays(_windowDays) ? "sim" : "não")</td>
+                    <td>@(r.Signal is null ? "" : r.Signal.Strong ? "forte" : "fraca")</td></tr>
             }
         </tbody></table></div>
     </section>
@@ -101,6 +104,11 @@ else
         {
             @SourceCard("Cortex XDR", a.InXdr, "Sem agente do Cortex XDR nesta máquina." + (a.Ownership == "Corporate" && a.Platform is "WindowsClient" or "WindowsServer" ? " Esperado para Windows corporativo." : ""),
                 [("Status do agente", a.XdrStatus ?? "—"), ("Status operacional", a.XdrOperationalStatus ?? "—"), ("Tipo", XdrTypeLabel(a.XdrAgentType)), ("IP", a.XdrIp ?? "—"), ("Último contato", Fmt.Ago(a.XdrLastSeenAt, now)), ("Vínculo", a.XdrByNameOnly ? "só pelo nome (baixa confiança)" : "forte")])
+        }
+        @if (_snapshotSources.Netskope || a.InNetskope)
+        {
+            @SourceCard("Netskope", a.InNetskope, "Sem cliente Netskope nesta máquina." + (a.Ownership == "Corporate" && a.Platform is "WindowsClient" or "macOS" ? " Esperado para computador corporativo." : ""),
+                [("Status do cliente", a.NetskopeStatus ?? "—"), ("Versão", a.NetskopeVersion ?? "—"), ("Último evento", Fmt.Ago(a.NetskopeLastSeenAt, now)), ("Vínculo", a.NetskopeByNameOnly ? "só pelo nome (baixa confiança)" : "forte")])
         }
         @SourceCard("Active Directory", _ad is not null, "Sem objeto no AD.",
             _ad is null ? [] : [("Conta do computador", _ad.Enabled ? "habilitada" : "desabilitada"), ("Vínculo", a.AdByNameOnly ? "só pelo nome (baixa confiança)" : "forte"), ("Caminho", _ad.DistinguishedName)])
@@ -233,6 +241,7 @@ else
         var snapshot = await Inventory.GetAsync();
         _now = snapshot.LoadedAt;
         _snapshotSources = snapshot.Sources;
+        _windowDays = snapshot.WindowDays;
         _view = snapshot.Find(Id);
         if (_view is null)
         {
@@ -281,25 +290,28 @@ else
             : _software.Where(s => s.Name.Contains(Sw, StringComparison.OrdinalIgnoreCase) || (s.Publisher ?? "").Contains(Sw, StringComparison.OrdinalIgnoreCase)).Take(200).ToList();
     }
 
-    private record Report(string Source, string Event, DateTimeOffset? At);
+    private record Report(string Source, string Event, DateTimeOffset? At, ActivitySignal? Signal = null);
+    private int _windowDays = 30;
 
     private IEnumerable<Report> Reports()
     {
         var a = _view!.Asset;
+        var signals = ActivityModel.Signals(a).ToDictionary(x => x.Key);
         if (a.InSccm)
         {
-            yield return new("SCCM", "Atividade do cliente", a.SccmLastSeenAt);
+            yield return new("SCCM", "Atividade do cliente", a.SccmLastSeenAt, signals["sccm"]);
             yield return new("SCCM", "Última solicitação de política", a.SccmLastPolicyAt);
             yield return new("SCCM", "Inventário de hardware", a.SccmLastHwScanAt);
             yield return new("SCCM", "Inventário de software", _sccm?.LastSwScanAt);
             yield return new("SCCM", "Heartbeat (DDR)", _sccm?.LastDdrAt);
         }
 
-        if (a.InIntune) yield return new("Intune", "Última sincronização", a.IntuneLastSyncAt);
-        if (a.InEntra) yield return new("Entra ID", "Último login", a.EntraLastSignInAt);
-        if (a.InAd) yield return new("Active Directory", "Último logon", a.AdLastLogonAt);
-        if (a.InXdr) yield return new("Cortex XDR", "Último contato do agente", a.XdrLastSeenAt);
-        if (a.HasMam) yield return new("Intune MAM", "Última sincronização de app", a.MamLastSyncAt);
+        if (a.InIntune) yield return new("Intune", "Última sincronização", a.IntuneLastSyncAt, signals["intune"]);
+        if (a.InXdr) yield return new("Cortex XDR", "Último contato do agente", a.XdrLastSeenAt, signals["xdr"]);
+        if (a.InNetskope) yield return new("Netskope", "Último evento do cliente", a.NetskopeLastSeenAt, signals["netskope"]);
+        if (a.HasMam) yield return new("Intune MAM", "Última sincronização de app", a.MamLastSyncAt, signals["mam"]);
+        if (a.InEntra) yield return new("Entra ID", "Último login", a.EntraLastSignInAt, signals["entra"]);
+        if (a.InAd) yield return new("Active Directory", "Último logon", a.AdLastLogonAt, signals["ad"]);
     }
 
     private static string StatePill(string state) => state switch { "compliant" or "remediated" or "succeeded" => "ok", "nonCompliant" or "error" or "conflict" or "failed" => "b", "pending" => "w", _ => "m" };

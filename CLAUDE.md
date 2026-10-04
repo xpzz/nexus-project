@@ -1,6 +1,6 @@
 # Azul Nexus — guia para o Claude Code
 
-Especificação: `docs/SPEC.md`. Decisões: `docs/adr/` (ADR-0001: sem instalador, `dotnet publish`; ADR-0002: conta única; ADR-0003: site como serviço do Windows por padrão, IIS opcional; ADR-0004: reconciliação de dispositivos; ADR-0005: acesso aberto às telas de inventário sem SSO).
+Especificação: `docs/SPEC.md`. Decisões: `docs/adr/` (ADR-0001: sem instalador, `dotnet publish`; ADR-0002: conta única; ADR-0003: site como serviço do Windows por padrão, IIS opcional; ADR-0004: reconciliação de dispositivos; ADR-0005: acesso aberto às telas de inventário sem SSO; ADR-0006: pool de máquinas ativas).
 Código e identificadores em inglês; interface, mensagens e documentação em português do Brasil.
 Toda mensagem de erro: o que aconteceu, impacto e como resolver (`Nexus.Core.Errors.ErrorCatalog`).
 Nunca conectar a SCCM, Intune, Entra ID ou AD reais: use o modo simulado (`SourceMode.Simulated`, `Nexus.Simulation`).
@@ -42,7 +42,8 @@ dotnet run --project src/Nexus.Web
 - `Nexus.Simulation` — dados sintéticos determinísticos e script do banco SCCM simulado
 - `Nexus.Worker` — serviço Windows: agendador, coletas, verificações (rodam com a conta do serviço), limites de CPU
 - `Nexus.Web` — site (serviço do Windows ou IIS): painel, parque por grupo, BYOD, inventário, dispositivo, pendências, SCCM e Intune; assistente, saúde, acesso por código de configuração. Regras, índice e KPIs em `Nexus.Reconciliation` (`HealthModel`, `Overview`, `InventoryQuery`); regras sem dado coletado aparecem como "Aguardando coleta", nunca como zero
-- Coletas (jobs do Worker, em ordem): `sccm.devices` (hardware e datas do cliente, com fallback), `ad.computers`, `intune.devices`, `entra.devices`, `intune.mam` (registros de proteção de apps), `entra.users` (área e conta habilitada), `intune.policies` (catálogo e estado por dispositivo, via `$batch`), `xdr.endpoints` (tabela do Cortex XDR, só leitura; `nexusctl xdr-configure`), `inventory.reconcile`. Software instalado é lido sob demanda (comando `FetchInventory`)
+- Coletas (jobs do Worker, em ordem): `sccm.devices` (hardware e datas do cliente, com fallback), `ad.computers`, `intune.devices`, `entra.devices`, `intune.mam` (registros de proteção de apps), `entra.users` (área e conta habilitada), `intune.policies` (catálogo e estado por dispositivo, via `$batch`), `xdr.endpoints` (tabela do Cortex XDR, só leitura; `nexusctl xdr-configure`), `netskope.clients` (API do tenant; `nexusctl netskope-configure` e `netskope-test`; proxy com `nexusctl network-proxy`), `inventory.reconcile`. Software instalado é lido sob demanda (comando `FetchInventory`)
+- Atividade (pool): `ActivityModel` cruza as datas de SCCM, Intune, XDR, Netskope, MAM, Entra e AD; fonte forte sozinha ou duas fontes colocam a máquina no pool; AD ou Entra sozinhos ficam "não confirmados"
 - `Nexus.Cli` — `nexusctl`
 - `deploy/Install-AzulNexusAzure.ps1` + `lib/Azure.ps1` — Entra ID/Intune: registros, certificados, consentimento, funções (`config/azure.json`, lido por `AzureSettingsStore`)
 - `deploy/` — scripts de publicação, instalação, atualização e remoção no IIS (PowerShell 5.1+; lógica testável em `deploy/lib/Common.ps1`)

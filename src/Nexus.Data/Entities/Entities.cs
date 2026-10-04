@@ -179,6 +179,27 @@ public sealed class XdrEndpointRecord
     public DateTimeOffset CollectedAt { get; set; }
 }
 
+/// <summary>Netskope client (agent) as read in the last successful collection.</summary>
+public sealed class NetskopeClientRecord
+{
+    public string Id { get; set; } = "";
+    public string? DeviceId { get; set; }
+    public string? HostName { get; set; }
+    public string? OperatingSystem { get; set; }
+    public string? OsVersion { get; set; }
+    public string? Serial { get; set; }
+    public string? Manufacturer { get; set; }
+    public string? Model { get; set; }
+    public string? ClientVersion { get; set; }
+    public string? Status { get; set; }
+    public DateTimeOffset? LastEventAt { get; set; }
+    public DateTimeOffset? InstalledAt { get; set; }
+    /// <summary>Identifier the management tool gave the device (an Entra or Intune id when Netskope is integrated with them).</summary>
+    public string? ManagementId { get; set; }
+    public string? Users { get; set; }
+    public DateTimeOffset CollectedAt { get; set; }
+}
+
 /// <summary>Entra user behind a device or a MAM registration: department and whether the account is enabled.</summary>
 public sealed class EntraUserRecord
 {
@@ -353,6 +374,21 @@ public sealed class Asset
     /// <summary>High, Medium or Low: the weakest evidence that joined records into this asset.</summary>
     public string Confidence { get; set; } = "High";
     public bool NeedsReview { get; set; }
+
+    public bool InNetskope { get; set; }
+    public bool NetskopeByNameOnly { get; set; }
+    public string? NetskopeStatus { get; set; }
+    public string? NetskopeVersion { get; set; }
+    public DateTimeOffset? NetskopeLastSeenAt { get; set; }
+
+    /// <summary>Confirmed, Single, Unconfirmed or Inactive (see ADR-0006).</summary>
+    public string ActivityClass { get; set; } = "Inactive";
+    /// <summary>How many tools reported inside the activity window.</summary>
+    public int ActiveSourceCount { get; set; }
+    /// <summary>Tools that reported inside the window, e.g. "sccm,xdr,netskope".</summary>
+    public string? ActiveSources { get; set; }
+    /// <summary>Latest report from a tool that runs on the device itself (agent, client or app), as opposed to the identity side.</summary>
+    public DateTimeOffset? LastStrongActivityAt { get; set; }
 
     public bool InXdr { get; set; }
     /// <summary>The XDR record was attached by name only (supporting evidence, low confidence).</summary>

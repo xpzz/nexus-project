@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using Nexus.Collectors.ActiveDirectory;
 using Nexus.Collectors.Graph;
 using Nexus.Collectors.Sccm;
+using Nexus.Collectors.Netskope;
 using Nexus.Collectors.Xdr;
 
 namespace Nexus.Simulation;
@@ -139,6 +140,7 @@ public sealed class SyntheticEstate
     }
 
     public List<XdrEndpoint> XdrEndpoints { get; } = [];
+    public List<NetskopeClient> NetskopeClients { get; } = [];
     public List<IntunePolicy> Policies { get; } = [];
     public List<DevicePolicyState> PolicyStates { get; } = [];
     public List<MamRegistration> MamRegistrations { get; } = [];
@@ -152,6 +154,8 @@ public sealed class SyntheticEstate
     public Dictionary<int, string> Serials { get; } = [];
 
     public IXdrReader CreateXdrReader() => new FakeXdrReader(XdrEndpoints);
+
+    public INetskopeReader CreateNetskopeReader() => new FakeNetskopeReader(NetskopeClients);
 
     public ISccmReader CreateSccmReader() => new InMemorySccmReader(SccmSystems, SoftwareFor);
 
@@ -272,6 +276,53 @@ public sealed class SyntheticEstate
         for (var k = 1; k <= 8; k++)
         {
             AddXdr($"AZ-XDR-ONLY-{k:D2}", k % 3 == 0, Now.AddHours(-xdrRandom.Next(1, 300)), "CONNECTED", $"CORP\\xdr{k}");
+        }
+
+        // Netskope: most corporate laptops run the client. Its management id is the Entra device id for some, the serial number joins others,
+        // and the rest only share the host name. A few clients are active while SCCM is silent (the divergence the active pool is meant to expose).
+        var nsRandom = new Random(seed ^ 0x5E75);
+        var nsCounter = 0;
+        void AddNetskope(string host, string os, string osVersion, string? serial, string? maker, string? model, DateTimeOffset? lastEvent, string status, string? managementId, string? user)
+        {
+            NetskopeClients.Add(new NetskopeClient($"ns-{++nsCounter:D6}", Guid.NewGuid().ToString(), host, os, osVersion, serial, maker, model, "126.0.2.1" + nsRandom.Next(0, 9),
+                status, lastEvent, Now.AddDays(-nsRandom.Next(30, 700)), managementId, user));
+        }
+
+        foreach (var sys in SccmSystems.Where(x => x.Obsolete != true && x.Name is not null && x.OperatingSystem?.Contains("Windows", StringComparison.OrdinalIgnoreCase) == true && x.OperatingSystem.Contains("Server", StringComparison.OrdinalIgnoreCase) == false))
+        {
+            if (nsRandom.NextDouble() > .82)
+            {
+                continue;
+            }
+
+            var seen = nsRandom.NextDouble() < .08
+                ? Now.AddHours(-nsRandom.Next(1, 48))                       // active in Netskope even if SCCM is silent
+                : (sys.LastActiveAt ?? Now.AddDays(-80)).AddMinutes(-nsRandom.Next(1, 900));
+            var roll = nsRandom.NextDouble();
+            var host = nsRandom.NextDouble() < .25 ? $"{sys.Name!.ToLowerInvariant()}.corp.azul.sim" : sys.Name!;
+            var byId = roll < .4 && sys.AadDeviceId is { } aad ? aad.ToString() : null;
+            var bySerial = byId is null && roll < .75 ? sys.Serial : null;
+            AddNetskope(host, sys.OperatingSystem!.Contains("Windows 10", StringComparison.OrdinalIgnoreCase) ? "Windows 10" : "Windows 11", sys.OsVersion ?? "10.0.22631",
+                bySerial, bySerial is null ? null : sys.Manufacturer, bySerial is null ? null : sys.Model, seen, nsRandom.NextDouble() < .03 ? "Disabled" : "Enabled", byId, sys.LastLogonUser);
+            if (nsRandom.NextDouble() < .01)
+            {
+                AddNetskope(host, "Windows 10", "10.0.19045", null, null, null, Now.AddDays(-nsRandom.Next(60, 200)), "Disabled", null, null); // older install of the same host
+            }
+        }
+
+        var sccmAadIds = SccmSystems.Where(x => x.AadDeviceId is not null).Select(x => x.AadDeviceId!.Value).ToHashSet();
+        foreach (var mac in IntuneDevices.Where(d => (d.OperatingSystem == "macOS" || d.OperatingSystem == "Windows") && (d.AzureAdDeviceId is null || !sccmAadIds.Contains(d.AzureAdDeviceId.Value))).Take(40))
+        {
+            if (nsRandom.NextDouble() < .7)
+            {
+                AddNetskope(mac.DeviceName ?? "host", mac.OperatingSystem!, mac.OsVersion ?? "", mac.SerialNumber, mac.Manufacturer, mac.Model, mac.LastSyncAt?.AddMinutes(-nsRandom.Next(1, 600)), "Enabled",
+                    mac.AzureAdDeviceId?.ToString(), mac.UserPrincipalName);
+            }
+        }
+
+        for (var k = 1; k <= 6; k++)
+        {
+            AddNetskope($"AZ-NS-ONLY-{k:D2}", "Windows 11", "10.0.22631", null, null, null, Now.AddHours(-nsRandom.Next(1, 200)), "Enabled", null, $"ns{k}@corp.azul.sim");
         }
 
         // Entra users and Intune device extras.

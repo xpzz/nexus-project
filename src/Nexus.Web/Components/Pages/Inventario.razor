@@ -15,6 +15,7 @@
     <select name="grupo" aria-label="Grupo" data-auto><option value="">Grupo</option>@foreach (var g in Groups.All){<option value="@g" selected="@(Grupo == g)">@Groups.Title(g)</option>}<option value="byod" selected="@(Grupo == "byod")">BYOD (celulares e computadores)</option><option value="sem-gestao" selected="@(Grupo == "sem-gestao")">Sem gestão</option></select>
     <select name="gestao" aria-label="Gestão" data-auto><option value="">Gestão</option>@foreach (var m in Management.All){<option value="@m" selected="@(Gestao == m)">@m</option>}</select>
     <select name="depto" aria-label="Área" data-auto><option value="">Área</option>@foreach (var d in _departments){<option value="@d" selected="@(Depto == d)">@d</option>}</select>
+    <select name="atividade" aria-label="Atividade" data-auto><option value="">Atividade</option><option value="pool" selected="@(Atividade == "pool")">No pool ativo</option>@foreach (var c in new[] { ActivityClasses.Confirmed, ActivityClasses.Single, ActivityClasses.Unconfirmed, ActivityClasses.Inactive }){<option value="@c" selected="@(Atividade == c)">@ActivityClasses.Title(c)</option>}</select>
     <select name="estado" aria-label="Estado" data-auto><option value="">Estado</option><option value="ativos" selected="@(Estado == "ativos")">Ativos</option>@foreach (var s in States.All){<option value="@s" selected="@(Estado == s)">@s</option>}</select>
     <select name="pendencia" aria-label="Pendência" data-auto><option value="">Pendência</option>@foreach (var r in HealthModel.Rules.Where(r => r.IsAvailable(Src))){<option value="@r.Id" selected="@(Pendencia == r.Id)">@r.Title</option>}</select>
     @if (!string.IsNullOrEmpty(Funil)) { <input type="hidden" name="funil" value="@Funil" /> }
@@ -39,7 +40,7 @@
         <thead>
             <tr>
                 @Header("nome", "Dispositivo")@Header("grupo", "Grupo")@Header("usuario", "Usuário")@Header("so", "Sistema")
-                <th>Fontes</th>@Header("gestao", "Gestão")@Header("estado", "Estado")@Header("sccm", "Último SCCM")@Header("intune", "Último Intune")@Header("indice", "Índice")
+                <th>Fontes</th>@Header("gestao", "Gestão")@Header("estado", "Estado")@Header("fontes", "Fontes ativas")@Header("sccm", "Último SCCM")@Header("intune", "Último Intune")@Header("indice", "Índice")
             </tr>
         </thead>
         <tbody>
@@ -51,9 +52,10 @@
                     <td>@Groups.Title(v.Group)<small style="display:block;color:var(--ink3);font-size:11.5px">@InventoryQuery.OwnershipOf(v)</small></td>
                     <td>@(a.PrimaryUser ?? "—")<small style="display:block;color:var(--ink3);font-size:11.5px">@(a.Department ?? "")</small></td>
                     <td>@(a.OperatingSystem ?? a.Platform)</td>
-                    <td><span class="ch"><b class="@(a.InSccm ? "on" : "")">SCCM</b><b class="@(a.InIntune ? "on" : "")">INT</b><b class="@(a.InEntra ? "on" : "")">ENT</b><b class="@(a.InAd ? "on" : "")">AD</b>@if (_snapshot!.Sources.Xdr || a.InXdr) {<b class="@(a.InXdr ? "on" : "")">XDR</b>}@if (a.HasMam) {<b class="on">MAM</b>}</span></td>
+                    <td><span class="ch"><b class="@(a.InSccm ? "on" : "")">SCCM</b><b class="@(a.InIntune ? "on" : "")">INT</b><b class="@(a.InEntra ? "on" : "")">ENT</b><b class="@(a.InAd ? "on" : "")">AD</b>@if (_snapshot!.Sources.Xdr || a.InXdr) {<b class="@(a.InXdr ? "on" : "")">XDR</b>}@if (_snapshot!.Sources.Netskope || a.InNetskope) {<b class="@(a.InNetskope ? "on" : "")">NS</b>}@if (a.HasMam) {<b class="on">MAM</b>}</span></td>
                     <td><span class="pill @(v.Management == Management.None ? "b" : v.Management == Management.CoManaged ? "a" : "m")">@v.Management</span></td>
                     <td><span class="pill @Fmt.StateCss(v.State)">@v.State</span></td>
+                    <td><span class="pill @(a.ActivityClass switch { "Confirmed" => "ok", "Single" => "a", "Unconfirmed" => "w", _ => "m" })" title="@ActivityClasses.Explain(a.ActivityClass)">@ActivityClasses.Title(a.ActivityClass)</span><small style="display:block;color:var(--ink3);font-size:11.5px">@a.ActiveSourceCount @(a.ActiveSourceCount == 1 ? "fonte" : "fontes")</small></td>
                     <td class="num">@Fmt.Ago(a.SccmLastSeenAt, _now)</td>
                     <td class="num">@Fmt.Ago(a.IntuneLastSyncAt, _now)</td>
                     <td class="score @Fmt.ScoreClass(v.Score)">@v.Score</td>
@@ -61,7 +63,7 @@
             }
             @if (_rows.Count == 0)
             {
-                <tr><td colspan="10" style="text-align:center;color:var(--ink3);padding:28px">Nenhum dispositivo com esses filtros.</td></tr>
+                <tr><td colspan="11" style="text-align:center;color:var(--ink3);padding:28px">Nenhum dispositivo com esses filtros.</td></tr>
             }
         </tbody>
     </table>
@@ -83,6 +85,7 @@
     [SupplyParameterFromQuery] public string? Propriedade { get; set; }
     [SupplyParameterFromQuery] public string? Funil { get; set; }
     [SupplyParameterFromQuery] public string? Depto { get; set; }
+    [SupplyParameterFromQuery] public string? Atividade { get; set; }
     [SupplyParameterFromQuery] public string? Ordem { get; set; }
     [SupplyParameterFromQuery] public bool Desc { get; set; }
     [SupplyParameterFromQuery] public int Pagina { get; set; }
@@ -100,19 +103,19 @@
         _snapshot = await Inventory.GetAsync();
         _now = _snapshot.LoadedAt == DateTimeOffset.MinValue ? DateTimeOffset.UtcNow : _snapshot.LoadedAt;
         _departments = _snapshot.Views.Select(v => v.Asset.Department).Where(d => !string.IsNullOrEmpty(d)).Select(d => d!).Distinct().Order().ToList();
-        var filter = new InventoryFilter(Grupo, Gestao, Estado, Pendencia, Propriedade, Funil, Q, Depto);
+        var filter = new InventoryFilter(Grupo, Gestao, Estado, Pendencia, Propriedade, Funil, Q, Depto, Atividade);
         _rows = InventoryQuery.Sort(_snapshot.Views.Where(v => InventoryQuery.Matches(v, filter, _now)), Ordem, Desc).ToList();
         _skip = Math.Clamp(Pagina, 0, Math.Max(0, (_rows.Count - 1) / PageSize)) * PageSize;
         _page = _rows.Skip(_skip).Take(PageSize).ToList();
     }
 
     // Every control is a plain link or form field: the page is rendered on the server once and needs no live connection.
-    private string Link(string? q = null, string? grupo = null, string? gestao = null, string? estado = null, string? pendencia = null, string? funil = null, string? propriedade = null, string? ordem = null, bool? desc = null, int? pagina = null, string? depto = null)
+    private string Link(string? q = null, string? grupo = null, string? gestao = null, string? estado = null, string? pendencia = null, string? funil = null, string? propriedade = null, string? ordem = null, bool? desc = null, int? pagina = null, string? depto = null, string? atividade = null)
     {
         var parts = new List<string>();
         void Add(string key, string? value) { if (!string.IsNullOrEmpty(value)) parts.Add($"{key}={Uri.EscapeDataString(value)}"); }
         Add("q", q ?? Q); Add("grupo", grupo ?? Grupo); Add("gestao", gestao ?? Gestao); Add("estado", estado ?? Estado); Add("pendencia", pendencia ?? Pendencia);
-        Add("funil", funil ?? Funil); Add("propriedade", propriedade ?? Propriedade); Add("ordem", ordem ?? Ordem); Add("depto", depto ?? Depto);
+        Add("funil", funil ?? Funil); Add("propriedade", propriedade ?? Propriedade); Add("ordem", ordem ?? Ordem); Add("depto", depto ?? Depto); Add("atividade", atividade ?? Atividade);
         if (desc ?? Desc) parts.Add("desc=true");
         if (pagina is > 0) parts.Add($"pagina={pagina}");
         return parts.Count == 0 ? "/inventario" : "/inventario?" + string.Join("&", parts);
@@ -120,14 +123,15 @@
 
     private string Without(string which) => which switch
     {
-        "q" => Fmt.Inv(Grupo, Gestao, Estado, Pendencia, Funil, Propriedade, null, Depto),
-        "grupo" => Fmt.Inv(null, Gestao, Estado, Pendencia, Funil, Propriedade, Q, Depto),
-        "gestao" => Fmt.Inv(Grupo, null, Estado, Pendencia, Funil, Propriedade, Q, Depto),
-        "estado" => Fmt.Inv(Grupo, Gestao, null, Pendencia, Funil, Propriedade, Q, Depto),
-        "pendencia" => Fmt.Inv(Grupo, Gestao, Estado, null, Funil, Propriedade, Q, Depto),
-        "funil" => Fmt.Inv(Grupo, Gestao, Estado, Pendencia, null, Propriedade, Q, Depto),
-        "depto" => Fmt.Inv(Grupo, Gestao, Estado, Pendencia, Funil, Propriedade, Q, null),
-        _ => Fmt.Inv(Grupo, Gestao, Estado, Pendencia, Funil, null, Q, Depto),
+        "q" => Fmt.Inv(Grupo, Gestao, Estado, Pendencia, Funil, Propriedade, null, Depto, Atividade),
+        "grupo" => Fmt.Inv(null, Gestao, Estado, Pendencia, Funil, Propriedade, Q, Depto, Atividade),
+        "gestao" => Fmt.Inv(Grupo, null, Estado, Pendencia, Funil, Propriedade, Q, Depto, Atividade),
+        "estado" => Fmt.Inv(Grupo, Gestao, null, Pendencia, Funil, Propriedade, Q, Depto, Atividade),
+        "pendencia" => Fmt.Inv(Grupo, Gestao, Estado, null, Funil, Propriedade, Q, Depto, Atividade),
+        "funil" => Fmt.Inv(Grupo, Gestao, Estado, Pendencia, null, Propriedade, Q, Depto, Atividade),
+        "depto" => Fmt.Inv(Grupo, Gestao, Estado, Pendencia, Funil, Propriedade, Q, null, Atividade),
+        "atividade" => Fmt.Inv(Grupo, Gestao, Estado, Pendencia, Funil, Propriedade, Q, Depto, null),
+        _ => Fmt.Inv(Grupo, Gestao, Estado, Pendencia, Funil, null, Q, Depto, Atividade),
     };
 
     private IEnumerable<(string, string)> Tags()
@@ -137,6 +141,7 @@
         if (!string.IsNullOrEmpty(Gestao)) yield return ($"Gestão: {Gestao}", Without("gestao"));
         if (!string.IsNullOrEmpty(Estado)) yield return ($"Estado: {(Estado == "ativos" ? "Ativos" : Estado)}", Without("estado"));
         if (!string.IsNullOrEmpty(Depto)) yield return ($"Área: {Depto}", Without("depto"));
+        if (!string.IsNullOrEmpty(Atividade)) yield return ($"Atividade: {(Atividade == "pool" ? "no pool ativo" : ActivityClasses.Title(Atividade))}", Without("atividade"));
         if (!string.IsNullOrEmpty(Propriedade)) yield return ($"Propriedade: {Propriedade}", Without("propriedade"));
         if (!string.IsNullOrEmpty(Pendencia) && HealthModel.Rules.Any(r => r.Id == Pendencia)) yield return ($"Pendência: {HealthModel.RuleOf(Pendencia).Title}", Without("pendencia"));
         if (!string.IsNullOrEmpty(Funil) && InventoryQuery.FunnelNames.TryGetValue(Funil, out var name)) yield return ($"Funil: {name}", Without("funil"));

@@ -2,6 +2,7 @@ using Nexus.Core;
 using System.Net.Http;
 using Nexus.Collectors.ActiveDirectory;
 using Nexus.Collectors.Graph;
+using Nexus.Collectors.Netskope;
 using Nexus.Collectors.Sccm;
 using Nexus.Collectors.Xdr;
 using Nexus.Core.Configuration;
@@ -15,6 +16,9 @@ public interface ISourceFactory
     ISccmReader? CreateSccmReader(SccmSettings settings, SccmQueryGate gate);
     IDirectoryReader? CreateDirectoryReader(ActiveDirectorySettings settings);
     IXdrReader? CreateXdrReader(XdrSettings settings);
+
+    /// <summary>Null when Netskope is not configured or has no token. Goes out through the configured proxy.</summary>
+    INetskopeReader? CreateNetskopeReader(NexusSettings settings);
 
     /// <summary>
     /// Null when Azure is not configured ("não configurado", never zero). Live uses the collector app with its certificate
@@ -31,7 +35,23 @@ public sealed record GraphConnection(GraphHttpClient Client, ITokenProvider Toke
 /// <summary>Live sources read the real systems; simulated sources use the synthetic estate.</summary>
 public sealed class SourceFactory(NexusPaths paths) : ISourceFactory
 {
-    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromMinutes(2) };
+    private readonly Dictionary<string, HttpClient> _clients = [];
+    private readonly Lock _clientsLock = new();
+
+    /// <summary>One long-lived HttpClient per proxy setting (a changed proxy in the configuration gets a new client).</summary>
+    private HttpClient HttpFor(NetworkSettings network)
+    {
+        lock (_clientsLock)
+        {
+            var key = NetworkHttp.Key(network);
+            if (!_clients.TryGetValue(key, out var client))
+            {
+                _clients[key] = client = NetworkHttp.Create(network, TimeSpan.FromMinutes(5));
+            }
+
+            return client;
+        }
+    }
     private readonly Lazy<SyntheticEstate> _estate = new(() => new SyntheticEstate());
 
     public ISccmReader? CreateSccmReader(SccmSettings settings, SccmQueryGate gate) => settings.Mode switch
@@ -54,6 +74,20 @@ public sealed class SourceFactory(NexusPaths paths) : ISourceFactory
         SourceMode.Simulated => _estate.Value.CreateXdrReader(),
         _ => null,
     };
+
+    public INetskopeReader? CreateNetskopeReader(NexusSettings settings)
+    {
+        switch (settings.Netskope.Mode)
+        {
+            case SourceMode.Simulated:
+                return _estate.Value.CreateNetskopeReader();
+            case SourceMode.Live:
+                var token = NetskopeToken.Resolve(settings.Netskope);
+                return token is null || string.IsNullOrWhiteSpace(settings.Netskope.Tenant) ? null : new NetskopeHttpReader(HttpFor(settings.Network), settings.Netskope, token);
+            default:
+                return null;
+        }
+    }
 
     public IGraphReader? CreateGraphReader(NexusSettings settings)
     {
@@ -80,7 +114,8 @@ public sealed class SourceFactory(NexusPaths paths) : ISourceFactory
         }
 
         var certificate = CertificateLookup.Find(azure.Collector.CertificateThumbprint, "coleta do Intune e do Entra ID");
-        var tokens = new CertificateTokenProvider(azure.TenantId, azure.Collector.ClientId, certificate, Http);
-        return new GraphConnection(new GraphHttpClient(Http, tokens), tokens);
+        var http = HttpFor(settings.Network);
+        var tokens = new CertificateTokenProvider(azure.TenantId, azure.Collector.ClientId, certificate, http);
+        return new GraphConnection(new GraphHttpClient(http, tokens), tokens);
     }
 }

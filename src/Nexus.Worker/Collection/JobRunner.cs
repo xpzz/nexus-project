@@ -3,6 +3,7 @@ using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Nexus.Collectors.Graph;
 using Nexus.Collectors.Sccm;
+using Nexus.Collectors.Netskope;
 using Nexus.Collectors.Xdr;
 using Nexus.Core.Configuration;
 using Nexus.Data;
@@ -18,13 +19,14 @@ public static class JobNames
     public const string Intune = "intune.devices";
     public const string Entra = "entra.devices";
     public const string Xdr = "xdr.endpoints";
+    public const string Netskope = "netskope.clients";
     public const string Mam = "intune.mam";
     public const string Users = "entra.users";
     public const string Policies = "intune.policies";
     public const string Reconcile = "inventory.reconcile";
     // Order matters: users are resolved from the devices and MAM registrations collected just before.
-    public static readonly string[] All = [Sccm, ActiveDirectory, Intune, Entra, Xdr, Mam, Users, Policies, Reconcile];
-    public static readonly string[] Collections = [Sccm, ActiveDirectory, Intune, Entra, Xdr, Mam, Users, Policies];
+    public static readonly string[] All = [Sccm, ActiveDirectory, Intune, Entra, Xdr, Netskope, Mam, Users, Policies, Reconcile];
+    public static readonly string[] Collections = [Sccm, ActiveDirectory, Intune, Entra, Xdr, Netskope, Mam, Users, Policies];
 }
 
 public sealed record JobOutcome(string Status, int? Records, string? Message);
@@ -56,6 +58,7 @@ public sealed class JobRunner(
         JobNames.ActiveDirectory => TimeSpan.FromMinutes(settings.Collection.ActiveDirectoryIntervalMinutes),
         JobNames.Intune or JobNames.Entra => TimeSpan.FromMinutes(settings.Collection.GraphIntervalMinutes),
         JobNames.Xdr => TimeSpan.FromMinutes(settings.Collection.XdrIntervalMinutes),
+        JobNames.Netskope => TimeSpan.FromMinutes(settings.Collection.NetskopeIntervalMinutes),
         JobNames.Mam => TimeSpan.FromMinutes(settings.Collection.MamIntervalMinutes),
         JobNames.Users => TimeSpan.FromMinutes(settings.Collection.UsersIntervalMinutes),
         JobNames.Policies => TimeSpan.FromMinutes(settings.Collection.PoliciesIntervalMinutes),
@@ -107,6 +110,7 @@ public sealed class JobRunner(
                 JobNames.Intune => await CollectIntuneAsync(settings, now, cancellationToken),
                 JobNames.Entra => await CollectEntraAsync(settings, now, cancellationToken),
                 JobNames.Xdr => await CollectXdrAsync(settings, now, cancellationToken),
+                JobNames.Netskope => await CollectNetskopeAsync(settings, now, cancellationToken),
                 JobNames.Mam => await CollectMamAsync(settings, now, cancellationToken),
                 JobNames.Users => await CollectUsersAsync(settings, now, cancellationToken),
                 JobNames.Policies => await CollectPoliciesAsync(settings, now, cancellationToken),
@@ -143,7 +147,8 @@ public sealed class JobRunner(
             }
         }
 
-        var result = await new InventoryReconciler(dbFactory, clock).RunAsync(cancellationToken);
+        var window = TimeSpan.FromDays(Math.Clamp(settingsProvider.Current.Collection.ActivityWindowDays, 1, 365));
+        var result = await new InventoryReconciler(dbFactory, clock, window).RunAsync(cancellationToken);
         logger.LogInformation("Reconciliação: {Assets} ativos, {Review} itens para revisão.", result.Assets.Count, result.Review.Count);
         return result.Assets.Count;
     }
@@ -280,6 +285,29 @@ public sealed class JobRunner(
         }
 
         await ReplaceAsync<XdrEndpointRecord>(rows.Values.ToList(), cancellationToken);
+        return rows.Count;
+    }
+
+    private async Task<int?> CollectNetskopeAsync(NexusSettings settings, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var reader = sources.CreateNetskopeReader(settings);
+        if (reader is null)
+        {
+            return null;
+        }
+
+        var rows = new Dictionary<string, NetskopeClientRecord>();
+        await foreach (var c in reader.ReadClientsAsync(cancellationToken))
+        {
+            rows[c.Id] = new NetskopeClientRecord
+            {
+                Id = c.Id, DeviceId = c.DeviceId, HostName = c.HostName, OperatingSystem = c.OperatingSystem, OsVersion = c.OsVersion, Serial = c.Serial,
+                Manufacturer = c.Manufacturer, Model = c.Model, ClientVersion = c.ClientVersion, Status = c.Status, LastEventAt = c.LastEventAt,
+                InstalledAt = c.InstalledAt, ManagementId = c.ManagementId, Users = c.Users, CollectedAt = now,
+            };
+        }
+
+        await ReplaceAsync<NetskopeClientRecord>(rows.Values.ToList(), cancellationToken);
         return rows.Count;
     }
 
