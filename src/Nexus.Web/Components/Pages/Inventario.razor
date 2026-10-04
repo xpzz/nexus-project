@@ -1,5 +1,4 @@
 @page "/inventario"
-@rendermode InteractiveServer
 @inject InventorySnapshotService Inventory
 @inject NavigationManager Nav
 
@@ -10,21 +9,25 @@
     @if (_snapshot is not null) { <span class="asof">@Fmt.Number(_rows.Count) de @Fmt.Number(_snapshot.Views.Count) dispositivos</span> }
 </div>
 
-<div class="tools">
-    <input type="search" id="q" placeholder="Nome, usuário, serial ou modelo" value="@Q" aria-label="Busca livre" @onchange="e => Go(q: e.Value?.ToString() ?? string.Empty)" />
-    <select aria-label="Propriedade" @onchange="e => Go(propriedade: (string?)e.Value)"><option value="">Propriedade</option>@foreach (var o in new[] { "Corporativo", "BYOD", "Externo" }){<option value="@o" selected="@(Propriedade == o)">@o</option>}</select>
-    <select aria-label="Grupo" @onchange="e => Go(grupo: (string?)e.Value)"><option value="">Grupo</option>@foreach (var g in Groups.All){<option value="@g" selected="@(Grupo == g)">@Groups.Title(g)</option>}</select>
-    <select aria-label="Gestão" @onchange="e => Go(gestao: (string?)e.Value)"><option value="">Gestão</option>@foreach (var m in Management.All.Where(m => m != Management.OnlyMam)){<option value="@m" selected="@(Gestao == m)">@m</option>}</select>
-    <select aria-label="Estado" @onchange="e => Go(estado: (string?)e.Value)"><option value="">Estado</option><option value="ativos" selected="@(Estado == "ativos")">Ativos</option>@foreach (var s in States.All){<option value="@s" selected="@(Estado == s)">@s</option>}</select>
-    <select aria-label="Pendência" @onchange="e => Go(pendencia: (string?)e.Value)"><option value="">Pendência</option>@foreach (var r in HealthModel.Rules.Where(r => r.Available)){<option value="@r.Id" selected="@(Pendencia == r.Id)">@r.Title</option>}</select>
-</div>
+<form method="get" action="/inventario" class="tools">
+    <input type="search" name="q" placeholder="Nome, usuário, serial ou modelo" value="@Q" aria-label="Busca livre" />
+    <select name="propriedade" aria-label="Propriedade" data-auto><option value="">Propriedade</option>@foreach (var o in new[] { "Corporativo", "BYOD", "Externo" }){<option value="@o" selected="@(Propriedade == o)">@o</option>}</select>
+    <select name="grupo" aria-label="Grupo" data-auto><option value="">Grupo</option>@foreach (var g in Groups.All){<option value="@g" selected="@(Grupo == g)">@Groups.Title(g)</option>}<option value="byod" selected="@(Grupo == "byod")">BYOD (celulares e computadores)</option><option value="sem-gestao" selected="@(Grupo == "sem-gestao")">Sem gestão</option></select>
+    <select name="gestao" aria-label="Gestão" data-auto><option value="">Gestão</option>@foreach (var m in Management.All.Where(m => m != Management.OnlyMam)){<option value="@m" selected="@(Gestao == m)">@m</option>}</select>
+    <select name="estado" aria-label="Estado" data-auto><option value="">Estado</option><option value="ativos" selected="@(Estado == "ativos")">Ativos</option>@foreach (var s in States.All){<option value="@s" selected="@(Estado == s)">@s</option>}</select>
+    <select name="pendencia" aria-label="Pendência" data-auto><option value="">Pendência</option>@foreach (var r in HealthModel.Rules.Where(r => r.Available)){<option value="@r.Id" selected="@(Pendencia == r.Id)">@r.Title</option>}</select>
+    @if (!string.IsNullOrEmpty(Funil)) { <input type="hidden" name="funil" value="@Funil" /> }
+    @if (!string.IsNullOrEmpty(Ordem)) { <input type="hidden" name="ordem" value="@Ordem" /> }
+    @if (Desc) { <input type="hidden" name="desc" value="true" /> }
+    <button type="submit">Filtrar</button>
+</form>
 
 @if (Tags().Any())
 {
     <div class="tools">
-        @foreach (var (label, clear) in Tags())
+        @foreach (var (label, href) in Tags())
         {
-            <span class="tag">@label<button type="button" aria-label="Remover filtro @label" @onclick="clear">×</button></span>
+            <span class="tag">@label<a href="@href" aria-label="Remover filtro @label" style="text-decoration:none;color:inherit;padding:0 6px">×</a></span>
         }
         <a class="button" href="/inventario">Limpar tudo</a>
     </div>
@@ -42,7 +45,7 @@
             @foreach (var v in _page)
             {
                 var a = v.Asset;
-                <tr class="link" @onclick="() => Open(a.Id)">
+                <tr class="link" data-href="/dispositivo/@a.Id">
                     <td class="nm"><a href="/dispositivo/@a.Id">@a.Name</a><small>@(a.Model ?? a.OperatingSystem ?? "—")</small></td>
                     <td>@Groups.Title(v.Group)<small style="display:block;color:var(--ink3);font-size:11.5px">@InventoryQuery.OwnershipOf(v)</small></td>
                     <td>@(a.PrimaryUser ?? "—")</td>
@@ -64,8 +67,8 @@
 
 <div class="pager">
     <span>@(_rows.Count == 0 ? 0 : _skip + 1)–@Math.Min(_rows.Count, _skip + PageSize) de @Fmt.Number(_rows.Count)</span>
-    <button type="button" disabled="@(_skip == 0)" @onclick="() => Move(-1)">Anterior</button>
-    <button type="button" disabled="@(_skip + PageSize >= _rows.Count)" @onclick="() => Move(1)">Próxima</button>
+    @if (_skip == 0) { <span class="button" style="opacity:.5">Anterior</span> } else { <a class="button" href="@Link(pagina: _skip / PageSize - 1)">Anterior</a> }
+    @if (_skip + PageSize >= _rows.Count) { <span class="button" style="opacity:.5">Próxima</span> } else { <a class="button" href="@Link(pagina: _skip / PageSize + 1)">Próxima</a> }
 </div>
 
 @code {
@@ -87,53 +90,54 @@
     private DateTimeOffset _now;
     private int _skip;
 
-    protected override async Task OnParametersSetAsync()
+    protected override async Task OnInitializedAsync()
     {
         _snapshot = await Inventory.GetAsync();
         _now = _snapshot.LoadedAt == DateTimeOffset.MinValue ? DateTimeOffset.UtcNow : _snapshot.LoadedAt;
         var filter = new InventoryFilter(Grupo, Gestao, Estado, Pendencia, Propriedade, Funil, Q);
-        var sorted = InventoryQuery.Sort(_snapshot.Views.Where(v => InventoryQuery.Matches(v, filter, _now)), Ordem, Desc);
-        _rows = sorted.ToList();
+        _rows = InventoryQuery.Sort(_snapshot.Views.Where(v => InventoryQuery.Matches(v, filter, _now)), Ordem, Desc).ToList();
         _skip = Math.Clamp(Pagina, 0, Math.Max(0, (_rows.Count - 1) / PageSize)) * PageSize;
         _page = _rows.Skip(_skip).Take(PageSize).ToList();
     }
 
-    private void Go(string? q = null, string? grupo = null, string? gestao = null, string? estado = null, string? pendencia = null, string? propriedade = null)
+    // Every control is a plain link or form field: the page is rendered on the server once and needs no live connection.
+    private string Link(string? q = null, string? grupo = null, string? gestao = null, string? estado = null, string? pendencia = null, string? funil = null, string? propriedade = null, string? ordem = null, bool? desc = null, int? pagina = null)
     {
-        Nav.NavigateTo(Fmt.Inv(grupo ?? Grupo, gestao ?? Gestao, estado ?? Estado, pendencia ?? Pendencia, Funil, propriedade ?? Propriedade, q ?? Q));
+        var parts = new List<string>();
+        void Add(string key, string? value) { if (!string.IsNullOrEmpty(value)) parts.Add($"{key}={Uri.EscapeDataString(value)}"); }
+        Add("q", q ?? Q); Add("grupo", grupo ?? Grupo); Add("gestao", gestao ?? Gestao); Add("estado", estado ?? Estado); Add("pendencia", pendencia ?? Pendencia);
+        Add("funil", funil ?? Funil); Add("propriedade", propriedade ?? Propriedade); Add("ordem", ordem ?? Ordem);
+        if (desc ?? Desc) parts.Add("desc=true");
+        if (pagina is > 0) parts.Add($"pagina={pagina}");
+        return parts.Count == 0 ? "/inventario" : "/inventario?" + string.Join("&", parts);
     }
 
-    // A select left on its placeholder sends an empty value: that clears the filter.
-    private void Clear(string which)
+    private string Without(string which) => which switch
     {
-        Nav.NavigateTo(Fmt.Inv(which == "grupo" ? null : Grupo, which == "gestao" ? null : Gestao, which == "estado" ? null : Estado, which == "pendencia" ? null : Pendencia,
-            which == "funil" ? null : Funil, which == "propriedade" ? null : Propriedade, which == "q" ? null : Q));
-    }
+        "q" => Fmt.Inv(Grupo, Gestao, Estado, Pendencia, Funil, Propriedade, null),
+        "grupo" => Fmt.Inv(null, Gestao, Estado, Pendencia, Funil, Propriedade, Q),
+        "gestao" => Fmt.Inv(Grupo, null, Estado, Pendencia, Funil, Propriedade, Q),
+        "estado" => Fmt.Inv(Grupo, Gestao, null, Pendencia, Funil, Propriedade, Q),
+        "pendencia" => Fmt.Inv(Grupo, Gestao, Estado, null, Funil, Propriedade, Q),
+        "funil" => Fmt.Inv(Grupo, Gestao, Estado, Pendencia, null, Propriedade, Q),
+        _ => Fmt.Inv(Grupo, Gestao, Estado, Pendencia, Funil, null, Q),
+    };
 
-    private IEnumerable<(string, Action)> Tags()
+    private IEnumerable<(string, string)> Tags()
     {
-        if (!string.IsNullOrEmpty(Q)) yield return ($"Busca: {Q}", () => Clear("q"));
-        if (!string.IsNullOrEmpty(Grupo)) yield return ($"Grupo: {(Groups.All.Contains(Grupo) ? Groups.Title(Grupo) : Grupo == "byod" ? "BYOD" : "Sem gestão")}", () => Clear("grupo"));
-        if (!string.IsNullOrEmpty(Gestao)) yield return ($"Gestão: {Gestao}", () => Clear("gestao"));
-        if (!string.IsNullOrEmpty(Estado)) yield return ($"Estado: {(Estado == "ativos" ? "Ativos" : Estado)}", () => Clear("estado"));
-        if (!string.IsNullOrEmpty(Propriedade)) yield return ($"Propriedade: {Propriedade}", () => Clear("propriedade"));
-        if (!string.IsNullOrEmpty(Pendencia) && HealthModel.Rules.Any(r => r.Id == Pendencia)) yield return ($"Pendência: {HealthModel.RuleOf(Pendencia).Title}", () => Clear("pendencia"));
-        if (!string.IsNullOrEmpty(Funil) && InventoryQuery.FunnelNames.TryGetValue(Funil, out var name)) yield return ($"Funil: {name}", () => Clear("funil"));
-    }
-
-    private void Open(Guid id) => Nav.NavigateTo("/dispositivo/" + id);
-
-    private void Move(int delta)
-    {
-        var page = Math.Max(0, _skip / PageSize + delta);
-        Nav.NavigateTo(Nav.GetUriWithQueryParameter("pagina", page));
+        if (!string.IsNullOrEmpty(Q)) yield return ($"Busca: {Q}", Without("q"));
+        if (!string.IsNullOrEmpty(Grupo)) yield return ($"Grupo: {(Groups.All.Contains(Grupo) ? Groups.Title(Grupo) : Grupo == "byod" ? "BYOD" : "Sem gestão")}", Without("grupo"));
+        if (!string.IsNullOrEmpty(Gestao)) yield return ($"Gestão: {Gestao}", Without("gestao"));
+        if (!string.IsNullOrEmpty(Estado)) yield return ($"Estado: {(Estado == "ativos" ? "Ativos" : Estado)}", Without("estado"));
+        if (!string.IsNullOrEmpty(Propriedade)) yield return ($"Propriedade: {Propriedade}", Without("propriedade"));
+        if (!string.IsNullOrEmpty(Pendencia) && HealthModel.Rules.Any(r => r.Id == Pendencia)) yield return ($"Pendência: {HealthModel.RuleOf(Pendencia).Title}", Without("pendencia"));
+        if (!string.IsNullOrEmpty(Funil) && InventoryQuery.FunnelNames.TryGetValue(Funil, out var name)) yield return ($"Funil: {name}", Without("funil"));
     }
 
     private RenderFragment Header(string key, string label) => __builder =>
     {
         var active = (Ordem ?? "indice") == key;
-        var desc = active ? !Desc : false;
-        var uri = Nav.GetUriWithQueryParameters(new Dictionary<string, object?> { ["ordem"] = key, ["desc"] = desc ? "true" : null, ["pagina"] = null });
-        <th class="s"><a href="@uri" style="color:inherit;text-decoration:none">@label@(active ? (Desc ? " ↓" : " ↑") : "")</a></th>
+        var desc = active && !Desc;
+        <th class="s"><a href="@Link(ordem: key, desc: desc)" style="color:inherit;text-decoration:none">@label@(active ? (Desc ? " ↓" : " ↑") : "")</a></th>
     };
 }

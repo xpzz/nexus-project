@@ -27,15 +27,73 @@ public sealed record OverviewReport(
 
 public sealed record JobSummary(string Name, string? Status, DateTimeOffset? LastSuccessAt, DateTimeOffset? NextRunAt, int? Records, string? Error);
 
-public sealed record InventorySnapshot(IReadOnlyList<AssetView> Views, IReadOnlyList<ReviewItem> Review, IReadOnlyList<JobSummary> Jobs, SourceAvailability Sources, DateTimeOffset LoadedAt)
+/// <summary>
+/// Immutable result of one reconciliation read. Everything the screens ask repeatedly (counts per group and rule, lookups, the overview)
+/// is computed once per snapshot, so a page render never walks the whole inventory more than once.
+/// </summary>
+public sealed class InventorySnapshot(IReadOnlyList<AssetView> views, IReadOnlyList<ReviewItem> review, IReadOnlyList<JobSummary> jobs, SourceAvailability sources, DateTimeOffset loadedAt)
 {
+    private readonly Lazy<Dictionary<Guid, AssetView>> _byId = new(() => views.ToDictionary(v => v.Asset.Id));
+    private readonly Lazy<IssueIndex> _issues = new(() => IssueIndex.Build(views));
+
+    public IReadOnlyList<AssetView> Views { get; } = views;
+    public IReadOnlyList<ReviewItem> Review { get; } = review;
+    public IReadOnlyList<JobSummary> Jobs { get; } = jobs;
+    public SourceAvailability Sources { get; } = sources;
+    public DateTimeOffset LoadedAt { get; } = loadedAt;
+
     public static InventorySnapshot Empty { get; } = new([], [], [], new SourceAvailability(false, false, false, false), DateTimeOffset.MinValue);
 
     public bool HasData => Views.Count > 0;
 
-    public AssetView? Find(Guid id) => Views.FirstOrDefault(v => v.Asset.Id == id);
+    public IssueIndex Issues => _issues.Value;
 
-    public OverviewReport Overview() => OverviewBuilder.Build(this);
+    public AssetView? Find(Guid id) => _byId.Value.GetValueOrDefault(id);
+
+    public OverviewReport Overview() => _overviewCache ??= OverviewBuilder.Build(this);
+
+    private OverviewReport? _overviewCache;
+}
+
+/// <summary>Counts per group, per rule and per rule × group, from a single pass.</summary>
+public sealed class IssueIndex
+{
+    public IReadOnlyDictionary<string, int> Groups { get; private init; } = new Dictionary<string, int>();
+    public IReadOnlyDictionary<string, int> Rules { get; private init; } = new Dictionary<string, int>();
+    public IReadOnlyDictionary<(string Group, string Rule), int> RulesByGroup { get; private init; } = new Dictionary<(string, string), int>();
+    public int WithPending { get; private init; }
+
+    public int Group(string group) => Groups.GetValueOrDefault(group);
+
+    public int Rule(string rule) => Rules.GetValueOrDefault(rule);
+
+    public int RuleInGroup(string group, string rule) => RulesByGroup.GetValueOrDefault((group, rule));
+
+    public static IssueIndex Build(IReadOnlyList<AssetView> views)
+    {
+        var groups = new Dictionary<string, int>();
+        var rules = new Dictionary<string, int>();
+        var byGroup = new Dictionary<(string, string), int>();
+        var pending = 0;
+        foreach (var v in views)
+        {
+            groups[v.Group] = groups.GetValueOrDefault(v.Group) + 1;
+            var any = false;
+            foreach (var issue in v.Issues)
+            {
+                rules[issue] = rules.GetValueOrDefault(issue) + 1;
+                byGroup[(v.Group, issue)] = byGroup.GetValueOrDefault((v.Group, issue)) + 1;
+                any |= issue != "stale";
+            }
+
+            if (any)
+            {
+                pending++;
+            }
+        }
+
+        return new IssueIndex { Groups = groups, Rules = rules, RulesByGroup = byGroup, WithPending = pending };
+    }
 }
 
 public static class OverviewBuilder
@@ -99,8 +157,9 @@ public static class OverviewBuilder
                 Management.All.ToDictionary(m => m, m => all.Count(v => v.Management == m)), States.All.ToDictionary(x => x, x => all.Count(v => v.State == x)));
         }).ToList();
 
+        var index = s.Issues;
         var top = HealthModel.Rules.Where(r => r.Available && r.Id != "stale")
-            .Select(r => new RuleCount(r, views.Count(v => v.Issues.Contains(r.Id)), Groups.All.ToDictionary(g => g, g => views.Count(v => v.Group == g && v.Issues.Contains(r.Id)))))
+            .Select(r => new RuleCount(r, index.Rule(r.Id), Groups.All.ToDictionary(g => g, g => index.RuleInGroup(g, r.Id))))
             .Where(r => r.Devices > 0).OrderBy(r => r.Rule.Priority).ThenByDescending(r => r.Devices).Take(6).ToList();
 
         return new OverviewReport(active.Count == 0 ? null : Math.Round(active.Average(v => v.Score), 0), headline, below, atRiskPct, highlights, kpis, groups, states, top, views.Count, active.Count);
@@ -121,33 +180,57 @@ public static class InventorySnapshotLoader
     }
 }
 
-/// <summary>Caches the snapshot for a short time so every screen shares one query; collections run every 15 to 240 minutes.</summary>
+/// <summary>
+/// Serves the last snapshot immediately and refreshes it in the background once it is older than a minute (stale-while-revalidate),
+/// so no page waits for the database after the first load. Collections run every 15 to 240 minutes, so a minute of staleness is invisible.
+/// </summary>
 public sealed class InventorySnapshotService(INexusDbFactory dbFactory, TimeProvider clock)
 {
-    private static readonly TimeSpan Ttl = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan Ttl = TimeSpan.FromSeconds(60);
     private readonly SemaphoreSlim _lock = new(1, 1);
-    private InventorySnapshot _snapshot = InventorySnapshot.Empty;
+    private volatile InventorySnapshot _snapshot = InventorySnapshot.Empty;
+    private int _refreshing;
 
     public async Task<InventorySnapshot> GetAsync(CancellationToken cancellationToken = default)
     {
-        if (clock.GetUtcNow() - _snapshot.LoadedAt < Ttl)
+        var current = _snapshot;
+        if (current.LoadedAt == DateTimeOffset.MinValue)
         {
-            return _snapshot;
-        }
-
-        await _lock.WaitAsync(cancellationToken);
-        try
-        {
-            if (clock.GetUtcNow() - _snapshot.LoadedAt >= Ttl)
+            await _lock.WaitAsync(cancellationToken);
+            try
             {
-                _snapshot = await InventorySnapshotLoader.LoadAsync(dbFactory, clock, cancellationToken);
+                if (_snapshot.LoadedAt == DateTimeOffset.MinValue)
+                {
+                    _snapshot = await InventorySnapshotLoader.LoadAsync(dbFactory, clock, cancellationToken);
+                }
+            }
+            finally
+            {
+                _lock.Release();
             }
 
             return _snapshot;
         }
-        finally
+
+        if (clock.GetUtcNow() - current.LoadedAt > Ttl && Interlocked.CompareExchange(ref _refreshing, 1, 0) == 0)
         {
-            _lock.Release();
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    _snapshot = await InventorySnapshotLoader.LoadAsync(dbFactory, clock, CancellationToken.None);
+                }
+                catch (Exception)
+                {
+                    // Keep serving the last good snapshot; the next request tries again.
+                }
+                finally
+                {
+                    Volatile.Write(ref _refreshing, 0);
+                }
+            });
         }
+
+        return current;
     }
 }

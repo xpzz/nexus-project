@@ -1,5 +1,4 @@
 @page "/pendencias"
-@rendermode InteractiveServer
 @inject InventorySnapshotService Inventory
 @inject INexusDbFactory DbFactory
 
@@ -7,7 +6,7 @@
 
 <div class="ph">
     <div><h1>Pendências</h1><p>"Sem SCCM" e "sem Intune" só viram pendência quando contrariam a gestão esperada do grupo. Cada regra abre a lista dos dispositivos afetados.</p></div>
-    @if (_snapshot is not null) { <span class="asof">@Fmt.Number(_snapshot.Views.Count(v => v.Issues.Any(i => i != "stale"))) dispositivos com pendência</span> }
+    @if (_snapshot is not null) { <span class="asof">@Fmt.Number(_snapshot.Issues.WithPending) dispositivos com pendência</span> }
 </div>
 
 @if (_snapshot is not null)
@@ -25,10 +24,10 @@
         <div class="list">
             @foreach (var r in HealthModel.Rules.Where(r => r.Available).OrderBy(r => r.Priority))
             {
-                var total = _snapshot.Views.Count(v => v.Issues.Contains(r.Id));
+                var total = _snapshot.Issues.Rule(r.Id);
                 <div class="row">
                     <div class="t"><b>@r.Title</b><span>@r.Action · responsável sugerido: @r.Owner</span>
-                        <div class="legend" style="margin:4px 0 0">@foreach (var g in Groups.All.Where(g => _snapshot.Views.Any(v => v.Group == g && v.Issues.Contains(r.Id)))){<span>@Groups.Title(g) <b>@_snapshot.Views.Count(v => v.Group == g && v.Issues.Contains(r.Id))</b></span>}</div></div>
+                        <div class="legend" style="margin:4px 0 0">@foreach (var g in Groups.All.Where(g => _snapshot.Issues.RuleInGroup(g, r.Id) > 0)){<span>@Groups.Title(g) <b>@_snapshot.Issues.RuleInGroup(g, r.Id)</b></span>}</div></div>
                     <div class="r"><span class="pill @Fmt.PriorityCss(r.Priority)">@Fmt.PriorityLabel(r.Priority)</span><strong>@Fmt.Number(total)</strong><a class="button" href="@Fmt.Inv(pendencia: r.Id)">Ver lista</a></div>
                 </div>
             }
@@ -39,7 +38,7 @@
         <section class="card">
             <h3>Ocorrências por responsável</h3><p class="sub">Soma de ocorrências das regras ativas, exceto "sem comunicação".</p>
             <div class="list">
-                @foreach (var o in HealthModel.Rules.Where(r => r.Available && r.Id != "stale").GroupBy(r => r.Owner).Select(g => (Owner: g.Key, Count: g.Sum(r => _snapshot.Views.Count(v => v.Issues.Contains(r.Id))))).OrderByDescending(x => x.Count))
+                @foreach (var o in HealthModel.Rules.Where(r => r.Available && r.Id != "stale").GroupBy(r => r.Owner).Select(g => (Owner: g.Key, Count: g.Sum(r => _snapshot.Issues.Rule(r.Id)))).OrderByDescending(x => x.Count))
                 {
                     <div class="row" style="padding:7px 0"><span>@o.Owner</span><strong style="font:700 16px var(--f-display)">@Fmt.Number(o.Count)</strong></div>
                 }

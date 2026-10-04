@@ -59,6 +59,7 @@ builder.Services.AddSingleton(new SettingsProvider(paths));
 builder.Services.AddSingleton<INexusDbFactory, SettingsDbFactory>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<Nexus.Reconciliation.InventorySnapshotService>();
+builder.Services.AddHostedService<Nexus.Web.Hosting.SnapshotWarmup>();
 
 // Keys live in the data folder (ACL restricted) and are encrypted with DPAPI on Windows,
 // so cookies survive app pool recycles and nothing sensitive is stored in clear text.

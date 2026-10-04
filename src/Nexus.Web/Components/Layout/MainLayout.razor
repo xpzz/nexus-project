@@ -14,11 +14,11 @@
             <NavLink href="/parque/celulares">Celulares corp.<i>@Count(Groups.CorpMobile)</i></NavLink>
             <NavLink href="/byod">BYOD<i>@(Count(Groups.ByodMobile) + Count(Groups.ByodComputers))</i></NavLink>
             <NavLink href="/parque/externos">Externos<i>@Count(Groups.External)</i></NavLink>
-            <NavLink href="/parque/sem-gestao">Sem gestão<i>@_snapshot.Views.Count(v => v.Issues.Contains("nomgr"))</i></NavLink>
+            <NavLink href="/parque/sem-gestao">Sem gestão<i>@_snapshot.Issues.Rule("nomgr")</i></NavLink>
             <NavLink href="/inventario" Match="NavLinkMatch.All">Inventário completo<i>@_snapshot.Views.Count</i></NavLink>
             <h6>Operação</h6>
             <NavLink href="/operacao">SCCM e Intune</NavLink>
-            <NavLink href="/pendencias">Pendências<i>@_snapshot.Views.Count(v => v.Issues.Any(i => i != "stale"))</i></NavLink>
+            <NavLink href="/pendencias">Pendências<i>@_snapshot.Issues.WithPending</i></NavLink>
             <h6>Configuração</h6>
             <NavLink href="/assistente">Assistente</NavLink>
             <NavLink href="/saude">Saúde do Nexus</NavLink>
@@ -64,7 +64,7 @@
         }
     }
 
-    private int Count(string group) => _snapshot.Views.Count(v => v.Group == group);
+    private int Count(string group) => _snapshot.Issues.Group(group);
 
     private IEnumerable<(string Name, string Text, string Dot, string Detail)> Chips()
     {
