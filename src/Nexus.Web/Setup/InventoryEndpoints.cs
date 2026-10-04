@@ -58,6 +58,53 @@ public static class InventoryEndpoints
             return Results.Redirect("/inventario");
         });
 
+        // Approved exceptions: the gap stays visible, marked as excepted with its reason and an expiry. Needs the analyst role.
+        app.MapPost("/mam/excecoes", async (HttpContext http, CurrentAccess access, INexusDbFactory dbFactory, TimeProvider clock, CancellationToken ct) =>
+        {
+            if (!access.CanAnalyze)
+            {
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            }
+
+            var form = await http.Request.ReadFormAsync(ct);
+            var (id, name, reason) = (form["subjectId"].ToString().Trim(), form["subjectName"].ToString().Trim(), form["reason"].ToString().Trim());
+            var control = form["control"].ToString() is "mdm" or "compliance" or "edge" ? form["control"].ToString() : "mam";
+            if (id.Length is 0 or > 64 || reason.Length is < 10 or > 1000 || !int.TryParse(form["days"], out var days) || days is < 1 or > 365)
+            {
+                return Results.BadRequest("Informe o usuário, uma justificativa de pelo menos 10 caracteres e um prazo de 1 a 365 dias.");
+            }
+
+            var now = clock.GetUtcNow();
+            await using var db = dbFactory.Create();
+            db.ProtectionExceptions.Add(new ProtectionException
+            {
+                SubjectKind = "user", SubjectId = id, SubjectName = name.Length > 256 ? name[..256] : name, Control = control, Reason = reason, ApprovedBy = access.Actor, ApprovedAt = now, ExpiresAt = now.AddDays(days), Active = true,
+            });
+            Audit.Record(db, access.Actor, "exception.created", $"{control} para {(name.Length > 0 ? name : id)} por {days} dias: {reason}");
+            await db.SaveChangesAsync(ct);
+            return Results.Redirect("/mam#excecoes");
+        });
+
+        app.MapPost("/mam/excecoes/{id:long}/revogar", async (long id, CurrentAccess access, INexusDbFactory dbFactory, CancellationToken ct) =>
+        {
+            if (!access.CanAnalyze)
+            {
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            }
+
+            await using var db = dbFactory.Create();
+            var exception = await db.ProtectionExceptions.FirstOrDefaultAsync(e => e.Id == id, ct);
+            if (exception is null)
+            {
+                return Results.NotFound();
+            }
+
+            exception.Active = false;
+            Audit.Record(db, access.Actor, "exception.revoked", $"{exception.Control} para {exception.SubjectName}");
+            await db.SaveChangesAsync(ct);
+            return Results.Redirect("/mam#excecoes");
+        });
+
         // Manual collection by connector. Needs the integration administrator role; the Worker still honors pauses and CPU limits.
         app.MapPost("/operacao/coletar", async (HttpContext http, CurrentAccess access, INexusDbFactory dbFactory, CancellationToken ct) =>
         {

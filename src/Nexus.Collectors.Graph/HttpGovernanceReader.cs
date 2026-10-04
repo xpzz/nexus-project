@@ -225,7 +225,7 @@ public sealed class HttpGovernanceReader(GraphHttpClient client) : IGraphGoverna
 
     private async IAsyncEnumerable<SignInAccess> ReadSignInAccessCore(DateTimeOffset since, int maxPages, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        const string select = "userId,userPrincipalName,appDisplayName,resourceDisplayName,clientAppUsed,createdDateTime,deviceDetail";
+        const string select = "userId,userPrincipalName,appDisplayName,resourceDisplayName,clientAppUsed,createdDateTime,deviceDetail,conditionalAccessStatus";
         var resources = string.Join(" or ", new[] { "Office 365 Exchange Online", "Office 365 SharePoint Online", "Microsoft Teams Services", "OneDrive SyncEngine", "Microsoft Graph" }.Select(r => $"resourceDisplayName eq '{r}'"));
         var stamp = since.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
         var all = $"/auditLogs/signIns?$filter=createdDateTime ge {stamp} and ({resources}) and (signInEventTypes/any(t: t eq 'interactiveUser') or signInEventTypes/any(t: t eq 'nonInteractiveUser'))&$top=500&$select={select}";
@@ -268,13 +268,13 @@ public sealed class HttpGovernanceReader(GraphHttpClient client) : IGraphGoverna
         foreach (var (key, a) in summary)
         {
             yield return new SignInAccess(key, a.UserId, a.Upn, a.DeviceId, a.DeviceName, a.Os, a.Browser, a.IsManaged, a.IsCompliant, a.TrustType, a.Last,
-                string.Join(",", Workloads.Where(a.Workloads.Contains)), a.Count, a.ClientApp);
+                string.Join(",", Workloads.Where(a.Workloads.Contains)), a.Count, a.ClientApp, a.CaStatus);
         }
     }
 
     private sealed class Agg
     {
-        public string? UserId, Upn, DeviceId, DeviceName, Os, Browser, TrustType, ClientApp;
+        public string? UserId, Upn, DeviceId, DeviceName, Os, Browser, TrustType, ClientApp, CaStatus;
         public bool? IsManaged, IsCompliant;
         public DateTimeOffset Last;
         public int Count;
@@ -307,6 +307,7 @@ public sealed class HttpGovernanceReader(GraphHttpClient client) : IGraphGoverna
         {
             a.Last = when.Value;
             a.ClientApp = Text(s, "clientAppUsed");
+            a.CaStatus = Text(s, "conditionalAccessStatus");
             a.DeviceName = detail.ValueKind == JsonValueKind.Object ? Text(detail, "displayName") : a.DeviceName;
             a.Os = os;
             a.Browser = browser;

@@ -16,7 +16,7 @@ public sealed record ConditionalAccessInfo(
 /// <summary>Microsoft 365 access summarized per device (or per user, operating system and browser when the sign-in carries no device).</summary>
 public sealed record SignInAccess(
     string Key, string? UserId, string? UserPrincipalName, string? EntraDeviceId, string? DeviceName, string? OperatingSystem, string? Browser, bool? IsManaged, bool? IsCompliant,
-    string? TrustType, DateTimeOffset LastAccessAt, string Workloads, int Count, string? ClientApp);
+    string? TrustType, DateTimeOffset LastAccessAt, string Workloads, int Count, string? ClientApp, string? CaStatus = null);
 
 /// <summary>Governance reads. Separate from <see cref="IGraphReader"/> so a tenant without these licenses or permissions still gets the core inventory.</summary>
 public interface IGraphGovernanceReader

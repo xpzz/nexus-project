@@ -442,7 +442,7 @@ public sealed class JobRunner(
             {
                 Key = a.Key, UserId = a.UserId, UserPrincipalName = a.UserPrincipalName, EntraDeviceId = a.EntraDeviceId, DeviceName = a.DeviceName, OperatingSystem = a.OperatingSystem,
                 Browser = a.Browser, IsManaged = a.IsManaged, IsCompliant = a.IsCompliant, TrustType = a.TrustType, LastAccessAt = a.LastAccessAt, Workloads = a.Workloads, Count = a.Count,
-                ClientApp = a.ClientApp, CollectedAt = now,
+                ClientApp = a.ClientApp, CaStatus = a.CaStatus, CollectedAt = now,
             };
         }
 

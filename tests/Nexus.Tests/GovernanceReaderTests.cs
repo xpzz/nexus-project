@@ -133,7 +133,7 @@ public class GovernanceReaderTests
     }
 
     private static string SignIn(string user, string? device, string os, string resource, string when, bool? compliant = true) =>
-        "{\"userId\":\"" + user + "\",\"userPrincipalName\":\"" + user + "@azul.corp\",\"resourceDisplayName\":\"" + resource + "\",\"clientAppUsed\":\"Mobile Apps and Desktop clients\",\"createdDateTime\":\"" + when + "\"," +
+        "{\"userId\":\"" + user + "\",\"userPrincipalName\":\"" + user + "@azul.corp\",\"resourceDisplayName\":\"" + resource + "\",\"clientAppUsed\":\"Mobile Apps and Desktop clients\",\"conditionalAccessStatus\":\"success\",\"createdDateTime\":\"" + when + "\"," +
         "\"deviceDetail\":{\"deviceId\":" + (device is null ? "\"\"" : "\"" + device + "\"") + ",\"displayName\":\"" + (device is null ? "" : "PHONE") + "\",\"operatingSystem\":\"" + os + "\",\"browser\":\"Edge Mobile\",\"isManaged\":false,\"isCompliant\":" + (compliant?.ToString().ToLowerInvariant() ?? "null") + ",\"trustType\":\"Workplace\"}}";
 
     [Fact]
@@ -152,6 +152,7 @@ public class GovernanceReaderTests
         Assert.Equal("Exchange,SharePoint", byDevice.Workloads);
         Assert.Equal(DateTimeOffset.Parse("2026-10-01T09:00:00Z"), byDevice.LastAccessAt);
         Assert.Equal("u1", byDevice.UserId);
+        Assert.Equal("success", byDevice.CaStatus);
 
         var anonymous = Assert.Single(list, a => a.EntraDeviceId is null); // blank and zero device ids both mean "no device"
         Assert.StartsWith("anon:", anonymous.Key);

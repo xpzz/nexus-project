@@ -50,9 +50,29 @@
         </section>
         <section class="card">
             <h3>Acesso Condicional</h3>
-            <p class="sub">Quais dispositivos têm o acesso permitido ou bloqueado pelas políticas de Acesso Condicional.</p>
-            <p><span class="pill m"><span aria-hidden="true">?</span> Funcionalidade não disponível</span></p>
-            <p class="hint">A coleta de políticas de Acesso Condicional e de sign-ins do Entra ID ainda não está habilitada neste ambiente. Ela exige as permissões <code>Policy.Read.All</code> e <code>AuditLog.Read.All</code> no aplicativo coletor e uma licença do Entra ID P1. Até lá, o Nexus não afirma que um dispositivo tem acesso permitido.</p>
+            <p class="sub">Políticas que decidem quem acessa o Microsoft 365 e em que condições.</p>
+            @if (!_snapshot.Sources.ConditionalAccess)
+            {
+                <p><span class="pill m"><span aria-hidden="true">?</span> Aguardando coleta</span></p>
+                <p class="hint">A coleta de Acesso Condicional (job entra.ca) ainda não rodou ou falhou. Ela exige a permissão <code>Policy.Read.All</code> no aplicativo coletor e uma licença do Entra ID P1. Até lá, o Nexus não afirma que um dispositivo tem acesso permitido.</p>
+            }
+            else if (_snapshot.Protection.ConditionalAccess.Count == 0)
+            {
+                <p><span class="pill w"><span aria-hidden="true">▲</span> Nenhuma política de Acesso Condicional</span></p>
+            }
+            else
+            {
+                <div class="tw" style="border:0"><table style="min-width:0"><thead><tr><th>Política</th><th>Estado</th><th>Exige</th></tr></thead><tbody>
+                    @foreach (var c in _snapshot.Protection.ConditionalAccess.OrderBy(c => c.State != "enabled").ThenBy(c => c.Name))
+                    {
+                        <tr title="Usuários: @c.Users · Aplicativos: @c.Applications · Plataformas: @c.Platforms">
+                            <td class="nm">@c.Name<small class="sm">@c.Users · @c.Applications · @c.Platforms</small></td>
+                            <td><span class="pill @(c.State == "enabled" ? "ok" : c.State == "disabled" ? "m" : "w")">@(c.State == "enabled" ? "ativa" : c.State == "disabled" ? "desativada" : "só relatório")</span></td>
+                            <td class="note-cell">@string.Join(", ", new[] { c.RequiresCompliantDevice ? "dispositivo compliant" : null, c.RequiresAppProtection || c.RequiresApprovedApp ? "aplicativo protegido" : null, c.RequiresMfa ? "MFA" : null }.Where(x => x is not null))</td></tr>
+                    }
+                </tbody></table></div>
+                <p class="sub" style="margin-top:8px">O resultado por dispositivo (último sign-in) está na tabela dos conceitos acima. Ele descreve o que aconteceu; não simula o que cada política permitiria.</p>
+            }
         </section>
     </div>
 

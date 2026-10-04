@@ -646,5 +646,7 @@ public sealed class AccessEvidenceRecord
     public string? Workloads { get; set; }
     public int Count { get; set; }
     public string? ClientApp { get; set; }
+    /// <summary>Conditional Access result of the latest sign-in: success, failure or notApplied. It reports what happened, not what a policy would allow.</summary>
+    public string? CaStatus { get; set; }
     public DateTimeOffset CollectedAt { get; set; }
 }

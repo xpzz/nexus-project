@@ -503,7 +503,7 @@ public sealed class SyntheticEstate
         {
             var mine = workloads.Where(_ => random.NextDouble() < .6).DefaultIfEmpty("Exchange").ToList();
             SignIns.Add(new SignInAccess("dev:" + d.AzureAdDeviceId, d.UserId, d.UserPrincipalName, d.AzureAdDeviceId.ToString(), d.DeviceName, d.OperatingSystem, d.OperatingSystem is "iOS" or "Android" ? "Edge Mobile" : "Edge",
-                d.OwnerType == "company", d.ComplianceState == "compliant", d.OwnerType == "company" ? "AzureAd" : "Workplace", Now.AddHours(-random.Next(1, 24 * 12)), string.Join(",", mine), random.Next(1, 90), "Mobile Apps and Desktop clients"));
+                d.OwnerType == "company", d.ComplianceState == "compliant", d.OwnerType == "company" ? "AzureAd" : "Workplace", Now.AddHours(-random.Next(1, 24 * 12)), string.Join(",", mine), random.Next(1, 90), "Mobile Apps and Desktop clients", random.NextDouble() < .88 ? "success" : random.NextDouble() < .5 ? "failure" : "notApplied"));
         }
 
         for (var k = 0; k < 18; k++)

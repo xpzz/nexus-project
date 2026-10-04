@@ -105,8 +105,31 @@ public class ExecutiveSummaryTests
         Assert.Equal(2, g["Registrado no Entra"].Denominator); // the server is outside the population
         Assert.Equal(1, g["Protegido por MAM"].Denominator); // BYOD only
         Assert.Equal(1, g["Protegido por MAM"].Count);
-        Assert.NotNull(g["Acesso permitido por Acesso Condicional"].Unavailable);
-        Assert.Null(g["Acesso permitido por Acesso Condicional"].Percent);
+        Assert.Null(g["Acesso condicionado por política"].Unavailable); // both collectors ran: no rows is a real zero, not "unavailable"
+        Assert.Equal(0, g["Acesso condicionado por política"].Denominator);
+        Assert.Null(g["Acesso condicionado por política"].Percent);
+
+        var without = new SourceAvailability(true, true, true, true, SignIns: false, ConditionalAccess: true);
+        var unavailable = Snapshot([View(Confirmed)], null, without).Executive().Governance.Single(x => x.Concept == "Acesso condicionado por política");
+        Assert.NotNull(unavailable.Unavailable);
+        Assert.Null(unavailable.Percent);
+    }
+
+    [Fact]
+    public void ConditionalAccessRowUsesTheLatestSignInResultPerDevice()
+    {
+        var access = new[]
+        {
+            new AccessEvidenceRecord { Key = "dev:1", EntraDeviceId = "1", CaStatus = "success", LastAccessAt = Now },
+            new AccessEvidenceRecord { Key = "dev:2", EntraDeviceId = "2", CaStatus = "failure", LastAccessAt = Now },
+            new AccessEvidenceRecord { Key = "dev:3", EntraDeviceId = "3", CaStatus = "notApplied", LastAccessAt = Now },
+            new AccessEvidenceRecord { Key = "anon:x", EntraDeviceId = null, CaStatus = "success", LastAccessAt = Now }, // no device: not part of a device population
+        };
+        var snapshot = new InventorySnapshot([View(Confirmed)], [], AllGood(), SourceAvailability.All, Now, null, 30, Policy,
+            new ProtectionData([], [], [], access, [], [], [], new GovernanceSettingsView(1000, 10, 180)));
+        var row = snapshot.Executive().Governance.Single(x => x.Concept == "Acesso condicionado por política");
+        Assert.Equal((1, 3), (row.Count, row.Denominator));
+        Assert.Equal(33.3, row.Percent);
     }
 
     [Fact]

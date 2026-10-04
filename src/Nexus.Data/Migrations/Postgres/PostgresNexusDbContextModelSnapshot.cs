@@ -32,6 +32,10 @@ namespace Nexus.Data.Migrations.Postgres
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");
 
+                    b.Property<string>("CaStatus")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
                     b.Property<string>("ClientApp")
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");

@@ -204,6 +204,23 @@ public static class ExecutiveSummary
         return items;
     }
 
+    /// <summary>
+    /// Built from the Conditional Access result of the latest sign-in of each device. It says what happened, not what a policy would allow:
+    /// a device that never signed in has no result, and a policy in report-only mode does not block anyone.
+    /// </summary>
+    private static GovernanceRow ConditionalAccessRow(InventorySnapshot s)
+    {
+        const string concept = "Acesso condicionado por política";
+        const string meaning = "Último sign-in do dispositivo avaliado por uma política de Acesso Condicional com resultado de sucesso. Descreve o que aconteceu, não simula o que a política permitiria.";
+        if (!(s.Sources.SignIns && s.Sources.ConditionalAccess))
+        {
+            return new(concept, meaning, 0, 0, "não disponível", null, "Funcionalidade não disponível: a coleta de Acesso Condicional e de sign-ins ainda não foi implementada ou habilitada.");
+        }
+
+        var seen = s.Protection.Access.Where(a => a.EntraDeviceId is not null).ToList();
+        return new(concept, meaning, seen.Count(a => a.CaStatus == "success"), seen.Count, "dispositivos com sign-in observado no Microsoft 365", "/inventario?flag=acessom365", null);
+    }
+
     private static IReadOnlyList<GovernanceRow> Governance(InventorySnapshot s, List<AssetView> evaluated)
     {
         var src = s.Sources;
@@ -220,7 +237,7 @@ public static class ExecutiveSummary
             new("Compliant no Intune", "Estado de conformidade do Intune igual a conforme.", mdm.Count(v => string.Equals(v.Asset.ComplianceState, "compliant", StringComparison.OrdinalIgnoreCase)), mdm.Count, "ativos recentes com MDM", "/inventario?oper=ConfirmedActive,ProbableActive&flag=mdm,naoconforme", NeedIntune(src.Intune, "Intune")),
             new("Protegido por MAM", "Há registro de proteção de aplicativos. Protege apenas os aplicativos compatíveis, não o aparelho.", byod.Count(v => v.Asset.HasMam), byod.Count, "BYOD ativos", "/byod", NeedIntune(src.Mam, "Proteção de aplicativos (MAM)")),
             new("Com agente de segurança", "Agente do Cortex XDR conectado.", active.Count(v => v.Asset.InXdr && Reconciler.IsXdrConnected(v.Asset.XdrStatus) && v.Asset.AssetType is not AssetTypes.Phone and not AssetTypes.Tablet), active.Count(v => v.Asset.AssetType is not AssetTypes.Phone and not AssetTypes.Tablet), "ativos recentes que não são celulares nem tablets", "/inventario?funil=xdr-sem-agente", NeedIntune(src.Xdr, "Cortex XDR")),
-            new("Acesso permitido por Acesso Condicional", "Resultado das políticas de Acesso Condicional avaliado por dispositivo.", 0, 0, "não disponível", null, "Funcionalidade não disponível: a coleta de Acesso Condicional e de sign-ins ainda não foi implementada ou habilitada."),
+            ConditionalAccessRow(s),
         ];
     }
 }

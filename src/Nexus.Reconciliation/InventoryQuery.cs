@@ -40,6 +40,8 @@ public static class InventoryQuery
         ["fonteunica"] = ("Encontrado em uma única fonte", v => SourceCount(v.Asset) == 1),
         ["identidadefraca"] = ("Identidade só por nome ou confiança baixa", v => v.Asset.Confidence == "Low" || v.Asset.AdByNameOnly || v.Asset.XdrByNameOnly || v.Asset.NetskopeByNameOnly),
         ["revisao"] = ("Reconciliação a revisar", v => v.Asset.NeedsReview),
+        ["acessom365"] = ("Com acesso ao Microsoft 365 observado", v => v.Asset.LastM365AccessAt is not null),
+        ["semprotecao"] = ("Sem MDM e sem MAM", v => v.Asset.IntuneChannel != "Mdm" && !v.Asset.HasMam),
     };
 
     public static int SourceCount(Asset a) => new[] { a.InSccm, a.InIntune, a.InEntra, a.InAd, a.InXdr, a.InNetskope, a.HasMam }.Count(x => x);

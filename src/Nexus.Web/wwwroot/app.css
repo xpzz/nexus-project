@@ -257,3 +257,12 @@ pre.logs{max-height:360px;overflow:auto;background:var(--surface2);border:1px so
 .who{display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--ink2)}
 .who form{margin:0}
 .who button{padding:4px 10px}
+
+/* MAM e BYOD */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.split .half{border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:var(--surface2)}
+.split .half.off{border-style:dashed;background:transparent;color:var(--ink2)}
+details.pol>summary{display:flex;flex-wrap:wrap;gap:8px;align-items:center;cursor:pointer;list-style:none}
+details.pol>summary::-webkit-details-marker{display:none}
+details.pol[open]>summary{margin-bottom:8px}
+@media (max-width:860px){.split{grid-template-columns:1fr}}

@@ -60,7 +60,12 @@ builder.Services.AddSingleton(settingsProvider);
 builder.Services.AddSingleton<INexusDbFactory, SettingsDbFactory>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton(sp => new Nexus.Reconciliation.InventorySnapshotService(sp.GetRequiredService<INexusDbFactory>(), sp.GetRequiredService<TimeProvider>(),
-    () => sp.GetRequiredService<SettingsProvider>().Exists ? Nexus.Reconciliation.EvidencePolicy.From(sp.GetRequiredService<SettingsProvider>().Current.Evidence) : Nexus.Reconciliation.EvidencePolicy.From(new Nexus.Core.Configuration.EvidenceSettings())));
+    () => sp.GetRequiredService<SettingsProvider>().Exists ? Nexus.Reconciliation.EvidencePolicy.From(sp.GetRequiredService<SettingsProvider>().Current.Evidence) : Nexus.Reconciliation.EvidencePolicy.From(new Nexus.Core.Configuration.EvidenceSettings()),
+    () =>
+    {
+        var g = sp.GetRequiredService<SettingsProvider>().Exists ? sp.GetRequiredService<SettingsProvider>().Current.Governance : new Nexus.Core.Configuration.GovernanceSettings();
+        return new Nexus.Reconciliation.GovernanceSettingsView(Math.Clamp(g.UrlBlocklistLimit, 1, 100_000), g.UrlBlocklistReservePercent, 180);
+    }));
 builder.Services.AddHostedService<Nexus.Web.Hosting.SnapshotWarmup>();
 
 // Keys live in the data folder (ACL restricted) and are encrypted with DPAPI on Windows,

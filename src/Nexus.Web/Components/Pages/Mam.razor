@@ -1,21 +1,308 @@
 @page "/mam"
 @inject InventorySnapshotService Inventory
+@inject CurrentAccess Access
 
-<PageTitle>Proteção de aplicativos · Azul Nexus</PageTitle>
+<PageTitle>MAM e BYOD · Azul Nexus</PageTitle>
 
 <div class="ph">
-    <div><h1>Proteção de aplicativos (MAM)</h1><p>MAM protege os dados corporativos dentro dos aplicativos compatíveis com o Intune SDK. Não protege o aparelho inteiro nem os aplicativos pessoais.</p></div>
+    <div><h1>MAM e BYOD</h1><p>Proteção dos dados corporativos dentro dos aplicativos, em aparelhos pessoais e corporativos. Política atribuída não é proteção comprovada: cada controle mostra até onde há evidência.</p></div>
     @if (_snapshot is not null) { <span class="asof">Dados de @_snapshot.LoadedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</span> }
 </div>
 
-<div class="note"><b>O que esta proteção cobre.</b> Um aparelho com MAM tem proteção apenas nos aplicativos corporativos registrados, e só enquanto a política se aplica. Cópia para aplicativos pessoais, backup e navegador pessoal ficam fora do alcance. Por isso o Nexus nunca soma "tem MAM" a "dispositivo protegido".</div>
+<div class="note"><b>O que o MAM protege.</b> Só os aplicativos compatíveis com o Intune SDK e só o contexto corporativo dentro deles. O aparelho, os aplicativos pessoais, o navegador pessoal, as fotos e as mensagens ficam fora do alcance. Um aparelho com MAM <u>não</u> é um aparelho protegido: é um aparelho com aplicativos corporativos protegidos.</div>
 
-@if (_snapshot is { HasData: true })
+@if (_report is not null)
 {
-    <p class="hint">Detalhes por política, controles, navegadores e exceções chegam nas próximas seções desta página.</p>
+    var r = _report;
+    var missing = new List<string>();
+    if (!r.PoliciesCollected) missing.Add("políticas de proteção e configuração de apps (job intune.apppolicies)");
+    if (!r.RegistrationsCollected) missing.Add("registros de proteção de aplicativos (job intune.mam)");
+    if (!r.ConditionalAccessCollected) missing.Add("Acesso Condicional (job entra.ca)");
+    if (!r.SignInsCollected) missing.Add("acessos ao Microsoft 365 (job entra.signins)");
+    @if (missing.Count > 0)
+    {
+        <div class="note"><span class="pill m"><span aria-hidden="true">?</span> Aguardando coleta</span> Ainda sem: @string.Join("; ", missing). Os números que dependem deles aparecem como "sem evidência", nunca como zero. Veja <a href="/operacao">Fontes e coletas</a>.</div>
+    }
+
+    <section class="kstrip" aria-label="Indicadores de proteção">
+        <a class="card xkpi" href="#lacunas">
+            <div class="l"><span>Usuários cobertos por política de proteção</span></div>
+            <div class="v">@(r.Users.Percent is { } pct ? Fmt.Pct(pct) : "—")<em>@Fmt.Number(r.Users.Covered) de @Fmt.Number(r.Users.Eligible) usuários elegíveis</em></div>
+            <p class="def">Unidade: pessoas. Cobertas são as que têm ao menos um aplicativo com política aplicada.</p>
+            <p class="meta"><b>População:</b> usuários com celular ou tablet ativo, com aplicativos registrados ou com acesso móvel observado.<br /><b>Fora da conta:</b> @Fmt.Number(r.Users.Uncovered) sem proteção, @Fmt.Number(r.Users.RegisteredWithoutPolicy) com apps sem política aplicada.</p>
+        </a>
+        <div class="card xkpi">
+            <div class="l"><span>Aplicativos protegidos (instâncias)</span></div>
+            <div class="v">@(r.Apps.Percent is { } q ? Fmt.Pct(q) : "—")<em>@Fmt.Number(r.Apps.WithPolicy) de @Fmt.Number(r.Apps.Total) registros</em></div>
+            <p class="def">Unidade: um aplicativo em um aparelho de um usuário, com política aplicada. Não é percentual de computadores nem de pessoas.</p>
+            <p class="meta"><b>População:</b> todos os registros de proteção de aplicativos coletados.</p>
+        </div>
+        <a class="card xkpi" href="/inventario?tipo=phone,tablet&propriedade=BYOD&flag=semprotecao">
+            <div class="l"><span>BYOD sem MDM e sem MAM</span></div>
+            <div class="v">@Fmt.Number(r.Devices[0].Neither)<em>de @Fmt.Number(r.Devices[0].Total) celulares e tablets pessoais</em></div>
+            <p class="def">Aparelhos pessoais que o Entra ou o Intune conhecem e que nenhuma proteção alcança.</p>
+            <p class="meta"><b>População:</b> celulares e tablets pessoais, exceto descomissionados.</p>
+            <span class="go">Ver os aparelhos →</span>
+        </a>
+        <div class="card xkpi">
+            <div class="l"><span>Acesso ao Microsoft 365 sem prova de proteção</span></div>
+            @if (r.SignInsCollected)
+            {
+                <div class="v">@Fmt.Number(r.Access.DevicesWithoutProtection + r.Access.MobileAccessWithoutDevice)<em>@Fmt.Number(r.Access.DevicesWithoutProtection) aparelhos e @Fmt.Number(r.Access.MobileAccessWithoutDevice) acessos móveis sem aparelho identificado</em></div>
+                <p class="def">Sign-ins recentes de aparelhos pessoais ou móveis sem MDM e sem MAM.</p>
+                <p class="meta"><b>Janela:</b> @_snapshotWindow dias de sign-ins.</p>
+                <a class="go" href="#lacunas">Ver as lacunas →</a>
+            }
+            else
+            {
+                <div class="v" style="color:var(--ink3)">—</div>
+                <p class="def"><span class="pill m"><span aria-hidden="true">?</span> não disponível</span> Os sign-ins ainda não foram coletados; não há como afirmar quem acessa sem proteção.</p>
+            }
+        </div>
+    </section>
+
+    <section class="card">
+        <h3>Aparelhos móveis: MDM e MAM são coisas diferentes</h3>
+        <p class="sub">MDM governa o aparelho (ou o perfil de trabalho). MAM governa os aplicativos corporativos. Um aparelho pode ter um, outro, os dois ou nenhum.</p>
+        <div class="tw" style="border:0"><table style="min-width:0"><thead><tr><th>Grupo</th><th class="r">MDM e MAM</th><th class="r">Só MDM</th><th class="r">Só MAM</th><th class="r">Nenhum</th><th class="r">Total</th></tr></thead><tbody>
+            @foreach (var d in r.Devices)
+            {
+                <tr><td class="nm">@d.Label</td><td class="num r">@Fmt.Number(d.MdmAndMam)</td><td class="num r">@Fmt.Number(d.MdmOnly)</td><td class="num r">@Fmt.Number(d.MamOnly)</td><td class="num r">@Fmt.Number(d.Neither)</td><td class="num r">@Fmt.Number(d.Total)</td></tr>
+            }
+        </tbody></table></div>
+    </section>
+
+    <h2 class="sec">BYOD por plataforma</h2>
+    <div class="grid g2">
+        @foreach (var b in r.Byod)
+        {
+            var android = b.Platform == "Android";
+            <section class="card">
+                <h3>@(android ? "Android pessoal" : "iPhone e iPad pessoais")</h3>
+                <p class="sub">@Fmt.Number(b.Devices) aparelhos pessoais ativos conhecidos.</p>
+                <div class="split">
+                    <div class="half">
+                        <b>@(android ? "Perfil de trabalho" : "Aplicativos corporativos")</b>
+                        <p class="sub" style="margin:2px 0 6px">@(android ? "Gerenciado pelo Intune (inferido: pessoal e com MDM; o Graph não rotula o perfil de trabalho)." : "Protegidos por MAM; com MDM só quando o aparelho foi inscrito por usuário.")</p>
+                        <dl class="kv"><dt>Com MDM</dt><dd>@Fmt.Number(b.Mdm)</dd><dt>Com MAM</dt><dd>@Fmt.Number(b.Mam)</dd><dt>MDM e MAM</dt><dd>@Fmt.Number(b.MdmAndMam)</dd></dl>
+                    </div>
+                    <div class="half off">
+                        <b>@(android ? "Perfil pessoal" : "Resto do aparelho")</b>
+                        <p class="sub" style="margin:2px 0 6px">Fora do alcance do Nexus e do Intune, por desenho. O navegador pessoal e os aplicativos pessoais não são governados pelas políticas corporativas.</p>
+                        <dl class="kv"><dt>Sem MDM e sem MAM</dt><dd>@Fmt.Number(b.NoProtection)</dd><dt>Desses, com acesso ao M365</dt><dd>@(r.SignInsCollected ? Fmt.Number(b.WithAccessAndNoProtection) : "sem dado")</dd></dl>
+                    </div>
+                </div>
+                <div class="actions" style="margin-top:8px"><a class="button" href="/inventario?tipo=phone,tablet&propriedade=BYOD&flag=semprotecao&q=@(android ? "Android" : "iPhone")">Ver aparelhos sem proteção</a></div>
+            </section>
+        }
+    </div>
+
+    <h2 class="sec" id="politicas">Políticas de proteção de aplicativos e seus controles</h2>
+    @if (!r.PoliciesCollected)
+    {
+        <section class="card"><p><span class="pill m"><span aria-hidden="true">?</span> Aguardando coleta</span> As políticas ainda não foram lidas.</p></section>
+    }
+    else if (r.Policies.Count == 0)
+    {
+        <section class="card"><p><span class="pill w"><span aria-hidden="true">▲</span> Nenhuma política de proteção de aplicativos</span> O Intune não retornou política para iOS nem Android. Sem política, o MAM não protege nada.</p></section>
+    }
+
+    @foreach (var p in r.Policies)
+    {
+        <details class="card pol" @(p.Policy.IsAssigned && p.AppliedRegistrations > 0 ? "" : "open")>
+            <summary>
+                <span class="nm">@p.Policy.Name</span>
+                <span class="pill m">@p.Policy.Platform</span>
+                <span class="pill @(p.Policy.IsAssigned ? "ok" : "b")"><span aria-hidden="true">@(p.Policy.IsAssigned ? "✔" : "✕")</span> @(p.Policy.IsAssigned ? "atribuída" : "sem atribuição")</span>
+                <span class="pill @(p.AppliedRegistrations > 0 ? "ok" : "w")">@Fmt.Number(p.AppliedRegistrations) registro(s) com a política aplicada</span>
+                @if (p.Stale) { <span class="pill w"><span aria-hidden="true">▲</span> sem alteração há mais de @_staleDays dias</span> }
+                <span class="asof">@p.ConfiguredCount de @p.Controls.Count controles configurados</span>
+            </summary>
+            <p class="sub">Atribuída a: @(p.Policy.Assignments ?? "—") · Aplicativos alvo: @(p.Apps.Count == 0 ? "não informados" : string.Join(", ", p.Apps)) · Versão @(p.Policy.Version?.ToString() ?? "—") · Alterada @(p.Policy.LastModifiedAt is { } at ? Fmt.Ago(at, _snapshot!.LoadedAt) : "—")</p>
+            <div class="tw" style="border:0"><table style="min-width:0"><thead><tr><th>Controle</th><th>O que a política define</th><th>Evidência</th></tr></thead><tbody>
+                @foreach (var c in p.Controls)
+                {
+                    <tr><td class="nm">@c.Result.Label</td><td class="note-cell">@c.Result.Value</td>
+                        <td><span class="pill @EvidenceLevels.Css(c.Level)"><span aria-hidden="true">@EvidenceLevels.Icon(c.Level)</span> @EvidenceLevels.Title(c.Level)</span></td></tr>
+                }
+                <tr><td class="nm">Exigência de aplicativo protegido no Acesso Condicional</td><td class="note-cell">@CaText(r.ConditionalAccess)</td>
+                    <td><span class="pill @(r.ConditionalAccess.State == CaRequirementState.Enforced ? "ok" : r.ConditionalAccess.State == CaRequirementState.ReportOnly ? "w" : r.ConditionalAccessCollected ? "b" : "m")"><span aria-hidden="true">@(r.ConditionalAccess.State == CaRequirementState.Enforced ? "✔" : r.ConditionalAccessCollected ? "▲" : "?")</span> @(!r.ConditionalAccessCollected ? "Sem evidência suficiente" : r.ConditionalAccess.State == CaRequirementState.Enforced ? "Aplicação efetiva comprovada" : r.ConditionalAccess.State == CaRequirementState.ReportOnly ? "Só em modo de relatório" : "Não configurado")</span></td></tr>
+            </tbody></table></div>
+        </details>
+    }
+
+    <section class="card" id="ca">
+        <h3>Acesso Condicional que exige aplicativo protegido</h3>
+        @if (!r.ConditionalAccessCollected)
+        {
+            <p><span class="pill m"><span aria-hidden="true">?</span> Aguardando coleta</span> O Acesso Condicional ainda não foi lido (permissão <code>Policy.Read.All</code> e Entra ID P1).</p>
+        }
+        else if (r.ConditionalAccess.Policies.Count == 0)
+        {
+            <p><span class="pill b"><span aria-hidden="true">✕</span> Nenhuma política exige aplicativo protegido</span> Sem isso, um aplicativo sem MAM pode acessar os dados corporativos mesmo que a política de proteção exista.</p>
+        }
+        else
+        {
+            <div class="tw" style="border:0"><table style="min-width:0"><thead><tr><th>Política</th><th>Estado</th><th>Usuários</th><th>Aplicativos</th><th>Plataformas</th><th>Exige</th></tr></thead><tbody>
+                @foreach (var c in r.ConditionalAccess.Policies)
+                {
+                    <tr><td class="nm">@c.Name</td><td><span class="pill @(c.State == "enabled" ? "ok" : c.State == "disabled" ? "m" : "w")">@CaState(c.State)</span></td><td>@c.Users</td><td>@c.Applications</td><td>@c.Platforms</td><td class="note-cell">@(c.GrantControls)</td></tr>
+                }
+            </tbody></table></div>
+        }
+    </section>
+
+    <h2 class="sec" id="navegadores">Navegadores corporativos (Edge)</h2>
+    <section class="card">
+        <p class="sub">As listas de URL do Edge são uma configuração de aplicativo, separada da política de proteção. Elas governam <b>somente o Edge corporativo</b> (aplicativo e perfil gerenciados); Chrome, Safari e o navegador pessoal do aparelho não são afetados por elas.</p>
+        @if (!r.PoliciesCollected)
+        {
+            <p><span class="pill m"><span aria-hidden="true">?</span> Aguardando coleta</span></p>
+        }
+        else if (r.Edge.Count == 0)
+        {
+            <p><span class="pill w"><span aria-hidden="true">▲</span> Nenhuma configuração do Edge com lista de URL encontrada</span> O Nexus não conclui que o navegador está governado.</p>
+        }
+        else
+        {
+            <div class="tw" style="border:0"><table style="min-width:0"><thead><tr><th>Configuração</th><th>Origem e navegador governado</th><th>Atribuição</th><th class="r">Lista de permissão</th><th class="r">Lista de bloqueio</th><th>Capacidade</th><th>Evidência</th></tr></thead><tbody>
+                @foreach (var e in r.Edge)
+                {
+                    <tr>
+                        <td class="nm">@e.Config.Name<small class="sm">@string.Join(", ", e.Lists.Keys)</small></td>
+                        <td class="note-cell">@(e.Config.Kind == "managed-device" ? "MDM (configuração de app do dispositivo)" : "MAM (configuração de app gerenciado)") · @(e.Config.Platform == "Android" ? "Edge no perfil de trabalho" : e.Config.Platform == "iOS" ? "Edge gerenciado" : "Edge")</td>
+                        <td class="note-cell">@(e.Config.Assignments ?? "—")</td>
+                        <td class="num r">@Fmt.Number(e.Lists.AllowCount)</td>
+                        <td class="num r">@Fmt.Number(e.Lists.BlockCount)</td>
+                        <td style="min-width:170px"><div class="meter"><i class="@(e.Lists.State == EdgeListInfo.Full ? "bad" : e.Lists.State == EdgeListInfo.Warning ? "warn" : "ok")" style="width:@Math.Min(100, 100.0 * e.Lists.BlockCount / Math.Max(1, e.Lists.BlockLimit)).ToString("0", System.Globalization.CultureInfo.InvariantCulture)%"></i><u style="left:@(100 * e.Lists.WarningAt / Math.Max(1, e.Lists.BlockLimit))%"></u></div>
+                            <small class="sm">@(e.Lists.State == EdgeListInfo.NoList ? "sem lista de bloqueio" : $"{Fmt.Number(e.Lists.Left)} entradas livres de {Fmt.Number(e.Lists.BlockLimit)} · {EdgeListInfo.StateTitle(e.Lists.State)}")</small></td>
+                        <td class="note-cell">@if (!r.RegistrationsCollected){<span class="pill m">Sem evidência suficiente</span>}else if (e.EdgeRegistrations == 0){<span class="pill w">Atribuída, sem registro do Edge no @e.Config.Platform</span>}else{<span class="pill @(e.EdgeRegistrationsWithPolicy > 0 ? "ok" : "w")">@Fmt.Number(e.EdgeRegistrationsWithPolicy) de @Fmt.Number(e.EdgeRegistrations) registros do Edge com política</span>}</td>
+                    </tr>
+                }
+            </tbody></table></div>
+            <p class="sub" style="margin-top:8px">A lista de bloqueio tem limite operacional de @Fmt.Number(r.Edge[0].Lists.BlockLimit) entradas; o Nexus avisa a partir de @Fmt.Number(r.Edge[0].Lists.WarningAt) para deixar margem de crescimento (configurável em <code>Governance</code>).</p>
+        }
+    </section>
+
+    <h2 class="sec" id="lacunas">Lacunas de proteção</h2>
+    <section class="card">
+        <div class="ttl"><h3>Usuários sem cobertura adequada</h3><span class="asof">@Fmt.Number(r.Users.Gaps.Count) usuário(s)</span></div>
+        <p class="sub">Nomes de aparelhos pessoais aparecem mascarados para o perfil Leitura (LGPD).</p>
+        @if (r.Users.Gaps.Count == 0)
+        {
+            <p><span class="pill ok"><span aria-hidden="true">✔</span> Nenhuma lacuna</span></p>
+        }
+        else
+        {
+            <div class="tw tall" style="border:0;max-height:420px"><table class="dense" style="min-width:0"><thead><tr><th>Usuário</th><th>Plataformas</th><th>Situação</th><th>Último acesso M365</th><th>Exceção</th>@if (Access.CanAnalyze){<th></th>}</tr></thead><tbody>
+                @foreach (var g in r.Users.Gaps.Take(100))
+                {
+                    <tr>
+                        <td class="nm">@Who(g.Upn ?? g.UserId)</td><td>@g.Platforms</td><td class="note-cell">@g.Reason</td>
+                        <td class="num">@(g.LastAccessAt is { } at ? Fmt.Ago(at, _snapshot!.LoadedAt) : r.SignInsCollected ? "sem acesso observado" : "sem dado")</td>
+                        <td>@if (g.Exception is { } ex){<span class="pill a" title="@ex.Reason">com exceção até @ex.ExpiresAt?.ToLocalTime().ToString("dd/MM/yyyy")</span>}else{<span class="sm">—</span>}</td>
+                        @if (Access.CanAnalyze)
+                        {
+                            <td>@if (g.Exception is null){<details class="pick"><summary>Registrar exceção</summary><form method="post" action="/mam/excecoes" class="pickbody"><AntiforgeryToken /><input type="hidden" name="subjectId" value="@g.UserId" /><input type="hidden" name="subjectName" value="@(g.Upn ?? g.UserId)" /><input type="hidden" name="control" value="mam" />
+                                <label>Justificativa (mínimo 10 caracteres)<input name="reason" required minlength="10" maxlength="1000" style="width:100%" /></label><label>Prazo em dias (1 a 365)<input name="days" type="number" min="1" max="365" value="90" required /></label>
+                                <button type="submit" class="primary">Registrar</button></form></details>}</td>
+                        }
+                    </tr>
+                }
+            </tbody></table></div>
+        }
+    </section>
+
+    @if (r.SignInsCollected)
+    {
+        <section class="card">
+            <h3>Acesso móvel ao Microsoft 365 sem aparelho identificado</h3>
+            <p class="sub">Sign-ins de celular ou tablet em que o Entra não identificou o aparelho e o usuário não tem aplicativo protegido por MAM. Pode ser um aparelho pessoal sem registro: o acesso depende do Acesso Condicional.</p>
+            @if (r.Access.Anonymous.Count == 0) { <p><span class="pill ok"><span aria-hidden="true">✔</span> Nenhum</span></p> }
+            else
+            {
+                <div class="tw" style="border:0"><table class="dense" style="min-width:0"><thead><tr><th>Usuário</th><th>Sistema</th><th>Navegador</th><th>Cargas</th><th>Último acesso</th></tr></thead><tbody>
+                    @foreach (var a in r.Access.Anonymous.Take(25)) { <tr><td class="nm">@Who(a.UserPrincipalName ?? a.UserId)</td><td>@a.OperatingSystem</td><td>@(a.Browser ?? "—")</td><td>@a.Workloads</td><td class="num">@Fmt.Ago(a.LastAccessAt, _snapshot!.LoadedAt)</td></tr> }
+                </tbody></table></div>
+            }
+            <h3 style="margin-top:14px">Aparelhos com acesso e sem MDM nem MAM</h3>
+            @if (r.Access.Devices.Count == 0) { <p><span class="pill ok"><span aria-hidden="true">✔</span> Nenhum</span></p> }
+            else
+            {
+                <div class="tw" style="border:0"><table class="dense" style="min-width:0"><thead><tr><th>Aparelho</th><th>Propriedade</th><th>Cargas</th><th>Último acesso</th></tr></thead><tbody>
+                    @foreach (var v in r.Access.Devices.Take(25)) { <tr><td class="nm"><a href="/dispositivo/@v.Asset.Id">@v.Asset.Name</a></td><td>@InventoryQuery.OwnershipOf(v)</td><td>@v.Asset.M365Workloads</td><td class="num">@Fmt.Ago(v.Asset.LastM365AccessAt, _snapshot!.LoadedAt)</td></tr> }
+                </tbody></table></div>
+                <div class="actions" style="margin-top:8px"><a class="button" href="/inventario?flag=acessom365,semprotecao">Abrir a lista no inventário</a></div>
+            }
+        </section>
+    }
+
+    <section class="card" id="excecoes">
+        <h3>Exceções aprovadas</h3>
+        <p class="sub">Uma exceção não esconde a lacuna: ela aparece marcada como "com exceção", com a justificativa e a data em que vence.</p>
+        @if (r.Exceptions.Count == 0) { <p class="hint">Nenhuma exceção ativa.</p> }
+        else
+        {
+            <div class="tw" style="border:0"><table class="dense" style="min-width:0"><thead><tr><th>Quem</th><th>Controle</th><th>Justificativa</th><th>Aprovada por</th><th>Vence em</th>@if (Access.CanAnalyze){<th></th>}</tr></thead><tbody>
+                @foreach (var e in r.Exceptions)
+                {
+                    <tr><td class="nm">@Who(e.SubjectName)</td><td>@e.Control.ToUpperInvariant()</td><td class="note-cell">@e.Reason</td><td>@e.ApprovedBy</td><td class="num">@(e.ExpiresAt?.ToLocalTime().ToString("dd/MM/yyyy") ?? "sem prazo")</td>
+                        @if (Access.CanAnalyze){<td><form method="post" action="/mam/excecoes/@e.Id/revogar" style="margin:0"><AntiforgeryToken /><button type="submit">Revogar</button></form></td>}</tr>
+                }
+            </tbody></table></div>
+        }
+    </section>
+
+    <section class="card">
+        <h3>Limpeza seletiva</h3>
+        <p class="sub">Último evento de operação conhecido por registro de aplicativo (por exemplo, limpeza seletiva solicitada pelo Intune).</p>
+        @{ var wipes = _snapshot!.Protection.Registrations.Where(x => !string.IsNullOrEmpty(x.LastOperation)).OrderByDescending(x => x.LastOperation).Take(15).ToList(); }
+        @if (!r.RegistrationsCollected) { <p><span class="pill m">Aguardando coleta</span></p> }
+        else if (wipes.Count == 0) { <p class="hint">Nenhuma operação de limpeza registrada nos aplicativos coletados (ou o tenant não expõe as operações).</p> }
+        else
+        {
+            <div class="tw" style="border:0"><table class="dense" style="min-width:0"><thead><tr><th>Aplicativo</th><th>Plataforma</th><th>Operação</th><th>Situação</th><th>Quando</th></tr></thead><tbody>
+                @foreach (var w in wipes)
+                {
+                    var parts = (w.LastOperation ?? "").Split('|');
+                    <tr><td class="nm">@(w.AppIdentifier ?? "—")</td><td>@w.DeviceType</td><td>@parts.ElementAtOrDefault(0)</td><td>@parts.ElementAtOrDefault(1)</td><td class="num">@(DateTimeOffset.TryParse(parts.ElementAtOrDefault(2), out var when) ? Fmt.Ago(when, _snapshot.LoadedAt) : "—")</td></tr>
+                }
+            </tbody></table></div>
+        }
+    </section>
+
+    <section class="card">
+        <h3>Instâncias de aplicativos protegidos</h3>
+        <div class="tw" style="border:0"><table style="min-width:0"><thead><tr><th>Aplicativo</th><th class="r">Registros</th><th class="r">Com política aplicada</th></tr></thead><tbody>
+            @foreach (var a in r.Apps.TopApps) { <tr><td class="nm">@a.App</td><td class="num r">@Fmt.Number(a.Count)</td><td class="num r">@Fmt.Number(a.WithPolicy)</td></tr> }
+            @if (r.Apps.TopApps.Count == 0) { <tr><td colspan="3" class="empty">Nenhum registro coletado.</td></tr> }
+        </tbody></table></div>
+    </section>
 }
+
 @code {
     private InventorySnapshot? _snapshot;
+    private MamReport? _report;
+    private int _staleDays => _snapshot?.Protection.Settings.StalePolicyDays ?? 180;
+    private int _snapshotWindow => 14;
 
-    protected override async Task OnInitializedAsync() => _snapshot = await Inventory.GetAsync();
+    protected override async Task OnInitializedAsync()
+    {
+        _snapshot = await Inventory.GetAsync();
+        if (_snapshot.HasData || _snapshot.Protection.Policies.Count + _snapshot.Protection.Registrations.Count > 0)
+        {
+            _report = _snapshot.Mam();
+        }
+    }
+
+    private string Who(string? name) => name is null ? "—" : Access.CanSeePersonalData ? name : PersonalData.Mask(name);
+
+    private static string CaState(string s) => s switch { "enabled" => "ativa", "enabledForReportingButNotEnforced" => "só relatório", "disabled" => "desativada", _ => s };
+
+    private static string CaText(CaRequirement ca) => ca.State switch
+    {
+        CaRequirementState.Enforced => $"{ca.Policies.Count(p => p.State == "enabled")} política(s) ativa(s) exigem aplicativo protegido no Microsoft 365.",
+        CaRequirementState.ReportOnly => "Há política que exige aplicativo protegido, mas só em modo de relatório: não bloqueia ninguém.",
+        _ => "Nenhuma política ativa exige aplicativo protegido.",
+    };
 }

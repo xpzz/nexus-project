@@ -314,6 +314,7 @@ public abstract class NexusDbContext(DbContextOptions options) : DbContext(optio
             e.Property(x => x.TrustType).HasMaxLength(64);
             e.Property(x => x.Workloads).HasMaxLength(128);
             e.Property(x => x.ClientApp).HasMaxLength(128);
+            e.Property(x => x.CaStatus).HasMaxLength(32);
             e.HasIndex(x => x.EntraDeviceId);
             e.HasIndex(x => x.UserId);
         });
