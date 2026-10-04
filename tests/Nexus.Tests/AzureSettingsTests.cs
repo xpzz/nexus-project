@@ -17,7 +17,7 @@ public class AzureSettingsTests
           "collector": { "appName": "Azul Nexus – Coletor", "clientId": "c-1", "objectId": "o-1", "certificateThumbprint": "AA11", "certificateSubject": "CN=AzulNexus-Coletor" },
           "web": { "appName": "Azul Nexus – Web", "clientId": "w-1", "objectId": "o-2", "certificateThumbprint": "BB22", "certificateSubject": "CN=AzulNexus-Web",
                    "redirectUri": "https://nexus.azul.corp:8443/signin-oidc", "logoutUri": "https://nexus.azul.corp:8443/signout-oidc",
-                   "roles": ["Nexus.Admin", "Nexus.Gestao", "Nexus.Operacao", "Nexus.Seguranca"] },
+                   "roles": ["Nexus.Leitura", "Nexus.Analista", "Nexus.AdminIntegracao", "Nexus.Auditoria"] },
           "permissions": ["DeviceManagementManagedDevices.Read.All", "Device.Read.All"]
         }
         """;
@@ -35,7 +35,7 @@ public class AzureSettingsTests
         Assert.True(settings!.IsConfigured);
         Assert.Equal("c-1", settings.Collector.ClientId);
         Assert.Equal("BB22", settings.Web.CertificateThumbprint);
-        Assert.Contains("Nexus.Admin", settings.Web.Roles);
+        Assert.Contains("Nexus.AdminIntegracao", settings.Web.Roles);
         Directory.Delete(paths.DataDirectory, recursive: true);
     }
 

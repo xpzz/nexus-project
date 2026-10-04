@@ -235,4 +235,12 @@ public sealed class WebSettings
     /// Set to false to also close the inventory screens behind setup mode.
     /// </summary>
     public bool OpenAccess { get; set; } = true;
+
+    /// <summary>
+    /// "open": screens are open for reading and operator pages need the server or the setup code (default, ADR-0005).
+    /// "entra": every visitor signs in with Microsoft Entra ID and gets the app roles of the "Azul Nexus – Web" registration (ADR-0008).
+    /// </summary>
+    public string AuthMode { get; set; } = "open";
+
+    public bool UsesEntra => string.Equals(AuthMode, "entra", StringComparison.OrdinalIgnoreCase);
 }

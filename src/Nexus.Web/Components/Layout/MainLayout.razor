@@ -1,6 +1,8 @@
 @inherits LayoutComponentBase
 @inject InventorySnapshotService Inventory
 @inject TimeProvider Clock
+@inject CurrentAccess Access
+@inject EntraStatus Entra
 
 <a class="skip" href="#conteudo">Ir para o conteúdo</a>
 <div class="app">
@@ -31,6 +33,7 @@
             <NavLink href="/operacao">Fontes e coletas</NavLink>
             <NavLink href="/saude">Saúde do Nexus</NavLink>
             <NavLink href="/assistente">Assistente</NavLink>
+            @if (Access.CanAudit){<NavLink href="/auditoria">Trilha de auditoria</NavLink>}
         </nav>
         <div class="sidefoot">Somente leitura. Nenhuma ação é executada nas ferramentas de origem.</div>
     </aside>
@@ -46,6 +49,7 @@
                     <a class="src" href="/operacao" title="@chip.Detail"><i class="dot @chip.Dot" aria-hidden="true"></i>@chip.Name · @chip.Text</a>
                 }
             </div>
+            <div class="who" title="@WhoTitle">@WhoText@if (Access.IsAuthenticated && !Access.IsSetup && Entra.Active){<form method="post" action="/sair"><AntiforgeryToken /><button type="submit">Sair</button></form>}</div>
             <div class="themesw" role="group" aria-label="Tema da interface"><button type="button" data-theme-set="system" aria-pressed="false" title="Seguir o tema do sistema">Sistema</button><button type="button" data-theme-set="light" aria-pressed="false">Claro</button><button type="button" data-theme-set="dark" aria-pressed="false">Escuro</button></div>
         </header>
         <main class="page" id="conteudo" tabindex="-1">
@@ -74,6 +78,10 @@
     }
 
     private int Count(string group) => _snapshot.Issues.Group(group);
+
+    private string WhoText => Access.IsSetup ? "Operador (servidor)" : Access.IsAuthenticated ? Access.Actor : "Acesso aberto · leitura";
+
+    private string WhoTitle => Access.IsAuthenticated ? "Papéis: " + string.Join(", ", NexusRoles.All.Where(Access.Roles.Contains).Select(NexusRoles.Title)) : "Sem login: o inventário é de leitura e dados pessoais de BYOD aparecem mascarados.";
 
     private int TypeCount(params string[] types) => _snapshot.Views.Count(v => types.Contains(v.Asset.AssetType));
 

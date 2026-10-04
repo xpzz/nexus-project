@@ -11,7 +11,7 @@ Um único script, `Configurar-Azure.cmd`, faz no servidor e no Entra ID tudo o q
 
 ## Como rodar
 1. Na pasta do pacote, dê duplo clique em **`Configurar-Azure.cmd`** (ele pede permissão de administrador).
-   - Opções, se quiser: `-AdminUser ana@empresa.com` (quem será o primeiro `Nexus.Admin`; padrão: quem fizer o login), `-SkipOptionalPermissions` (não pede `Organization.Read.All`), `-ValidateOnly` (só valida).
+   - Opções, se quiser: `-AdminUser ana@empresa.com` (quem será o primeiro `Nexus.AdminIntegracao`; padrão: quem fizer o login), `-SkipOptionalPermissions` (não pede `Organization.Read.All`), `-ValidateOnly` (só valida).
    - Sem o pacote por perto: `powershell -ExecutionPolicy Bypass -File "C:\Program Files\Azul Nexus\deploy\Install-AzulNexusAzure.ps1"` (como administrador).
 2. O script mostra um **código de dispositivo**. Abra https://microsoft.com/devicelogin em qualquer navegador (pode ser no seu computador), digite o código, entre como Administrador Global e **aprove** as permissões do "Microsoft Graph Command Line Tools". O token fica só na memória.
 3. Aguarde. No fim, o script valida com a identidade do aplicativo; o consentimento pode levar alguns minutos para propagar, então ele tenta até 6 vezes.
@@ -23,8 +23,8 @@ Um único script, `Configurar-Azure.cmd`, faz no servidor e no Entra ID tudo o q
 | Servidor | `<dados>\scripts\azure\nexus-coletor.cer` e `nexus-web.cer` (públicos) |
 | Servidor | `<dados>\config\azure.json`: locatário, Client IDs, impressões digitais e funções. **Sem segredos** |
 | Entra ID | **Azul Nexus – Coletor**: permissões de **aplicativo**, somente leitura (abaixo), com consentimento do administrador |
-| Entra ID | **Azul Nexus – Web**: SSO. URIs `https://<nome>:<porta>/signin-oidc` e `/signout-oidc`, permissões delegadas `openid`, `profile` e `User.Read` com consentimento, funções **Nexus.Admin, Nexus.Gestao, Nexus.Operacao e Nexus.Seguranca** |
-| Entra ID | **Atribuição obrigatória** ativada no aplicativo Web e o primeiro administrador atribuído a `Nexus.Admin` |
+| Entra ID | **Azul Nexus – Web**: SSO. URIs `https://<nome>:<porta>/signin-oidc` e `/signout-oidc`, permissões delegadas `openid`, `profile` e `User.Read` com consentimento, funções **Nexus.Leitura, Nexus.Analista, Nexus.AdminIntegracao e Nexus.Auditoria** |
+| Entra ID | **Atribuição obrigatória** ativada no aplicativo Web e o primeiro administrador atribuído a `Nexus.AdminIntegracao` |
 
 **Permissões do Coletor** (todas `*.Read.All`, nenhuma de escrita): `DeviceManagementManagedDevices`, `Device`, `User`, `GroupMember`, `DeviceManagementConfiguration`, `DeviceManagementApps`, `DeviceManagementServiceConfig` e, opcional, `Organization`.
 
@@ -32,7 +32,7 @@ Não há **segredo de cliente**: os dois aplicativos se autenticam por certifica
 
 ## Como conferir
 - Entra ID › Registros de aplicativo: os dois "Azul Nexus – …" com o certificado carregado e as permissões "Concedido para <locatário>".
-- Entra ID › Aplicativos empresariais › Azul Nexus – Web › Usuários e grupos: o administrador em `Nexus.Admin`; Propriedades: *Atribuição obrigatória* = Sim.
+- Entra ID › Aplicativos empresariais › Azul Nexus – Web › Usuários e grupos: o administrador em `Nexus.AdminIntegracao`; Propriedades: *Atribuição obrigatória* = Sim.
 - No servidor: `azure.json` e o log `<dados>\logs\azure-*.log`. Para revalidar depois: `Configurar-Azure.cmd -ValidateOnly`.
 - No Nexus, o assistente mostra "3. Azure" como **Registros criados** e "4. Acesso e perfis" como **Funções criadas**.
 

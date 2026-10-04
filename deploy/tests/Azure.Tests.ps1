@@ -107,8 +107,8 @@ function Invoke-GraphRequest {
 function Write-Log { param([string]$Message, [string]$Level = 'INFO') }   # silencia o log nos testes
 
 # ---------------------------------------------------------------- Utilitários puros
-$a = New-DeterministicGuid 'role:Nexus.Admin'
-Assert-That 'GUID determinístico é estável e distinto por função' { $a -eq (New-DeterministicGuid 'role:Nexus.Admin') -and $a -ne (New-DeterministicGuid 'role:Nexus.Gestao') }
+$a = New-DeterministicGuid 'role:Nexus.AdminIntegracao'
+Assert-That 'GUID determinístico é estável e distinto por função' { $a -eq (New-DeterministicGuid 'role:Nexus.AdminIntegracao') -and $a -ne (New-DeterministicGuid 'role:Nexus.Leitura') }
 
 $certA = New-TestCertificate 'AzulNexus-Coletor'
 $assertion = New-ClientAssertion -Certificate $certA -TenantId 'tenant-1' -ClientId 'client-1'
@@ -155,13 +155,13 @@ Assert-That 'Coletor: consentimento do administrador concedido às 8 permissões
 Assert-That 'Certificados: um por registro, sem segredo de cliente' { @($collectorApp.keyCredentials).Count -eq 1 -and @($webApp.keyCredentials).Count -eq 1 -and -not $collectorApp.ContainsKey('passwordCredentials') -and -not $webApp.ContainsKey('passwordCredentials') }
 Assert-That 'Web: 4 funções do SPEC com ids estáveis' {
     $values = @($webApp.appRoles | ForEach-Object { $_.value }) | Sort-Object
-    ($values -join ',') -eq 'Nexus.Admin,Nexus.Gestao,Nexus.Operacao,Nexus.Seguranca' -and ($webApp.appRoles | Where-Object { $_.value -eq 'Nexus.Admin' }).id -eq $a.ToString() -and @($webApp.appRoles | Where-Object { $_.allowedMemberTypes -notcontains 'User' }).Count -eq 0 }
+    ($values -join ',') -eq 'Nexus.AdminIntegracao,Nexus.Analista,Nexus.Auditoria,Nexus.Leitura' -and ($webApp.appRoles | Where-Object { $_.value -eq 'Nexus.AdminIntegracao' }).id -eq $a.ToString() -and @($webApp.appRoles | Where-Object { $_.allowedMemberTypes -notcontains 'User' }).Count -eq 0 }
 Assert-That 'Web: URIs de redirecionamento e logout (SPEC 4.6) sem barra dupla' { $webApp.web.redirectUris -contains 'https://nexus.azul.corp:8443/signin-oidc' -and $webApp.web.logoutUrl -eq 'https://nexus.azul.corp:8443/signout-oidc' -and -not $webApp.web.implicitGrantSettings.enableIdTokenIssuance }
 Assert-That 'Web: permissões delegadas openid, profile e User.Read (e só elas)' { @($webApp.requiredResourceAccess[0].resourceAccess).Count -eq 3 -and @($webApp.requiredResourceAccess[0].resourceAccess | Where-Object { $_.type -ne 'Scope' }).Count -eq 0 }
 Assert-That 'Web: atribuição obrigatória ativada e consentimento delegado concedido' {
     $webSp = $script:Db.Sps | Where-Object { $_.id -eq $r1.Web.ServicePrincipalId }
     $webSp.appRoleAssignmentRequired -and $script:Db.Grants.Count -eq 1 -and $script:Db.Grants[0].scope -eq 'openid profile User.Read' -and $script:Db.Grants[0].consentType -eq 'AllPrincipals' }
-Assert-That 'Primeiro administrador (quem fez o login) recebe Nexus.Admin' { $script:Db.UserAssignments.Count -eq 1 -and $script:Db.UserAssignments[0].principalId -eq 'user-me' -and $script:Db.UserAssignments[0].appRoleId -eq $a.ToString() -and $r1.Web.Admin -eq 'admin@azul.corp' }
+Assert-That 'Primeiro administrador (quem fez o login) recebe Nexus.AdminIntegracao' { $script:Db.UserAssignments.Count -eq 1 -and $script:Db.UserAssignments[0].principalId -eq 'user-me' -and $script:Db.UserAssignments[0].appRoleId -eq $a.ToString() -and $r1.Web.Admin -eq 'admin@azul.corp' }
 
 # Idempotência: rodar de novo não cria nem concede nada
 $writesBefore = $script:Db.Writes
@@ -180,7 +180,7 @@ Assert-That 'Certificado novo é acrescentado e o antigo é mantido' { @($collec
 # Administrador informado e permissão opcional dispensada
 Reset-FakeGraph
 $r3 = Initialize-NexusAzure -Token 't' -PublicUrl 'https://nexus.azul.corp:8443' -CollectorCertificate $collectorCert -WebCertificate $webCert -AdminUpn 'ana@azul.corp' -SkipOptionalPermissions
-Assert-That 'Administrador informado por UPN recebe Nexus.Admin' { $script:Db.UserAssignments[0].principalId -eq 'user-ana' -and $r3.Web.Admin -eq 'ana@azul.corp' }
+Assert-That 'Administrador informado por UPN recebe Nexus.AdminIntegracao' { $script:Db.UserAssignments[0].principalId -eq 'user-ana' -and $r3.Web.Admin -eq 'ana@azul.corp' }
 Assert-That '-SkipOptionalPermissions pede 7 permissões (sem Organization.Read.All)' { $script:Db.RoleAssignments.Count -eq 7 }
 $threw = $false
 Reset-FakeGraph

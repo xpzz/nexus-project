@@ -28,10 +28,10 @@ $script:CollectorPermissions = @(
 
 # Funções do aplicativo "Azul Nexus – Web" (SPEC §4.4).
 $script:WebRoles = @(
-    @{ Value = 'Nexus.Admin'; DisplayName = 'Administração'; Description = 'Configura o Azul Nexus, gerencia acessos e vê todos os dados.' },
-    @{ Value = 'Nexus.Gestao'; DisplayName = 'Gestão'; Description = 'Consulta indicadores e pendências da sua área.' },
-    @{ Value = 'Nexus.Operacao'; DisplayName = 'Operação'; Description = 'Trata pendências e acompanha o estado dos dispositivos.' },
-    @{ Value = 'Nexus.Seguranca'; DisplayName = 'Segurança'; Description = 'Acompanha postura, conformidade e exceções.' }
+    @{ Value = 'Nexus.Leitura'; DisplayName = 'Leitura'; Description = 'Consulta o inventário e os indicadores. Dados pessoais de BYOD aparecem mascarados.' },
+    @{ Value = 'Nexus.Analista'; DisplayName = 'Analista'; Description = 'Investiga, salva filtros, exporta dados e registra exceções. Vê dados pessoais.' },
+    @{ Value = 'Nexus.AdminIntegracao'; DisplayName = 'Administrador de integração'; Description = 'Configura conectores, executa coletas e acompanha a saúde do Nexus.' },
+    @{ Value = 'Nexus.Auditoria'; DisplayName = 'Auditor'; Description = 'Lê a trilha de auditoria das ações administrativas.' }
 )
 $script:WebDelegatedScopes = @('openid', 'profile', 'User.Read')
 
@@ -355,13 +355,13 @@ function Initialize-NexusAzure {
     # ----- Primeiro administrador -----
     $adminKey = if ($AdminUpn) { $AdminUpn } else { 'me' }
     $adminUser = if ($AdminUpn) { Invoke-GraphRequest -Method GET -Uri ('/users/' + [uri]::EscapeDataString($AdminUpn) + '?$select=id,userPrincipalName') -Token $Token } else { Invoke-GraphRequest -Method GET -Uri '/me?$select=id,userPrincipalName' -Token $Token }
-    $adminRoleId = (New-DeterministicGuid 'role:Nexus.Admin').ToString()
+    $adminRoleId = (New-DeterministicGuid 'role:Nexus.AdminIntegracao').ToString()
     $userAssignments = @(Get-GraphAll -Uri "/users/$($adminUser.id)/appRoleAssignments" -Token $Token)
     if (@($userAssignments | Where-Object { $_.resourceId -eq $webSp.id -and $_.appRoleId -eq $adminRoleId }).Count -eq 0) {
         $null = Invoke-GraphRequest -Method POST -Uri "/users/$($adminUser.id)/appRoleAssignments" -Token $Token -Body @{ principalId = $adminUser.id; resourceId = $webSp.id; appRoleId = $adminRoleId }
-        & $note "$($adminUser.userPrincipalName) atribuído(a) à função Nexus.Admin."
+        & $note "$($adminUser.userPrincipalName) atribuído(a) à função Nexus.AdminIntegracao."
     } else {
-        & $note "$($adminUser.userPrincipalName) já era Nexus.Admin."
+        & $note "$($adminUser.userPrincipalName) já era Nexus.AdminIntegracao."
     }
     $result.Web = [ordered]@{ AppId = $web.appId; ObjectId = $web.id; ServicePrincipalId = $webSp.id; Thumbprint = $WebCertificate.Thumbprint; RedirectUri = $redirect; LogoutUri = $logout; Admin = $adminUser.userPrincipalName }
     return [pscustomobject]$result

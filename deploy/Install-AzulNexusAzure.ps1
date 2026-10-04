@@ -12,8 +12,8 @@
       2. Exporta os .cer públicos para <dados>\scripts\azure.
       3. Login do administrador (device code). O token fica só em memória.
       4. Cria "Azul Nexus – Coletor" (permissões de aplicativo somente leitura do Intune/Entra) e concede o consentimento.
-      5. Cria "Azul Nexus – Web" (SSO): URIs de redirecionamento, funções Nexus.Admin/Gestao/Operacao/Seguranca, atribuição
-         obrigatória, consentimento das permissões delegadas e atribui o administrador à função Nexus.Admin.
+      5. Cria "Azul Nexus – Web" (SSO): URIs de redirecionamento, funções Nexus.Leitura/Analista/AdminIntegracao/Auditoria, atribuição
+         obrigatória, consentimento das permissões delegadas e atribui o administrador à função Nexus.AdminIntegracao.
       6. Grava <dados>\config\azure.json (somente identificadores e impressões digitais, sem segredos).
       7. Valida com a identidade do aplicativo (token por certificado, permissões e uma chamada por permissão).
 

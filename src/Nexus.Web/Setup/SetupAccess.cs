@@ -17,9 +17,9 @@ public sealed class SetupAccessMiddleware(RequestDelegate next)
     public const string AccessPath = "/configuracao/acesso";
     public const string SetupRole = "Nexus.Setup";
 
-    private static readonly string[] AlwaysAllowed = ["/healthz", AccessPath, "/_framework", "/_content", "/app.css", "/favicon"];
+    private static readonly string[] AlwaysAllowed = ["/healthz", AccessPath, "/_framework", "/_content", "/app.css", "/favicon", "/theme.js", "/signin-oidc", "/signout-callback-oidc", "/erro"];
 
-    public async Task InvokeAsync(HttpContext context, INexusDbFactory dbFactory, SettingsProvider settings)
+    public async Task InvokeAsync(HttpContext context, INexusDbFactory dbFactory, SettingsProvider settings, EntraStatus entra)
     {
         var path = context.Request.Path.Value ?? "/";
         if (AlwaysAllowed.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase)))
@@ -52,6 +52,35 @@ public sealed class SetupAccessMiddleware(RequestDelegate next)
             await WritePlainAsync(context, HttpStatusCode.ServiceUnavailable,
                 "Banco do Nexus indisponível. Impacto: a interface não funciona. Como resolver: no servidor, rode 'nexusctl test' e siga as orientações.");
             return;
+        }
+
+        if (settings.Current.Web.UsesEntra && !context.User.IsInRole(SetupRole))
+        {
+            if (!entra.Active)
+            {
+                await WritePlainAsync(context, HttpStatusCode.ServiceUnavailable, entra.Problem ?? "O login com o Entra ID não está disponível.");
+                return;
+            }
+
+            var roles = context.User.Claims.Where(c => c.Type is ClaimTypes.Role or "roles").Select(c => c.Value).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            switch (EntraPolicy.Decide(path, context.User.Identity?.IsAuthenticated == true, roles, hasSetupRole: false))
+            {
+                case EntraDecision.Allow:
+                    await next(context);
+                    return;
+                case EntraDecision.Challenge:
+                    await context.ChallengeAsync(EntraSignIn.ChallengeScheme, new AuthenticationProperties { RedirectUri = context.Request.Path + context.Request.QueryString });
+                    return;
+                case EntraDecision.NoRole:
+                    await WritePlainAsync(context, HttpStatusCode.Forbidden,
+                        "Seu usuário entrou, mas não tem nenhum papel no Azul Nexus. Impacto: nenhuma tela é liberada. " +
+                        "Como resolver: peça ao administrador do Entra ID para atribuir um dos papéis (Leitura, Analista, Administrador de integração ou Auditoria) ao seu usuário no aplicativo 'Azul Nexus – Web'.");
+                    return;
+                default:
+                    await WritePlainAsync(context, HttpStatusCode.Forbidden,
+                        "Esta área exige o papel Administrador de integração. Como resolver: peça o papel ao administrador do Entra ID.");
+                    return;
+            }
         }
 
         switch (AccessPolicy.Decide(path, context.User.IsInRole(SetupRole), settings.Current.Web.OpenAccess, setupMode))

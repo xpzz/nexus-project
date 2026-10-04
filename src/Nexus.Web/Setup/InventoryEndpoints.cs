@@ -80,6 +80,30 @@ public static class InventoryEndpoints
             return Results.Redirect("/operacao?message=" + Uri.EscapeDataString($"Coleta de {(job == "all" ? "todas as fontes" : SourceHealthBuilder.JobLabel(job))} solicitada. O Worker a executa assim que puder."));
         });
 
+        app.MapGet("/auditoria/exportar.csv", async (HttpContext http, CurrentAccess access, INexusDbFactory dbFactory, CancellationToken ct) =>
+        {
+            if (!access.CanAudit)
+            {
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            }
+
+            var (action, who) = (http.Request.Query["acao"].ToString(), http.Request.Query["quem"].ToString());
+            await using var db = dbFactory.Create();
+            var query = db.AuditEvents.AsNoTracking().AsQueryable();
+            if (action.Length > 0) { query = query.Where(e => e.Action.Contains(action)); }
+            if (who.Length > 0) { query = query.Where(e => e.Actor.Contains(who)); }
+            var events = await query.OrderByDescending(e => e.Id).Take(ExportLimit).ToListAsync(ct);
+            Audit.Record(db, access.Actor, "audit.exported", $"{events.Count} eventos");
+            await db.SaveChangesAsync(ct);
+
+            var csv = "Quando;Quem;Ação;Detalhe\r\n" + string.Join("\r\n", events.Select(e => string.Join(";", new[] { e.At.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss"), e.Actor, e.Action, e.Detail }.Select(InventoryCsv.Cell))));
+            return Results.File(new UTF8Encoding(true).GetPreamble().Concat(Encoding.UTF8.GetBytes(csv)).ToArray(), "text/csv; charset=utf-8", $"azulnexus-auditoria-{DateTime.Now:yyyyMMdd-HHmmss}.csv");
+        });
+
+        app.MapPost("/sair", (EntraStatus entra) => entra.Active
+            ? Results.SignOut(new Microsoft.AspNetCore.Authentication.AuthenticationProperties { RedirectUri = "/" }, [EntraSignIn.SessionScheme, EntraSignIn.ChallengeScheme])
+            : Results.Redirect("/"));
+
         app.MapGet("/inventario/exportar.csv", async (HttpContext http, CurrentAccess access, InventorySnapshotService inventory, INexusDbFactory dbFactory, CancellationToken ct) =>
         {
             if (!access.CanExport)

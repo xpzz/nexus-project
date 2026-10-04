@@ -44,7 +44,7 @@ public static class SetupModeService
         return valid;
     }
 
-    /// <summary>Called once SSO is validated and at least one user holds Nexus.Admin.</summary>
+    /// <summary>Called once SSO is validated and at least one user holds Nexus.AdminIntegracao.</summary>
     public static async Task EndAsync(NexusDbContext db, string actor, CancellationToken cancellationToken)
     {
         var state = await EnsureRowAsync(db, cancellationToken);

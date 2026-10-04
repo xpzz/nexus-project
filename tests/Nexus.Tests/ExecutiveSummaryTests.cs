@@ -258,3 +258,54 @@ public class AccessAndSecurityTests
     public void CsvEscapesQuotesAndNewlines() =>
         Assert.Equal("\"a \"\"b\"\" c d\"", Nexus.Web.Setup.InventoryCsv.Cell("a \"b\" c\nd"));
 }
+
+public class EntraPolicyTests
+{
+    private static IReadOnlySet<string> Roles(params string[] r) => new HashSet<string>(r, StringComparer.OrdinalIgnoreCase);
+
+    [Fact]
+    public void AnonymousVisitorsAreSentToSignIn() =>
+        Assert.Equal(Nexus.Web.Setup.EntraDecision.Challenge, Nexus.Web.Setup.EntraPolicy.Decide("/painel", false, Roles(), false));
+
+    [Fact]
+    public void ASignedInUserWithoutAnyNexusRoleIsRefused() =>
+        Assert.Equal(Nexus.Web.Setup.EntraDecision.NoRole, Nexus.Web.Setup.EntraPolicy.Decide("/painel", true, Roles("Outro.Papel"), false));
+
+    [Theory]
+    [InlineData("Nexus.Leitura")]
+    [InlineData("Nexus.Analista")]
+    [InlineData("Nexus.Auditoria")]
+    public void AnyNexusRoleOpensTheInventoryButNotTheOperatorPages(string role)
+    {
+        Assert.Equal(Nexus.Web.Setup.EntraDecision.Allow, Nexus.Web.Setup.EntraPolicy.Decide("/inventario", true, Roles(role), false));
+        Assert.Equal(Nexus.Web.Setup.EntraDecision.NeedsIntegrationAdmin, Nexus.Web.Setup.EntraPolicy.Decide("/saude", true, Roles(role), false));
+        Assert.Equal(Nexus.Web.Setup.EntraDecision.NeedsIntegrationAdmin, Nexus.Web.Setup.EntraPolicy.Decide("/assistente", true, Roles(role), false));
+    }
+
+    [Fact]
+    public void TheIntegrationAdministratorReachesTheOperatorPages() =>
+        Assert.Equal(Nexus.Web.Setup.EntraDecision.Allow, Nexus.Web.Setup.EntraPolicy.Decide("/saude", true, Roles("Nexus.AdminIntegracao"), false));
+
+    [Fact]
+    public void TheSetupPrincipalAlwaysPasses() =>
+        Assert.Equal(Nexus.Web.Setup.EntraDecision.Allow, Nexus.Web.Setup.EntraPolicy.Decide("/saude", false, Roles(), true));
+
+    [Fact]
+    public void SignInWithoutTheAzureRegistrationExplainsWhatToDo()
+    {
+        var (setup, problem) = Nexus.Web.Setup.EntraSignIn.Prepare(null);
+        Assert.Null(setup);
+        Assert.Contains("Impacto", problem);
+        Assert.Contains("Como resolver", problem);
+        Assert.DoesNotContain("secret", problem, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void MissingCertificateIsReportedWithoutLeakingAnythingElse()
+    {
+        var azure = new Nexus.Core.Configuration.AzureSettings { TenantId = "t", Collector = { ClientId = "c" }, Web = { ClientId = "w", CertificateThumbprint = "00" + new string('A', 38) } };
+        var (setup, problem) = Nexus.Web.Setup.EntraSignIn.Prepare(azure);
+        Assert.Null(setup);
+        Assert.Contains("certificado", problem);
+    }
+}
