@@ -122,6 +122,35 @@ app.MapGet("/healthz", async (SettingsProvider settings, INexusDbFactory dbFacto
     }
 });
 
+// Asks the Worker to read the installed software of one device. Read-only on the sources; throttled to one pending request per device.
+app.MapPost("/dispositivo/{id:guid}/inventario", async (Guid id, INexusDbFactory dbFactory, TimeProvider clock, CancellationToken ct) =>
+{
+    await using var db = dbFactory.Create();
+    if (!await db.Assets.AnyAsync(a => a.Id == id, ct))
+    {
+        return Results.NotFound();
+    }
+
+    var now = clock.GetUtcNow();
+    var fetch = await db.InventoryFetches.FirstOrDefaultAsync(f => f.AssetId == id, ct);
+    if (fetch is not { Status: "Pending" } || now - fetch.RequestedAt > TimeSpan.FromMinutes(2))
+    {
+        if (fetch is null)
+        {
+            fetch = new Nexus.Data.Entities.InventoryFetch { AssetId = id };
+            db.InventoryFetches.Add(fetch);
+        }
+
+        fetch.RequestedAt = now;
+        fetch.Status = "Pending";
+        fetch.Message = null;
+        await db.SaveChangesAsync(ct);
+        await CommandQueue.EnqueueAsync(db, Nexus.Data.Entities.CommandTypes.FetchInventory, id.ToString(), "web:visitante", ct);
+    }
+
+    return Results.Redirect($"/dispositivo/{id}#software");
+}).DisableAntiforgery();
+
 app.MapGet("/diagnostico", async (HttpContext context, SettingsProvider settings, CancellationToken ct) =>
 {
     var target = Path.Combine(Path.GetTempPath(), $"azulnexus-diagnostico-{Guid.NewGuid():N}.zip");

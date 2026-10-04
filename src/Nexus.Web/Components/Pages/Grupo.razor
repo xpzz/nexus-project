@@ -74,10 +74,10 @@ else
                     <span style="display:flex;gap:10px;align-items:center;min-width:240px"><span style="flex:1"><Bar ShowLegend="false" Label="@("Estado em " + g.Key)" Segments="@(States.All.Select(s => new Seg(s, g.Items.Count(v => v.State == s), Fmt.StateSeg(s))).ToList())" /></span><span class="score @Fmt.ScoreClass(act.Count == 0 ? null : act.Average(v => v.Score))">@(act.Count == 0 ? "—" : Math.Round(act.Average(v => v.Score)).ToString("0"))</span></span>
                 </summary>
                 <div class="inner">
-                    <div class="tw"><table style="min-width:640px"><thead><tr><th>Os 8 piores</th><th>Gestão</th><th>Estado</th><th>Índice</th></tr></thead><tbody>
+                    <div class="tw"><table style="min-width:760px"><thead><tr><th>Os 8 piores</th><th>Gestão</th><th>Estado</th><th>Último SCCM</th><th>Último Intune</th><th>Índice</th></tr></thead><tbody>
                         @foreach (var v in g.Items.OrderBy(v => v.Score).ThenBy(v => v.Asset.Name).Take(8))
                         {
-                            <tr><td class="nm"><a href="/dispositivo/@v.Asset.Id">@v.Asset.Name</a><small>@(v.Asset.PrimaryUser ?? "—")</small></td><td>@v.Management</td><td><span class="pill @Fmt.StateCss(v.State)">@v.State</span></td><td class="score @Fmt.ScoreClass(v.Score)">@v.Score</td></tr>
+                            <tr><td class="nm"><a href="/dispositivo/@v.Asset.Id">@v.Asset.Name</a><small>@(v.Asset.PrimaryUser ?? "—")</small></td><td>@v.Management</td><td><span class="pill @Fmt.StateCss(v.State)">@v.State</span></td><td class="num">@Fmt.Ago(v.Asset.SccmLastSeenAt, _snapshot!.LoadedAt)</td><td class="num">@Fmt.Ago(v.Asset.IntuneLastSyncAt, _snapshot!.LoadedAt)</td><td class="score @Fmt.ScoreClass(v.Score)">@v.Score</td></tr>
                         }
                     </tbody></table></div>
                     @if (Por != "gestao") { <p style="margin:8px 0 0"><a href="@Fmt.Inv(grupo: gp, q: g.Key)">Ver todos no inventário</a></p> }

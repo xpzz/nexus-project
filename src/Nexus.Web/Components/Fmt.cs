@@ -31,7 +31,7 @@ public static class Fmt
         return days == 1 ? "há 1 dia" : $"há {days} dias";
     }
 
-    public static string Inv(string? grupo = null, string? gestao = null, string? estado = null, string? pendencia = null, string? funil = null, string? propriedade = null, string? q = null)
+    public static string Inv(string? grupo = null, string? gestao = null, string? estado = null, string? pendencia = null, string? funil = null, string? propriedade = null, string? q = null, string? depto = null)
     {
         var parts = new List<string>();
         void Add(string key, string? value)
@@ -42,7 +42,7 @@ public static class Fmt
             }
         }
 
-        Add("grupo", grupo); Add("gestao", gestao); Add("estado", estado); Add("pendencia", pendencia); Add("funil", funil); Add("propriedade", propriedade); Add("q", q);
+        Add("grupo", grupo); Add("gestao", gestao); Add("estado", estado); Add("pendencia", pendencia); Add("funil", funil); Add("propriedade", propriedade); Add("q", q); Add("depto", depto);
         return parts.Count == 0 ? "/inventario" : "/inventario?" + string.Join("&", parts);
     }
 
@@ -89,6 +89,9 @@ public static class Fmt
     {
         "sccm.devices" => "SCCM",
         "ad.computers" => "Active Directory",
+        "intune.mam" => "Intune · proteção de apps (MAM)",
+        "intune.policies" => "Intune · políticas e perfis",
+        "entra.users" => "Entra ID · usuários",
         "intune.devices" => "Intune",
         "entra.devices" => "Entra ID",
         "inventory.reconcile" => "Reconciliação",

@@ -104,8 +104,15 @@ public sealed class CommandProcessor(
                     return (false, "Identificador de dispositivo inválido.");
                 }
 
-                var fetched = await inventory.FetchAsync(assetId, cancellationToken);
-                return (true, fetched);
+                try
+                {
+                    return (true, await inventory.FetchAsync(assetId, cancellationToken));
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    await inventory.MarkFailedAsync(assetId, ex.Message, cancellationToken);
+                    throw;
+                }
 
             case CommandTypes.PauseCollectors:
             case CommandTypes.ResumeCollectors:

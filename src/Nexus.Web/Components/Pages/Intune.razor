@@ -1,0 +1,170 @@
+@page "/intune"
+@inject InventorySnapshotService Inventory
+@inject INexusDbFactory DbFactory
+
+<PageTitle>Intune · Azul Nexus</PageTitle>
+
+<div class="ph">
+    <div><h1>Intune</h1><p>Políticas de conformidade, perfis de configuração, proteção de aplicativos (MAM) e os registros de cada app. Clique em uma política para ver os dispositivos e o estado em cada um.</p></div>
+    @if (_snapshot is not null) { <span class="asof">Dados de @_snapshot.LoadedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</span> }
+</div>
+
+@if (_snapshot is not null)
+{
+    var sum = _snapshot.Intune;
+    <div class="grid g4">
+        <a class="card kcard" href="/intune?aba=conformidade"><div class="l">Políticas de conformidade</div><div class="v">@sum.PoliciesByKind.GetValueOrDefault("compliance")</div><div class="d">com estado por dispositivo</div></a>
+        <a class="card kcard" href="/intune?aba=configuracao"><div class="l">Perfis de configuração</div><div class="v">@(sum.PoliciesByKind.GetValueOrDefault("configuration") + sum.PoliciesByKind.GetValueOrDefault("settings"))</div><div class="d">perfis e catálogo de configurações</div></a>
+        <a class="card kcard" href="/intune?aba=mam"><div class="l">Políticas de proteção de apps</div><div class="v">@(sum.PoliciesByKind.GetValueOrDefault("mam-ios") + sum.PoliciesByKind.GetValueOrDefault("mam-android") + sum.PoliciesByKind.GetValueOrDefault("mam-windows"))</div><div class="d">iOS, Android e Windows</div></a>
+        <a class="card kcard" href="/intune?aba=registros"><div class="l">Registros de MAM</div><div class="v">@Fmt.Number(sum.MamRegistrations)</div><div class="d">@Fmt.Number(sum.MamUsers) usuários</div></a>
+    </div>
+
+    @if (!_snapshot.Sources.Policies)
+    {
+        <div class="note">As políticas e perfis do Intune ainda não foram coletados. Eles chegam no job <b>intune.policies</b> (a cada 4 horas); peça uma coleta em Saúde do Nexus.</div>
+    }
+
+    <div class="tabs">
+        @foreach (var (key, label) in new[] { ("conformidade", "Conformidade"), ("configuracao", "Configuração"), ("mam", "Proteção de apps (MAM)"), ("registros", "Registros de MAM") })
+        {
+            <a class="@(Tab == key ? "on" : "")" href="/intune?aba=@key">@label</a>
+        }
+    </div>
+
+    @if (Tab == "registros")
+    {
+        <form method="get" action="/intune" class="tools">
+            <input type="hidden" name="aba" value="registros" />
+            <input type="search" name="q" value="@Q" placeholder="Usuário, dispositivo ou aplicativo" aria-label="Filtrar registros" />
+            <select name="plataforma" aria-label="Plataforma" data-auto><option value="">Plataforma</option>@foreach (var p in new[] { "iOS", "Android", "Windows" }){<option value="@p" selected="@(Plataforma == p)">@p</option>}</select>
+            <select name="alerta" aria-label="Alertas" data-auto><option value="">Alertas</option><option value="1" selected="@(Alerta == "1")">Só com alerta</option></select>
+            <button type="submit">Filtrar</button>
+            <span class="cnt">@Fmt.Number(_regTotal) registros</span>
+        </form>
+        <div class="tw"><table style="min-width:980px"><thead><tr><th>Usuário</th><th>Dispositivo</th><th>Plataforma</th><th>Aplicativo</th><th>Versão</th><th>Última sincronização</th><th>Políticas aplicadas</th><th>Alertas</th></tr></thead><tbody>
+            @foreach (var r in _registrations)
+            {
+                var user = r.UserId is { } uid ? _users.GetValueOrDefault(uid) : null;
+                <tr>
+                    <td class="nm">@(user?.UserPrincipalName ?? r.UserId ?? "—")<small>@(user?.Department)</small></td>
+                    <td>@(r.DeviceName ?? "—")</td>
+                    <td>@(r.DeviceType) @r.PlatformVersion</td>
+                    <td>@(r.AppIdentifier ?? "—")</td>
+                    <td>@(r.AppVersion ?? "—")</td>
+                    <td class="num">@Fmt.Ago(r.LastSyncAt, _snapshot.LoadedAt)</td>
+                    <td style="white-space:normal;max-width:260px;color:var(--ink3);font-size:12px">@(r.AppliedPolicies ?? "—")</td>
+                    <td>@if (!string.IsNullOrEmpty(r.FlaggedReasons)) {<span class="pill w">@r.FlaggedReasons</span>} else {<span class="pill ok">nenhum</span>}</td>
+                </tr>
+            }
+            @if (_registrations.Count == 0) { <tr><td colspan="8" style="text-align:center;color:var(--ink3);padding:28px">@(_snapshot.Sources.Mam ? "Nenhum registro com esses filtros." : "A proteção de aplicativos ainda não foi coletada (job intune.mam).")</td></tr> }
+        </tbody></table></div>
+        <div class="pager">
+            @if (Pagina <= 0) { <span class="button" style="opacity:.5">Anterior</span> } else { <a class="button" href="@RegLink(Pagina - 1)">Anterior</a> }
+            @if ((Pagina + 1) * 25 >= _regTotal) { <span class="button" style="opacity:.5">Próxima</span> } else { <a class="button" href="@RegLink(Pagina + 1)">Próxima</a> }
+        </div>
+    }
+    else if (Tab == "mam")
+    {
+        <div class="tw"><table style="min-width:760px"><thead><tr><th>Política</th><th>Plataforma</th><th>Atribuição</th><th>Registros</th><th>Usuários</th><th>Modificada</th></tr></thead><tbody>
+            @foreach (var p in _policies)
+            {
+                var regs = _mamByPolicy.GetValueOrDefault(p.Name);
+                <tr>
+                    <td class="nm"><a href="/intune/politica?tipo=@p.Kind&nome=@Uri.EscapeDataString(p.Name)">@p.Name</a></td>
+                    <td>@(p.Platform ?? "—")</td>
+                    <td style="white-space:normal;max-width:320px;color:var(--ink3);font-size:12px">@(p.Assignments ?? "—")</td>
+                    <td class="num">@(regs.Registrations)</td><td class="num">@(regs.Users)</td>
+                    <td class="num">@(p.LastModifiedAt?.ToLocalTime().ToString("dd/MM/yyyy") ?? "—")</td>
+                </tr>
+            }
+            @if (_policies.Count == 0) { <tr><td colspan="6" style="text-align:center;color:var(--ink3);padding:28px">Nenhuma política de proteção de aplicativos coletada.</td></tr> }
+        </tbody></table></div>
+    }
+    else
+    {
+        <div class="tw"><table style="min-width:980px"><thead><tr><th>@(Tab == "configuracao" ? "Perfil" : "Política")</th><th>Plataforma</th><th>Atribuição</th><th>Dispositivos</th><th>Estado</th><th>Versão</th><th>Modificada</th></tr></thead><tbody>
+            @foreach (var p in _policies)
+            {
+                var agg = _states.GetValueOrDefault((p.Kind, p.Name)) ?? new Dictionary<string, int>();
+                var ok = agg.Where(x => x.Key is "compliant" or "remediated" or "succeeded").Sum(x => x.Value);
+                var bad = agg.Where(x => Reconciler.IsFailed(x.Key)).Sum(x => x.Value);
+                var other = agg.Values.Sum() - ok - bad;
+                <tr>
+                    <td class="nm"><a href="/intune/politica?tipo=@p.Kind&nome=@Uri.EscapeDataString(p.Name)">@p.Name</a><small>@PolicyKinds.Title(p.Kind)</small></td>
+                    <td>@(p.Platform ?? "—")</td>
+                    <td style="white-space:normal;max-width:300px;color:var(--ink3);font-size:12px">@(p.Assignments ?? "—")</td>
+                    <td class="num">@(ok + bad + other)</td>
+                    <td style="min-width:180px"><Bar ShowLegend="false" Label="@("Estado em " + p.Name)" Segments="@(new List<Seg> { new("Conforme", ok, "s-ok"), new("Outros", other, "c-mute"), new("Falha", bad, "s-bad") })" /><small class="asof">@ok ok · @bad falha · @other outros</small></td>
+                    <td class="num">@(p.Version?.ToString() ?? "—")</td>
+                    <td class="num">@(p.LastModifiedAt?.ToLocalTime().ToString("dd/MM/yyyy") ?? "—")</td>
+                </tr>
+            }
+            @if (_policies.Count == 0) { <tr><td colspan="7" style="text-align:center;color:var(--ink3);padding:28px">Nada coletado nesta aba ainda.</td></tr> }
+        </tbody></table></div>
+    }
+}
+
+@code {
+    [SupplyParameterFromQuery(Name = "aba")] public string? Aba { get; set; }
+    [SupplyParameterFromQuery] public string? Q { get; set; }
+    [SupplyParameterFromQuery] public string? Plataforma { get; set; }
+    [SupplyParameterFromQuery] public string? Alerta { get; set; }
+    [SupplyParameterFromQuery] public int Pagina { get; set; }
+
+    private InventorySnapshot? _snapshot;
+    private string Tab => Aba is "configuracao" or "mam" or "registros" ? Aba : "conformidade";
+    private List<IntunePolicyRecord> _policies = [];
+    private Dictionary<(string, string), Dictionary<string, int>> _states = [];
+    private Dictionary<string, (int Registrations, int Users)> _mamByPolicy = [];
+    private List<MamRegistrationRecord> _registrations = [];
+    private Dictionary<string, EntraUserRecord> _users = [];
+    private int _regTotal;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _snapshot = await Inventory.GetAsync();
+        await using var db = DbFactory.Create();
+        if (Tab == "registros")
+        {
+            var query = db.MamRegistrations.AsNoTracking().AsQueryable();
+            if (!string.IsNullOrEmpty(Plataforma)) query = query.Where(r => r.DeviceType == Plataforma);
+            if (Alerta == "1") query = query.Where(r => r.FlaggedReasons != null && r.FlaggedReasons != "");
+            if (!string.IsNullOrEmpty(Q))
+            {
+                var userIds = await db.EntraUsers.AsNoTracking().Where(u => (u.UserPrincipalName ?? "").Contains(Q) || (u.DisplayName ?? "").Contains(Q)).Select(u => u.Id).ToListAsync();
+                query = query.Where(r => (r.DeviceName ?? "").Contains(Q) || (r.AppIdentifier ?? "").Contains(Q) || (r.UserId != null && userIds.Contains(r.UserId)));
+            }
+
+            _regTotal = await query.CountAsync();
+            _registrations = await query.OrderBy(r => r.UserId).ThenBy(r => r.DeviceName).Skip(Math.Max(0, Pagina) * 25).Take(25).ToListAsync();
+            var ids = _registrations.Where(r => r.UserId != null).Select(r => r.UserId!).Distinct().ToList();
+            _users = await db.EntraUsers.AsNoTracking().Where(u => ids.Contains(u.Id)).ToDictionaryAsync(u => u.Id);
+            return;
+        }
+
+        var kinds = Tab switch
+        {
+            "configuracao" => new[] { PolicyKinds.Configuration, PolicyKinds.SettingsCatalog },
+            "mam" => new[] { PolicyKinds.MamIos, PolicyKinds.MamAndroid, PolicyKinds.MamWindows },
+            _ => new[] { PolicyKinds.Compliance },
+        };
+        _policies = await db.IntunePolicies.AsNoTracking().Where(p => kinds.Contains(p.Kind)).OrderBy(p => p.Name).ToListAsync();
+        if (Tab == "mam")
+        {
+            var regs = await db.MamRegistrations.AsNoTracking().Select(r => new { r.AppliedPolicies, r.UserId }).ToListAsync();
+            foreach (var p in _policies)
+            {
+                var hit = regs.Where(r => (r.AppliedPolicies ?? "").Contains(p.Name)).ToList();
+                _mamByPolicy[p.Name] = (hit.Count, hit.Select(r => r.UserId).Distinct().Count());
+            }
+        }
+        else
+        {
+            var agg = await db.IntuneDevicePolicyStates.AsNoTracking().Where(s => kinds.Contains(s.Kind))
+                .GroupBy(s => new { s.Kind, s.PolicyName, s.State }).Select(g => new { g.Key.Kind, g.Key.PolicyName, g.Key.State, Count = g.Count() }).ToListAsync();
+            _states = agg.GroupBy(x => (x.Kind, x.PolicyName)).ToDictionary(g => g.Key, g => g.ToDictionary(x => x.State, x => x.Count));
+        }
+    }
+
+    private string RegLink(int pagina) => $"/intune?aba=registros&q={Uri.EscapeDataString(Q ?? "")}&plataforma={Uri.EscapeDataString(Plataforma ?? "")}&alerta={Alerta}&pagina={pagina}";
+}

@@ -418,7 +418,7 @@ public static class Reconciler
                 var first = device.First();
                 var mamOnly = new Asset
                 {
-                    Id = id, Name = first.DeviceName ?? device.Key, Platform = group.Key.Platform, Ownership = "Personal", OwnershipSource = "mam",
+                    Id = id, Name = first.DeviceName ?? device.Key, Platform = group.Key.Platform == "Windows" ? "WindowsClient" : group.Key.Platform, Ownership = "Personal", OwnershipSource = "mam",
                     IntuneChannel = "None", Coverage = "OnlyMam", Confidence = candidates.Count > 1 ? "Low" : "High", UpdatedAt = input.Now,
                     PrimaryUser = input.Users?.FirstOrDefault(u => u.Id == group.Key.Item1)?.UserPrincipalName ?? group.Key.Item1,
                     Department = input.Users?.FirstOrDefault(u => u.Id == group.Key.Item1)?.Department,

@@ -25,13 +25,23 @@ public sealed record OverviewReport(
     IReadOnlyList<KpiCard> Highlights, IReadOnlyList<KpiCard> Kpis, IReadOnlyList<GroupCard> Groups,
     IReadOnlyDictionary<string, int> States, IReadOnlyList<RuleCount> TopRules, int Total, int Active);
 
+public sealed record FailingPolicy(string Kind, string Name, int Failed, int Total);
+
+/// <summary>Intune in numbers, aggregated in the database: policy catalog, device states and MAM registrations.</summary>
+public sealed record IntuneSummary(IReadOnlyDictionary<string, int> PoliciesByKind, int PolicyStates, int FailedStates, int MamRegistrations, int MamUsers, IReadOnlyList<FailingPolicy> TopFailing)
+{
+    public static IntuneSummary Empty { get; } = new(new Dictionary<string, int>(), 0, 0, 0, 0, []);
+
+    public int Policies => PoliciesByKind.Values.Sum();
+}
+
 public sealed record JobSummary(string Name, string? Status, DateTimeOffset? LastSuccessAt, DateTimeOffset? NextRunAt, int? Records, string? Error);
 
 /// <summary>
 /// Immutable result of one reconciliation read. Everything the screens ask repeatedly (counts per group and rule, lookups, the overview)
 /// is computed once per snapshot, so a page render never walks the whole inventory more than once.
 /// </summary>
-public sealed class InventorySnapshot(IReadOnlyList<AssetView> views, IReadOnlyList<ReviewItem> review, IReadOnlyList<JobSummary> jobs, SourceAvailability sources, DateTimeOffset loadedAt)
+public sealed class InventorySnapshot(IReadOnlyList<AssetView> views, IReadOnlyList<ReviewItem> review, IReadOnlyList<JobSummary> jobs, SourceAvailability sources, DateTimeOffset loadedAt, IntuneSummary? intune = null)
 {
     private readonly Lazy<Dictionary<Guid, AssetView>> _byId = new(() => views.ToDictionary(v => v.Asset.Id));
     private readonly Lazy<IssueIndex> _issues = new(() => IssueIndex.Build(views));
@@ -41,6 +51,7 @@ public sealed class InventorySnapshot(IReadOnlyList<AssetView> views, IReadOnlyL
     public IReadOnlyList<JobSummary> Jobs { get; } = jobs;
     public SourceAvailability Sources { get; } = sources;
     public DateTimeOffset LoadedAt { get; } = loadedAt;
+    public IntuneSummary Intune { get; } = intune ?? IntuneSummary.Empty;
 
     public static InventorySnapshot Empty { get; } = new([], [], [], new SourceAvailability(false, false, false, false), DateTimeOffset.MinValue);
 
@@ -180,7 +191,15 @@ public static class InventorySnapshotLoader
         var review = await db.ReviewItems.AsNoTracking().OrderBy(r => r.Id).ToListAsync(cancellationToken);
         var jobs = (await db.Jobs.AsNoTracking().ToListAsync(cancellationToken))
             .Select(j => new JobSummary(j.Name, j.LastStatus, j.LastSuccessAt, j.NextRunAt, j.LastRecordCount, j.LastError)).OrderBy(j => j.Name).ToList();
-        return new InventorySnapshot(assets.Select(a => AssetView.From(a, sources)).ToList(), review, jobs, sources, clock.GetUtcNow());
+        var kinds = await db.IntunePolicies.AsNoTracking().GroupBy(p => p.Kind).Select(g => new { g.Key, Count = g.Count() }).ToListAsync(cancellationToken);
+        var states = await db.IntuneDevicePolicyStates.AsNoTracking().GroupBy(p => new { p.Kind, p.PolicyName, p.State }).Select(g => new { g.Key.Kind, g.Key.PolicyName, g.Key.State, Count = g.Count() }).ToListAsync(cancellationToken);
+        var failing = states.GroupBy(x => (x.Kind, x.PolicyName))
+            .Select(g => new FailingPolicy(g.Key.Kind, g.Key.PolicyName, g.Where(x => Reconciler.IsFailed(x.State)).Sum(x => x.Count), g.Sum(x => x.Count)))
+            .Where(f => f.Failed > 0).OrderByDescending(f => f.Failed).Take(5).ToList();
+        var mamCount = await db.MamRegistrations.CountAsync(cancellationToken);
+        var mamUsers = await db.MamRegistrations.Where(r => r.UserId != null).Select(r => r.UserId).Distinct().CountAsync(cancellationToken);
+        var intune = new IntuneSummary(kinds.ToDictionary(k => k.Key, k => k.Count), states.Sum(x => x.Count), states.Where(x => Reconciler.IsFailed(x.State)).Sum(x => x.Count), mamCount, mamUsers, failing);
+        return new InventorySnapshot(assets.Select(a => AssetView.From(a, sources)).ToList(), review, jobs, sources, clock.GetUtcNow(), intune);
     }
 }
 

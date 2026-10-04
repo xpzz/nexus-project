@@ -12,6 +12,22 @@ namespace Nexus.Worker.Collection;
 /// </summary>
 public sealed class InventoryFetcher(INexusDbFactory dbFactory, SettingsProvider settingsProvider, ISourceFactory sources, TimeProvider clock, ILogger<InventoryFetcher> logger)
 {
+    public async Task MarkFailedAsync(Guid assetId, string message, CancellationToken cancellationToken)
+    {
+        await using var db = dbFactory.Create();
+        var fetch = await db.InventoryFetches.FirstOrDefaultAsync(f => f.AssetId == assetId, cancellationToken);
+        if (fetch is null)
+        {
+            fetch = new InventoryFetch { AssetId = assetId, RequestedAt = clock.GetUtcNow() };
+            db.InventoryFetches.Add(fetch);
+        }
+
+        fetch.Status = "Failed";
+        fetch.FetchedAt = clock.GetUtcNow();
+        fetch.Message = message.Length > 900 ? message[..900] : message;
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
     public async Task<string> FetchAsync(Guid assetId, CancellationToken cancellationToken)
     {
         var settings = settingsProvider.Current;
@@ -77,7 +93,7 @@ public sealed class InventoryFetcher(INexusDbFactory dbFactory, SettingsProvider
 
             fetch.FetchedAt = clock.GetUtcNow();
             fetch.Status = notes.Count > 0 && rows.Count == 0 ? "Failed" : "Done";
-            fetch.Message = notes.Count > 0 ? string.Join(" | ", notes) : $"{rows.Count} programas.";
+            fetch.Message = notes.Count > 0 ? string.Join(" | ", notes) : null;
             await db.SaveChangesAsync(cancellationToken);
         }
 

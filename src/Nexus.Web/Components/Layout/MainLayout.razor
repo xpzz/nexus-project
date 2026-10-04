@@ -18,6 +18,7 @@
             <NavLink href="/inventario" Match="NavLinkMatch.All">Inventário completo<i>@_snapshot.Views.Count</i></NavLink>
             <h6>Operação</h6>
             <NavLink href="/operacao">SCCM e Intune</NavLink>
+            <NavLink href="/intune">Políticas e MAM<i>@_snapshot.Intune.Policies</i></NavLink>
             <NavLink href="/pendencias">Pendências<i>@_snapshot.Issues.WithPending</i></NavLink>
             <h6>Configuração</h6>
             <NavLink href="/assistente">Assistente</NavLink>
@@ -66,22 +67,41 @@
 
     private int Count(string group) => _snapshot.Issues.Group(group);
 
+    private static readonly (string Name, string[] Jobs)[] SourceGroups =
+    [
+        ("SCCM", ["sccm.devices"]),
+        ("Active Directory", ["ad.computers"]),
+        ("Intune", ["intune.devices", "intune.policies", "intune.mam"]),
+        ("Entra ID", ["entra.devices", "entra.users"]),
+    ];
+
+    /// <summary>One chip per source: the worst of its collections decides the color; the oldest success decides the age.</summary>
     private IEnumerable<(string Name, string Text, string Dot, string Detail)> Chips()
     {
         var now = Clock.GetUtcNow();
-        foreach (var job in _snapshot.Jobs.Where(j => j.Name != "inventory.reconcile"))
+        foreach (var (name, jobNames) in SourceGroups)
         {
-            if (job.LastSuccessAt is null)
+            var jobs = _snapshot.Jobs.Where(j => jobNames.Contains(j.Name)).ToList();
+            if (jobs.Count == 0 || jobs.All(j => j.LastSuccessAt is null))
             {
-                yield return (Fmt.JobLabel(job.Name), "sem coleta", "m", job.Error ?? job.Status ?? "Ainda não coletou.");
+                yield return (name, "sem coleta", "m", jobs.FirstOrDefault()?.Error ?? "Ainda não coletou.");
+                continue;
             }
-            else if (job.Status is "Falhou")
+
+            var failed = jobs.Where(j => j.Status is "Falhou").ToList();
+            var never = jobs.Where(j => j.LastSuccessAt is null).ToList();
+            var oldest = jobs.Where(j => j.LastSuccessAt is not null).Min(j => j.LastSuccessAt);
+            if (failed.Count > 0)
             {
-                yield return (Fmt.JobLabel(job.Name), "atrasada", "w", job.Error ?? "A última coleta falhou; mantido o último resultado válido.");
+                yield return (name, "atrasada", "w", string.Join(" | ", failed.Select(j => $"{Fmt.JobLabel(j.Name)}: {j.Error}")));
+            }
+            else if (never.Count > 0)
+            {
+                yield return (name, "parcial", "w", "Ainda sem coleta de: " + string.Join(", ", never.Select(j => Fmt.JobLabel(j.Name))));
             }
             else
             {
-                yield return (Fmt.JobLabel(job.Name), Fmt.Ago(job.LastSuccessAt, now), "", "Em dia");
+                yield return (name, Fmt.Ago(oldest, now), "", "Em dia");
             }
         }
     }
