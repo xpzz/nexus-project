@@ -5,7 +5,7 @@
   --c-both:#1f4fd8; --c-sccm:#0e8f83; --c-intune:#8a5cd6; --c-none:#c8452e; --c-mute:#9aa5bd;
   --ok:#17803d; --ok-soft:#dff3e5; --warn:#a86500; --warn-soft:#fdf0d4; --bad:#c0321c; --bad-soft:#fde4df; --mute-soft:#e9ecf3;
   --text:var(--ink); --muted:var(--ink2); --border:var(--line); --brand:var(--accent); --error:var(--bad);
-  --f-display:'Sora','Segoe UI',system-ui,sans-serif; --f-body:'IBM Plex Sans','Segoe UI',system-ui,sans-serif; --f-mono:'IBM Plex Mono',ui-monospace,Consolas,monospace;
+  --f-display:'Segoe UI Variable Display','Segoe UI',system-ui,sans-serif; --f-body:'Segoe UI',system-ui,-apple-system,sans-serif; --f-mono:ui-monospace,'Cascadia Mono',Consolas,monospace;
   --shadow:0 1px 2px rgba(20,32,58,.06),0 8px 24px rgba(20,32,58,.08);
   font-family:var(--f-body);
 }

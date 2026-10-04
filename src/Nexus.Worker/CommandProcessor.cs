@@ -14,6 +14,7 @@ public sealed class CommandProcessor(
     SettingsProvider settingsProvider,
     JobRunner jobs,
     HealthRunner health,
+    InventoryFetcher inventory,
     ILogger<CommandProcessor> logger) : BackgroundService
 {
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(3);
@@ -96,6 +97,22 @@ public sealed class CommandProcessor(
                 }
 
                 return (outcomes.Values.All(o => o.Status != JobRunner.StatusFailed), JsonSerializer.Serialize(outcomes, SettingsStore.JsonOptions));
+
+            case CommandTypes.FetchInventory:
+                if (!Guid.TryParse(command.Argument, out var assetId))
+                {
+                    return (false, "Identificador de dispositivo inválido.");
+                }
+
+                try
+                {
+                    return (true, await inventory.FetchAsync(assetId, cancellationToken));
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    await inventory.MarkFailedAsync(assetId, ex.Message, cancellationToken);
+                    throw;
+                }
 
             case CommandTypes.PauseCollectors:
             case CommandTypes.ResumeCollectors:

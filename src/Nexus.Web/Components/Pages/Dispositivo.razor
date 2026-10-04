@@ -1,9 +1,13 @@
 @page "/dispositivo/{Id:guid}"
-@rendermode InteractiveServer
 @inject InventorySnapshotService Inventory
 @inject INexusDbFactory DbFactory
 
 <PageTitle>@(_view?.Asset.Name ?? "Dispositivo") · Azul Nexus</PageTitle>
+
+@if (_fetch is { Status: "Pending" })
+{
+    <HeadContent><meta http-equiv="refresh" content="3" /></HeadContent>
+}
 
 @if (_view is null)
 {
@@ -15,7 +19,7 @@ else
     var a = _view.Asset;
     var now = _now;
     <div class="ph">
-        <div><a href="@Fmt.Inv(grupo: _view.Group)" class="hint">← @Groups.Title(_view.Group)</a><h1>@a.Name</h1><p>@(a.Manufacturer) @(a.Model) · @(a.OperatingSystem ?? a.Platform)</p></div>
+        <div><a href="@Fmt.Inv(grupo: _view.Group)" class="hint">← @Groups.Title(_view.Group)</a><h1>@a.Name</h1><p>@(a.Manufacturer) @(a.Model) · @(a.OperatingSystem ?? a.Platform) @(a.OsVersion)</p></div>
         <Ring Value="_view.Score" />
     </div>
 
@@ -23,31 +27,157 @@ else
         <span class="pill a">@InventoryQuery.OwnershipOf(_view)</span>
         <span class="pill @(_view.Management == Management.None ? "b" : "m")">@_view.Management</span>
         <span class="pill @Fmt.StateCss(_view.State)">@_view.State</span>
+        @if (a.HasMam) { <span class="pill a">Proteção de apps (MAM)</span> }
         @if (a.NeedsReview) { <span class="pill w">revisar vínculo</span> }
     </div>
 
     <section class="card">
         <dl class="kv" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px 24px">
             @Item("Usuário", a.PrimaryUser ?? "—")
+            @Item("Área", a.Department ?? "—")
+            @Item("Conta do usuário", a.UserEnabled switch { true => "habilitada", false => "desabilitada", _ => "—" })
             @Item("Serial", a.Serial ?? "—")
-            @Item("Último contato", $"{Fmt.Ago(a.LastActivityAt, now)}")
-            @Item("Fontes", $"{new[] { a.InSccm, a.InIntune, a.InEntra, a.InAd }.Count(x => x)} de 4")
             @Item("Gestão esperada", Groups.Expected(_view.Group))
             @Item("Cumpre a gestão esperada", _view.MeetsExpected ? "sim" : "não")
         </dl>
     </section>
 
+    <div class="ttl"><h2>Último report por fonte</h2><span class="asof">Quando cada ferramenta ouviu falar do dispositivo</span></div>
+    <section class="card">
+        <div class="tw" style="border:0"><table style="min-width:520px"><thead><tr><th>Fonte</th><th>Evento</th><th>Quando</th><th>Há</th></tr></thead><tbody>
+            @foreach (var r in Reports())
+            {
+                <tr><td>@r.Source</td><td>@r.Event</td><td class="num">@(r.At?.ToLocalTime().ToString("dd/MM/yyyy HH:mm") ?? "—")</td><td class="num">@Fmt.Ago(r.At, now)</td></tr>
+            }
+        </tbody></table></div>
+    </section>
+
+    <div class="ttl"><h2>Hardware e sistema</h2></div>
+    <div class="grid g3">
+        <section class="card">
+            <h3>Equipamento</h3>
+            <dl class="kv" style="margin-top:8px">
+                <dt>Processador</dt><dd>@(a.CpuName ?? "—")</dd>
+                <dt>Memória</dt><dd>@(a.MemoryMb is { } mem ? $"{mem / 1024.0:0.#} GB" : "—")</dd>
+                <dt>BIOS</dt><dd>@(_sccm?.BiosVersion ?? "—")</dd>
+                <dt>Fabricante / modelo</dt><dd>@($"{a.Manufacturer} {a.Model}".Trim())</dd>
+            </dl>
+        </section>
+        <section class="card">
+            <h3>Disco do sistema</h3>
+            @if (a.DiskTotalMb is > 0)
+            {
+                var used = 100.0 - 100.0 * (a.DiskFreeMb ?? 0) / a.DiskTotalMb.Value;
+                <p class="sub">@($"{(a.DiskFreeMb ?? 0) / 1024.0:0.#} GB livres de {a.DiskTotalMb / 1024.0:0.#} GB")</p>
+                <div class="meter"><i class="@(used >= 90 ? "bad" : used >= 80 ? "warn" : "")" style="width:@(Math.Round(used).ToString(System.Globalization.CultureInfo.InvariantCulture))%"></i></div>
+                <p class="sub" style="margin-top:6px">@($"{used:0}% em uso")</p>
+            }
+            else
+            {
+                <p class="sub">Sem dado de disco nas fontes coletadas.</p>
+            }
+            <dl class="kv"><dt>Criptografia (Intune)</dt><dd>@(a.IsEncrypted switch { true => "ligada", false => "desligada", _ => "—" })</dd></dl>
+        </section>
+        <section class="card">
+            <h3>Sistema operacional</h3>
+            <dl class="kv" style="margin-top:8px">
+                <dt>Sistema</dt><dd>@(a.OperatingSystem ?? a.Platform)</dd>
+                <dt>Versão</dt><dd>@(a.OsVersion ?? "—")</dd>
+                <dt>Último boot</dt><dd>@(_sccm?.LastBootAt is { } boot ? Fmt.Ago(boot, now) : "—")</dd>
+                <dt>Suporte</dt><dd>@(a.Platform == "WindowsClient" ? (HealthModel.IsWindows10(a) ? "Windows 10 fora de suporte" : "suportado") : "—")</dd>
+            </dl>
+        </section>
+    </div>
+
     <div class="ttl"><h2>Encontrado em</h2></div>
     <div class="srcs">
         @SourceCard("SCCM", _sccm is not null, "Sem registro no SCCM." + (_view.Group is Groups.Computers or Groups.Servers && a.Platform != "macOS" ? " Esperado para este grupo." : " Este grupo não usa SCCM."),
-            _sccm is null ? [] : [("Cliente", _sccm.Client == true ? "instalado" : "sem cliente"), ("Saúde", a.SccmHealth), ("Última atividade", Fmt.Ago(_sccm.LastActiveAt, now)), ("Fabricante / modelo", $"{_sccm.Manufacturer} {_sccm.Model}"), ("Sistema", _sccm.OperatingSystem ?? "—")])
-        @SourceCard("Intune", _intune is not null, a.Ownership == "Personal" ? "Sem enrollment MDM. A proteção por MAM ainda não é coletada." : "Sem registro no Intune.",
-            _intune is null ? [] : [("Canal", ChannelLabel(a.IntuneChannel)), ("Agente", _intune.ManagementAgent ?? "—"), ("Conformidade", _intune.ComplianceState ?? "—"), ("Propriedade", _intune.OwnerType ?? "—"), ("Última sincronização", Fmt.Ago(_intune.LastSyncAt, now)), ("Registrado em", _intune.EnrolledAt?.ToLocalTime().ToString("dd/MM/yyyy") ?? "—")])
+            _sccm is null ? [] : [("Cliente", _sccm.Client == true ? "instalado" : "sem cliente"), ("Versão do cliente", _sccm.ClientVersion ?? "—"), ("Saúde", a.SccmHealth), ("Último usuário", _sccm.LastLogonUser ?? "—"), ("Site do AD", _sccm.AdSite ?? "—")])
+        @SourceCard("Intune", _intune is not null, a.Ownership == "Personal" ? "Sem enrollment MDM. A proteção por MAM aparece abaixo." : "Sem registro no Intune.",
+            _intune is null ? [] : [("Canal", ChannelLabel(a.IntuneChannel)), ("Agente", _intune.ManagementAgent ?? "—"), ("Conformidade", _intune.ComplianceState ?? "—"), ("Carência até", _intune.ComplianceGraceExpiresAt?.ToLocalTime().ToString("dd/MM/yyyy") ?? "—"), ("Propriedade", _intune.OwnerType ?? "—"), ("Tipo de inscrição", _intune.EnrollmentType ?? "—"), ("Autopilot", _intune.AutopilotEnrolled switch { true => "sim", false => "não", _ => "—" }), ("Supervisionado", _intune.IsSupervised switch { true => "sim", false => "não", _ => "—" }), ("Registrado em", _intune.EnrolledAt?.ToLocalTime().ToString("dd/MM/yyyy") ?? "—")])
         @SourceCard("Entra ID", _entra is not null, "Sem registro no Entra ID.",
-            _entra is null ? [] : [("Associação", TrustLabel(_entra.TrustType)), ("Último login", Fmt.Ago(_entra.LastSignInAt, now)), ("Conta habilitada", _entra.AccountEnabled == false ? "não" : "sim"), ("Propriedade", _entra.Ownership ?? "—")])
+            _entra is null ? [] : [("Associação", TrustLabel(_entra.TrustType)), ("Conta habilitada", _entra.AccountEnabled == false ? "não" : "sim"), ("Propriedade", _entra.Ownership ?? "—")])
         @SourceCard("Active Directory", _ad is not null, "Sem objeto no AD.",
-            _ad is null ? [] : [("Último logon", Fmt.Ago(_ad.LastLogonTimestamp, now)), ("Conta do computador", _ad.Enabled ? "habilitada" : "desabilitada"), ("Vínculo", a.AdByNameOnly ? "só pelo nome (baixa confiança)" : "forte"), ("Caminho", _ad.DistinguishedName)])
+            _ad is null ? [] : [("Conta do computador", _ad.Enabled ? "habilitada" : "desabilitada"), ("Vínculo", a.AdByNameOnly ? "só pelo nome (baixa confiança)" : "forte"), ("Caminho", _ad.DistinguishedName)])
     </div>
+
+    <div class="ttl" id="politicas"><h2>Políticas e perfis aplicados</h2>
+        <span class="asof">@(a.PoliciesCollected ? $"{a.CompliancePolicies} de conformidade · {a.ConfigProfiles} de configuração · {a.CompliancePoliciesFailed + a.ConfigProfilesFailed} com falha" : "")</span></div>
+    <section class="card">
+        @if (_intune is null)
+        {
+            <p class="hint">Este dispositivo não está no Intune; não há políticas de MDM aplicadas.</p>
+        }
+        else if (!a.PoliciesCollected)
+        {
+            <p class="hint">As políticas do Intune ainda não foram coletadas (job intune.policies roda a cada 4 horas).</p>
+        }
+        else if (_states.Count == 0)
+        {
+            <p class="hint">O Intune não reporta nenhuma política ou perfil para este dispositivo.</p>
+        }
+        else
+        {
+            <div class="tw" style="border:0"><table style="min-width:640px"><thead><tr><th>Política ou perfil</th><th>Tipo</th><th>Estado</th><th>Plataforma</th><th>Atribuição</th></tr></thead><tbody>
+                @foreach (var st in _states.OrderBy(x => Reconciler.IsFailed(x.State) ? 0 : 1).ThenBy(x => x.Kind).ThenBy(x => x.PolicyName))
+                {
+                    <tr>
+                        <td class="nm"><a href="/intune/politica?tipo=@st.Kind&nome=@Uri.EscapeDataString(st.PolicyName)">@st.PolicyName</a></td>
+                        <td>@(st.Kind == "compliance" ? "Conformidade" : "Configuração")</td>
+                        <td><span class="pill @StatePill(st.State)">@StateLabel(st.State)</span></td>
+                        <td>@(st.Platform ?? "—")</td>
+                        <td style="white-space:normal;max-width:300px;color:var(--ink3);font-size:12px">@(_catalog.GetValueOrDefault((st.Kind, st.PolicyName))?.Assignments ?? "—")</td>
+                    </tr>
+                }
+            </tbody></table></div>
+        }
+    </section>
+
+    @if (_mam.Count > 0 || a.HasMam || _view.Group is Groups.ByodMobile or Groups.ByodComputers)
+    {
+        <div class="ttl" id="mam"><h2>Proteção de aplicativos (MAM)</h2><span class="asof">@(a.MamLastSyncAt is { } ms ? "última sincronização " + Fmt.Ago(ms, now) : "")</span></div>
+        <section class="card">
+            @if (_mam.Count == 0)
+            {
+                <p class="hint">@(_snapshotSources.Mam ? "Nenhum aplicativo protegido por política de MAM foi registrado para este dispositivo." : "A proteção de aplicativos ainda não foi coletada (job intune.mam).")</p>
+            }
+            else
+            {
+                <p class="sub">Políticas aplicadas: @(a.MamPolicies ?? "—")</p>
+                <div class="tw" style="border:0"><table style="min-width:720px"><thead><tr><th>Aplicativo</th><th>Versão</th><th>Plataforma</th><th>Última sincronização</th><th>Políticas aplicadas</th><th>Alertas</th></tr></thead><tbody>
+                    @foreach (var r in _mam.OrderByDescending(r => r.LastSyncAt))
+                    {
+                        <tr><td class="nm">@(r.AppIdentifier ?? "—")</td><td>@(r.AppVersion ?? "—")</td><td>@(r.DeviceType ?? "—") @(r.PlatformVersion)</td><td class="num">@Fmt.Ago(r.LastSyncAt, now)</td><td style="white-space:normal;color:var(--ink3);font-size:12px">@(r.AppliedPolicies ?? "—")</td><td>@if (!string.IsNullOrEmpty(r.FlaggedReasons)) {<span class="pill w">@r.FlaggedReasons</span>} else {<span class="pill ok">nenhum</span>}</td></tr>
+                    }
+                </tbody></table></div>
+            }
+        </section>
+    }
+
+    <div class="ttl" id="software"><h2>Software instalado</h2>
+        <form method="post" action="/dispositivo/@a.Id/inventario"><button type="submit" class="primary" disabled="@(_fetch is { Status: "Pending" } || (_sccm is null && _intune is null))">@(_fetch is { Status: "Pending" } ? "Coletando…" : _fetch is null ? "Coletar inventário de software" : "Atualizar inventário de software")</button></form></div>
+    <section class="card">
+        @if (_fetch is null)
+        {
+            <p class="hint">O inventário de software é grande demais para coletar de todo o parque. Ele é lido sob demanda do SCCM (Adicionar ou remover programas) e do Intune (aplicativos detectados) quando você pede aqui.</p>
+        }
+        else if (_fetch.Status == "Pending")
+        {
+            <p class="hint">Pedido enviado ao Worker em @_fetch.RequestedAt.ToLocalTime().ToString("HH:mm:ss"). Esta página se atualiza sozinha.</p>
+        }
+        else
+        {
+            <p class="sub">@(_fetch.Status == "Done" ? "Lido" : "Falhou") @Fmt.Ago(_fetch.FetchedAt, now) · @_software.Count programas@(string.IsNullOrEmpty(_fetch.Message) ? "" : " · " + _fetch.Message)</p>
+            <form method="get" action="/dispositivo/@a.Id" class="tools" style="margin-bottom:10px"><input type="search" name="sw" value="@Sw" placeholder="Filtrar programa ou fabricante" aria-label="Filtrar software" /><button type="submit">Filtrar</button></form>
+            <div class="tw" style="border:0"><table style="min-width:640px"><thead><tr><th>Programa</th><th>Versão</th><th>Fabricante</th><th>Instalado em</th><th>Fonte</th></tr></thead><tbody>
+                @foreach (var sw in _shownSoftware)
+                {
+                    <tr><td class="nm">@sw.Name</td><td>@(sw.Version ?? "—")</td><td>@(sw.Publisher ?? "—")</td><td class="num">@(sw.InstalledOn?.ToLocalTime().ToString("dd/MM/yyyy") ?? "—")</td><td>@(sw.Source == "sccm" ? "SCCM" : "Intune")</td></tr>
+                }
+            </tbody></table></div>
+            @if (_software.Count > _shownSoftware.Count) { <p class="hint">Mostrando @_shownSoftware.Count de @_software.Count. Use o filtro.</p> }
+        }
+    </section>
 
     <div class="ttl"><h2>Pendências</h2></div>
     <section class="card">
@@ -61,36 +191,12 @@ else
         </div>
     </section>
 
-    <div class="grid g2">
-        <section class="card">
-            <h3>Controles de conformidade</h3>
-            <p class="sub">Só o que o Nexus já coleta aparece com valor.</p>
-            <div class="list">
-                <div class="row"><span>Conformidade no Intune</span>@if (a.IntuneChannel == "Mdm") {<span class="pill @(string.Equals(a.ComplianceState, "compliant", StringComparison.OrdinalIgnoreCase) ? "ok" : "b")">@(a.ComplianceState ?? "sem estado")</span>} else {<span class="pill m">sem MDM</span>}</div>
-                <div class="row"><span>Cliente SCCM saudável</span>@if (a.InSccm) {<span class="pill @(a.SccmHealth == "Healthy" ? "ok" : "w")">@a.SccmHealth</span>} else {<span class="pill m">não se aplica</span>}</div>
-                <div class="row"><span>Sistema suportado</span>@if (a.Platform == "WindowsClient") {<span class="pill @(HealthModel.IsWindows10(a) ? "b" : "ok")">@(HealthModel.IsWindows10(a) ? "Windows 10 fora de suporte" : "suportado")</span>} else {<span class="pill m">não avaliado</span>}</div>
-                <div class="row"><span>Criptografia, EDR, patch</span><span class="pill m">Aguardando coleta</span></div>
-                @if (_view.Group is Groups.ByodMobile or Groups.ByodComputers) { <div class="row"><span>MAM, PIN, root ou jailbreak</span><span class="pill m">Aguardando coleta</span></div> }
-            </div>
-        </section>
-        <section class="card">
-            <h3>Último evento de cada fonte</h3>
-            <p class="sub">Quando cada fonte viu o dispositivo.</p>
-            <div class="list">
-                @foreach (var (name, at) in Timeline(a))
-                {
-                    <div class="row"><span>@name</span><span class="asof">@Fmt.Ago(at, now) · @at?.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</span></div>
-                }
-            </div>
-        </section>
-    </div>
-
     <div class="ttl"><h2>Como os registros foram ligados</h2></div>
     <section class="card">
         <div class="list">
             @foreach (var l in _links)
             {
-                <div class="row"><div class="t"><b>@Fmt.JobLabel(l.Source == "sccm" ? "sccm.devices" : l.Source == "intune" ? "intune.devices" : l.Source == "entra" ? "entra.devices" : "ad.computers") · @l.SourceKey</b><span>@(l.Reason ?? "Registro de origem do ativo.")</span></div><span class="pill @(l.Confidence == "High" ? "ok" : l.Confidence == "Medium" ? "w" : "m")">confiança @(l.Confidence == "High" ? "alta" : l.Confidence == "Medium" ? "média" : "baixa")</span></div>
+                <div class="row"><div class="t"><b>@Fmt.JobLabel(l.Source == "sccm" ? "sccm.devices" : l.Source == "intune" ? "intune.devices" : l.Source == "entra" ? "entra.devices" : l.Source == "mam" ? "intune.mam" : "ad.computers") · @l.SourceKey</b><span>@(l.Reason ?? "Registro de origem do ativo.")</span></div><span class="pill @(l.Confidence == "High" ? "ok" : l.Confidence == "Medium" ? "w" : "m")">confiança @(l.Confidence == "High" ? "alta" : l.Confidence == "Medium" ? "média" : "baixa")</span></div>
             }
         </div>
         @foreach (var r in _review) { <div class="note" style="margin-top:10px"><b>@Fmt.ReviewKind(r.Kind):</b> @r.Detail</div> }
@@ -100,19 +206,28 @@ else
 
 @code {
     [Parameter] public Guid Id { get; set; }
+    [SupplyParameterFromQuery] public string? Sw { get; set; }
     private AssetView? _view;
     private DateTimeOffset _now;
+    private SourceAvailability _snapshotSources = SourceAvailability.All;
     private List<AssetLink> _links = [];
     private List<ReviewItem> _review = [];
     private SccmDeviceRecord? _sccm;
     private IntuneDeviceRecord? _intune;
     private EntraDeviceRecord? _entra;
     private AdComputerRecord? _ad;
+    private List<IntuneDevicePolicyState> _states = [];
+    private Dictionary<(string, string), IntunePolicyRecord> _catalog = [];
+    private List<MamRegistrationRecord> _mam = [];
+    private List<InstalledSoftwareRecord> _software = [];
+    private List<InstalledSoftwareRecord> _shownSoftware = [];
+    private InventoryFetch? _fetch;
 
-    protected override async Task OnParametersSetAsync()
+    protected override async Task OnInitializedAsync()
     {
         var snapshot = await Inventory.GetAsync();
         _now = snapshot.LoadedAt;
+        _snapshotSources = snapshot.Sources;
         _view = snapshot.Find(Id);
         if (_view is null)
         {
@@ -130,13 +245,64 @@ else
         _ad = Guid.TryParse(Key("ad"), out var gid) ? await db.AdComputers.AsNoTracking().FirstOrDefaultAsync(r => r.ObjectGuid == gid) : null;
         var refs = _links.Select(l => $"{l.Source}:{l.SourceKey}").ToHashSet();
         _review = (await db.ReviewItems.AsNoTracking().ToListAsync()).Where(r => (r.Sources ?? "").Split(',').Any(refs.Contains)).ToList();
+
+        if (iid is not null)
+        {
+            _states = await db.IntuneDevicePolicyStates.AsNoTracking().Where(s => s.IntuneDeviceId == iid).ToListAsync();
+            var names = _states.Select(s => s.PolicyName).Distinct().ToList();
+            _catalog = (await db.IntunePolicies.AsNoTracking().Where(p => names.Contains(p.Name)).ToListAsync())
+                .GroupBy(p => (p.Kind, p.Name)).ToDictionary(g => g.Key, g => g.First());
+        }
+
+        if (Key("mam") is { } mamKey)
+        {
+            var regs = db.MamRegistrations.AsNoTracking();
+            if (mamKey.Contains('|'))
+            {
+                var parts = mamKey.Split('|');
+                _mam = await regs.Where(r => r.UserId == parts[0] && r.DeviceType == parts[1]).ToListAsync();
+            }
+            else
+            {
+                var tag = mamKey.StartsWith("tag:", StringComparison.Ordinal) ? mamKey[4..] : mamKey;
+                _mam = await regs.Where(r => r.DeviceTag == tag || r.DeviceName == tag).ToListAsync();
+            }
+        }
+
+        _fetch = await db.InventoryFetches.AsNoTracking().FirstOrDefaultAsync(f => f.AssetId == Id);
+        _software = await db.InstalledSoftware.AsNoTracking().Where(s => s.AssetId == Id).OrderBy(s => s.Name).ToListAsync();
+        _shownSoftware = string.IsNullOrWhiteSpace(Sw)
+            ? _software.Take(200).ToList()
+            : _software.Where(s => s.Name.Contains(Sw, StringComparison.OrdinalIgnoreCase) || (s.Publisher ?? "").Contains(Sw, StringComparison.OrdinalIgnoreCase)).Take(200).ToList();
     }
 
-    private static IEnumerable<(string, DateTimeOffset?)> Timeline(Asset a) => new (string, DateTimeOffset?)[]
+    private record Report(string Source, string Event, DateTimeOffset? At);
+
+    private IEnumerable<Report> Reports()
     {
-        ("SCCM · última atividade do cliente", a.SccmLastSeenAt), ("Intune · última sincronização", a.IntuneLastSyncAt),
-        ("Entra ID · último login", a.EntraLastSignInAt), ("Active Directory · último logon", a.AdLastLogonAt),
-    }.Where(t => t.Item2 is not null).OrderByDescending(t => t.Item2);
+        var a = _view!.Asset;
+        if (a.InSccm)
+        {
+            yield return new("SCCM", "Atividade do cliente", a.SccmLastSeenAt);
+            yield return new("SCCM", "Última solicitação de política", a.SccmLastPolicyAt);
+            yield return new("SCCM", "Inventário de hardware", a.SccmLastHwScanAt);
+            yield return new("SCCM", "Inventário de software", _sccm?.LastSwScanAt);
+            yield return new("SCCM", "Heartbeat (DDR)", _sccm?.LastDdrAt);
+        }
+
+        if (a.InIntune) yield return new("Intune", "Última sincronização", a.IntuneLastSyncAt);
+        if (a.InEntra) yield return new("Entra ID", "Último login", a.EntraLastSignInAt);
+        if (a.InAd) yield return new("Active Directory", "Último logon", a.AdLastLogonAt);
+        if (a.HasMam) yield return new("Intune MAM", "Última sincronização de app", a.MamLastSyncAt);
+    }
+
+    private static string StatePill(string state) => state switch { "compliant" or "remediated" or "succeeded" => "ok", "nonCompliant" or "error" or "conflict" or "failed" => "b", "pending" => "w", _ => "m" };
+
+    private static string StateLabel(string state) => state switch
+    {
+        "compliant" => "Conforme", "remediated" => "Remediado", "succeeded" => "Aplicado", "nonCompliant" => "Não conforme", "error" => "Erro", "conflict" => "Conflito",
+        "pending" => "Pendente", "notApplicable" => "Não se aplica", "notAssigned" => "Sem atribuição", "failed" => "Falhou", _ => state,
+    };
 
     private static string ChannelLabel(string c) => c switch { "Mdm" => "MDM", "TenantAttach" => "Tenant attach (não é MDM)", "SecurityManagement" => "Defender (não é MDM)", _ => "Outro" };
     private static string TrustLabel(string? t) => t switch { "ServerAd" => "Híbrido", "AzureAd" => "Ingressado", "Workplace" => "Registrado", _ => t ?? "—" };

@@ -94,10 +94,13 @@ public class HealthModelTests
     [Fact]
     public void RulesThatNeedUncollectedDataAreListedAsUnavailable()
     {
-        Assert.All(new[] { "byodnoprot", "rooted", "nobitlocker", "patch", "cleval", "nopolicy", "oslow", "userdis" },
-            id => Assert.False(HealthModel.RuleOf(id).Available));
-        Assert.All(new[] { "noclient", "nomdm", "eol", "nomgr", "noncomp", "stalecomm", "review", "stale" },
-            id => Assert.True(HealthModel.RuleOf(id).Available));
+        var minimal = new SourceAvailability(true, true, true, true);
+        Assert.All(new[] { "byodnoprot", "nopolicy", "cfgfail", "userdis" }, id => Assert.False(HealthModel.RuleOf(id).IsAvailable(minimal)));
+        Assert.All(new[] { "patch", "cleval", "oslow" }, id => Assert.False(HealthModel.RuleOf(id).IsAvailable(SourceAvailability.All)));
+        Assert.All(new[] { "noclient", "nomdm", "eol", "nomgr", "noncomp", "stalecomm", "review", "stale", "rooted", "nobitlocker" },
+            id => Assert.True(HealthModel.RuleOf(id).IsAvailable(minimal)));
+        Assert.All(new[] { "byodnoprot", "nopolicy", "cfgfail", "userdis" }, id => Assert.True(HealthModel.RuleOf(id).IsAvailable(SourceAvailability.All)));
+        Assert.Contains("MAM", HealthModel.RuleOf("byodnoprot").WhyUnavailable(minimal));
     }
 
     [Fact]
@@ -120,7 +123,9 @@ public class HealthModelTests
         var snapshot = new InventorySnapshot([AssetView.From(Win(), All)], [], [], All, DateTimeOffset.UtcNow);
         var highlights = snapshot.Overview().Highlights;
         Assert.Equal(KpiState.NotEnabled, highlights.Single(k => k.Key == "patch").State);
-        Assert.Null(highlights.Single(k => k.Key == "byod").Percent);
+        var withoutMam = new InventorySnapshot([AssetView.From(Win(), All)], [], [], new SourceAvailability(true, true, true, true), DateTimeOffset.UtcNow).Overview().Highlights;
+        Assert.Equal(KpiState.NotEnabled, withoutMam.Single(k => k.Key == "byod").State);
+        Assert.Null(withoutMam.Single(k => k.Key == "byod").Percent);
         Assert.Equal(KpiState.Available, highlights.Single(k => k.Key == "gestao").State);
     }
 

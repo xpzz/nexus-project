@@ -1,11 +1,11 @@
 @page "/byod"
-@rendermode InteractiveServer
 @inject InventorySnapshotService Inventory
+@inject INexusDbFactory DbFactory
 
 <PageTitle>BYOD · Azul Nexus</PageTitle>
 
 <div class="ph">
-    <div><h1>BYOD</h1><p>Celulares e computadores pessoais com acesso a dados corporativos, separados dos corporativos e avaliados por MDM, MAM ou os dois.</p></div>
+    <div><h1>BYOD</h1><p>Celulares e computadores pessoais com acesso a dados corporativos, separados dos corporativos e avaliados por MDM, por proteção de aplicativos (MAM) ou pelos dois.</p></div>
     <a class="button" href="@Fmt.Inv(grupo: "byod")">Abrir no inventário</a>
 </div>
 
@@ -17,65 +17,99 @@
 
 @if (_snapshot is not null)
 {
+    var src = _snapshot.Sources;
     var active = _views.Where(v => v.Asset.IsActive).ToList();
-    var mdm = active.Count(v => v.Asset.IntuneChannel == "Mdm");
-    <div class="note">A proteção por MAM (proteção de aplicativos), PIN, criptografia e root ou jailbreak ainda não são coletados. Por isso "BYOD protegido" fica aguardando coleta e nenhum aparelho é acusado de acesso sem proteção por falta de dado.</div>
+    var both = active.Count(v => v.Asset.IntuneChannel == "Mdm" && v.Asset.HasMam);
+    var mdmOnly = active.Count(v => v.Asset.IntuneChannel == "Mdm" && !v.Asset.HasMam);
+    var mamOnly = active.Count(v => v.Asset.IntuneChannel != "Mdm" && v.Asset.HasMam);
+    var none = active.Count - both - mdmOnly - mamOnly;
+    var mdm = both + mdmOnly;
+    var mam = both + mamOnly;
+    var mamReady = src.Intune && src.Mam;
+    var encryptable = active.Where(v => v.Asset.IsEncrypted is not null).ToList();
+    var integrity = active.Where(v => v.Asset.JailBroken is not null).ToList();
+
+    @if (!src.Mam)
+    {
+        <div class="note">A proteção de aplicativos (MAM) ainda não foi coletada: o job <b>intune.mam</b> roda a cada 2 horas. Até lá, nenhum aparelho é acusado de acesso sem proteção.</div>
+    }
+
     <div class="grid g3">
         <KpiCardView Card="@(new KpiCard("total", "Aparelhos pessoais", KpiState.Available, _views.Count, _views.Count, null, false, $"{active.Count} ativos", Fmt.Inv(grupo: "byod")))" />
-        <KpiCardView Card="@(new KpiCard("protegido", "Proteção comprovada", KpiState.NotEnabled, null, null, 90, false, "Depende da coleta de MAM (proteção de aplicativos)"))" />
-        <KpiCardView Card="@(new KpiCard("mdm", "Com MDM", _snapshot.Sources.Intune ? KpiState.Available : KpiState.NotEnabled, mdm, active.Count, null, false, "inscritos no Intune"))" />
-        <KpiCardView Card="@(new KpiCard("mam", "MDM + MAM e só MAM", KpiState.NotEnabled, null, null, null, false, "Depende da coleta de MAM"))" />
-        <KpiCardView Card="@(new KpiCard("sem", "Sem MDM", KpiState.Available, active.Count - mdm, active.Count, null, true, "proteção por MAM ainda não verificável", Fmt.Inv(grupo: "byod", gestao: Management.None)))" />
-        <KpiCardView Card="@(new KpiCard("root", "Root ou jailbreak", KpiState.NotEnabled, null, null, null, true, "Sinal de integridade ainda não é coletado"))" />
+        <KpiCardView Card="@(new KpiCard("protegido", "Proteção comprovada", mamReady ? KpiState.Available : KpiState.NotEnabled, mdm + mamOnly, active.Count, 90, false, "BYOD ativos com MDM ou MAM", null))" />
+        <KpiCardView Card="@(new KpiCard("ambos", "MDM + MAM", mamReady ? KpiState.Available : KpiState.NotEnabled, both, active.Count, null, false, "aparelho inscrito e apps protegidos", Fmt.Inv(grupo: "byod", gestao: Management.OnlyIntune)))" />
+        <KpiCardView Card="@(new KpiCard("mamonly", "Só MAM", mamReady ? KpiState.Available : KpiState.NotEnabled, mamOnly, active.Count, null, false, "apps protegidos, sem MDM", Fmt.Inv(grupo: "byod", gestao: Management.OnlyMam)))" />
+        <KpiCardView Card="@(new KpiCard("sem", "Sem proteção comprovada", mamReady ? KpiState.Available : KpiState.NotEnabled, none, active.Count, null, true, "sem MDM e sem MAM", Fmt.Inv(pendencia: "byodnoprot")))" />
+        <KpiCardView Card="@(new KpiCard("root", "Root ou jailbreak", src.Intune && integrity.Count > 0 ? KpiState.Available : KpiState.NotEnabled, integrity.Count(v => v.Asset.JailBroken == true), integrity.Count, null, true, "sinal do Intune em aparelhos inscritos", Fmt.Inv(pendencia: "rooted")))" />
     </div>
 
     <div class="grid g2">
         <section class="card">
-            <h3>Matriz de proteção</h3><p class="sub">Plataforma × modo de proteção. Só MDM é comprovável hoje.</p>
-            <div class="tw"><table style="min-width:520px"><thead><tr><th>Plataforma</th><th>Total</th><th>Com MDM</th><th>Sem MDM comprovado</th><th>% com MDM</th></tr></thead><tbody>
-                @foreach (var p in Platforms())
+            <h3>Matriz de proteção</h3><p class="sub">Plataforma × modo de proteção, só dispositivos ativos.</p>
+            <div class="tw"><table style="min-width:620px"><thead><tr><th>Plataforma</th><th>Total</th><th>MDM + MAM</th><th>Só MDM</th><th>Só MAM</th><th>Nenhum</th><th>% protegido</th></tr></thead><tbody>
+                @foreach (var p in Platforms(active))
                 {
-                    <tr><td class="nm">@p.Label</td><td class="num">@p.Total</td><td class="num"><a href="@Fmt.Inv(grupo: "byod", gestao: Management.OnlyIntune, q: p.Query)">@p.WithMdm</a></td><td class="num">@(p.Total - p.WithMdm)</td><td class="score">@(p.Total == 0 ? "—" : Fmt.Pct(Math.Round(100.0 * p.WithMdm / p.Total, 1)))</td></tr>
+                    <tr><td class="nm">@p.Label</td><td class="num">@p.Total</td><td class="num">@p.Both</td><td class="num">@p.MdmOnly</td><td class="num">@p.MamOnly</td>
+                        <td class="num">@if (p.None > 0) {<span class="pill b">@p.None</span>} else {<span>0</span>}</td>
+                        <td class="score">@(p.Total == 0 ? "—" : Fmt.Pct(Math.Round(100.0 * (p.Total - p.None) / p.Total, 1)))</td></tr>
                 }
             </tbody></table></div>
         </section>
         <section class="card">
             <h3>Controles BYOD</h3><p class="sub">Meta de 90% por controle. Cada um mostra a evidência usada.</p>
-            <div class="ctrl"><div><b>Enrollment MDM</b><small>Dispositivo inscrito no Intune</small></div><div class="meter"><i class="@(Pct(mdm, active.Count) >= 90 ? "ok" : Pct(mdm, active.Count) >= 70 ? "warn" : "bad")" style="width:@Pct(mdm, active.Count).ToString("0", System.Globalization.CultureInfo.InvariantCulture)%"></i><u style="left:90%"></u></div><b class="v">@Pct(mdm, active.Count).ToString("0")%</b></div>
-            @foreach (var c in new[] { ("Proteção de aplicativos (MAM)", "Política de proteção aplicada"), ("MDM ou MAM", "Alguma proteção comprovada"), ("PIN ou biometria", "Bloqueio de tela exigido"), ("Criptografia", "Armazenamento criptografado"), ("Versão mínima do sistema", "Igual ou acima da exigida"), ("Sem root ou jailbreak", "Sinal válido de integridade") })
-            {
-                <div class="ctrl"><div><b>@c.Item1</b><small>@c.Item2</small></div><div class="meter"></div><b class="v"><span class="pill m">Aguardando</span></b></div>
-            }
+            @Control("Enrollment MDM", "Dispositivo inscrito no Intune", mdm, active.Count, src.Intune)
+            @Control("Proteção de aplicativos (MAM)", "Política de proteção aplicada aos apps", mam, active.Count, mamReady)
+            @Control("MDM ou MAM", "Alguma proteção comprovada", mdm + mamOnly, active.Count, mamReady)
+            @Control("Criptografia", "Armazenamento criptografado (aparelhos inscritos)", encryptable.Count(v => v.Asset.IsEncrypted == true), encryptable.Count, encryptable.Count > 0)
+            @Control("Sem root ou jailbreak", "Sinal de integridade do Intune", integrity.Count(v => v.Asset.JailBroken == false), integrity.Count, integrity.Count > 0)
+            <div class="ctrl"><div><b>PIN ou biometria</b><small>Bloqueio de tela exigido</small></div><div class="meter"></div><b class="v"><span class="pill m">Aguardando</span></b></div>
+            <div class="ctrl"><div><b>Versão mínima do sistema</b><small>Igual ou acima da exigida</small></div><div class="meter"></div><b class="v"><span class="pill m">Aguardando</span></b></div>
         </section>
     </div>
 
     <div class="grid g2">
         <section class="card">
-            <h3>Ações recomendadas</h3><p class="sub">Derivadas das regras de pendência.</p>
+            <div class="ttl"><h3>Políticas de proteção de aplicativos</h3><a href="/intune?aba=mam">Ver todas</a></div>
+            <p class="sub">Registros de apps protegidos por política.</p>
             <div class="list">
-                @foreach (var r in HealthModel.Rules.Where(r => r.Id is "byodnoprot" or "rooted" or "oslow"))
+                @foreach (var p in _mamPolicies)
                 {
-                    <div class="row"><div class="t"><b>@r.Title</b><span>@r.Action · @r.Owner</span></div><span class="pill m">@(r.Available ? "ativa" : "Aguardando coleta")</span></div>
+                    <div class="row"><div class="t"><b><a href="/intune/politica?tipo=@p.Kind&nome=@Uri.EscapeDataString(p.Name)" style="color:inherit">@p.Name</a></b><span>@(p.Platform) · @(p.Assignments ?? "sem atribuição")</span></div><strong>@(_mamCounts.GetValueOrDefault(p.Name))</strong></div>
                 }
+                @if (_mamPolicies.Count == 0) { <div class="row"><span class="pill m">Nenhuma política de MAM coletada</span></div> }
             </div>
         </section>
         <section class="card">
-            <h3>Privacidade (LGPD)</h3><p class="sub">Em aparelho pessoal o Nexus guarda só o necessário aos indicadores.</p>
+            <h3>Ações recomendadas</h3><p class="sub">Derivadas das regras de pendência.</p>
             <div class="list">
-                <div class="row"><b style="width:110px">Coletado</b><span style="flex:1;color:var(--ink2)">modelo, sistema, versão, conformidade, última sincronização, modo de proteção</span></div>
-                <div class="row"><b style="width:110px">Não coletado</b><span style="flex:1;color:var(--ink2)">telefone, IMEI, localização, apps pessoais, conteúdo</span></div>
-                <div class="row"><b style="width:110px">Mascarado</b><span style="flex:1;color:var(--ink2)">nome do usuário para os perfis Gestão e Operação (perfis ainda não implementados)</span></div>
+                @foreach (var r in HealthModel.Rules.Where(r => r.Id is "byodnoprot" or "rooted" or "oslow" or "nobitlocker"))
+                {
+                    var available = r.IsAvailable(src);
+                    <div class="row"><div class="t"><b>@r.Title</b><span>@r.Action · @r.Owner</span></div>
+                        @if (available) {<a class="button" href="@Fmt.Inv(pendencia: r.Id)">@_snapshot.Issues.Rule(r.Id) dispositivos</a>} else {<span class="pill m">Aguardando coleta</span>}</div>
+                }
             </div>
         </section>
     </div>
+
+    <section class="card">
+        <h3>Privacidade (LGPD)</h3><p class="sub">Em aparelho pessoal o Nexus guarda só o necessário aos indicadores.</p>
+        <div class="list">
+            <div class="row"><b style="width:110px">Coletado</b><span style="flex:1;color:var(--ink2)">modelo, sistema, versão, conformidade, última sincronização, modo de proteção, apps protegidos e políticas de MAM</span></div>
+            <div class="row"><b style="width:110px">Não coletado</b><span style="flex:1;color:var(--ink2)">telefone, IMEI, localização, apps pessoais, conteúdo</span></div>
+            <div class="row"><b style="width:110px">Mascarado</b><span style="flex:1;color:var(--ink2)">nome do usuário para os perfis Gestão e Operação (perfis ainda não implementados)</span></div>
+        </div>
+    </section>
 }
 
 @code {
     [SupplyParameterFromQuery] public string? Aba { get; set; }
     private InventorySnapshot? _snapshot;
     private List<AssetView> _views = [];
+    private List<IntunePolicyRecord> _mamPolicies = [];
+    private Dictionary<string, int> _mamCounts = [];
 
-    protected override async Task OnParametersSetAsync()
+    protected override async Task OnInitializedAsync()
     {
         _snapshot = await Inventory.GetAsync();
         _views = _snapshot.Views.Where(v => Aba switch
@@ -84,12 +118,37 @@
             "computadores" => v.Group == Groups.ByodComputers,
             _ => v.Group is Groups.ByodMobile or Groups.ByodComputers,
         }).ToList();
+
+        await using var db = DbFactory.Create();
+        _mamPolicies = await db.IntunePolicies.AsNoTracking().Where(p => p.Kind.StartsWith("mam-")).OrderBy(p => p.Name).ToListAsync();
+        var applied = await db.MamRegistrations.AsNoTracking().Select(r => r.AppliedPolicies).ToListAsync();
+        _mamCounts = _mamPolicies.ToDictionary(p => p.Name, p => applied.Count(a => a != null && a.Contains(p.Name)));
     }
 
-    private static double Pct(int n, int d) => d == 0 ? 0 : Math.Round(100.0 * n / d, 1);
+    private record Plat(string Label, int Total, int Both, int MdmOnly, int MamOnly, int None);
 
-    private record Plat(string Label, string Query, int Total, int WithMdm);
+    private static List<Plat> Platforms(List<AssetView> active) => new[] { ("iOS", "iOS"), ("Android", "Android"), ("Windows", "WindowsClient"), ("macOS", "macOS") }.Select(p =>
+    {
+        var s = active.Where(v => v.Asset.Platform == p.Item2).ToList();
+        var both = s.Count(v => v.Asset.IntuneChannel == "Mdm" && v.Asset.HasMam);
+        var mdm = s.Count(v => v.Asset.IntuneChannel == "Mdm" && !v.Asset.HasMam);
+        var mam = s.Count(v => v.Asset.IntuneChannel != "Mdm" && v.Asset.HasMam);
+        return new Plat(p.Item1, s.Count, both, mdm, mam, s.Count - both - mdm - mam);
+    }).ToList();
 
-    private List<Plat> Platforms() => new[] { ("iOS", "iOS", "iOS"), ("Android", "Android", "Android"), ("Windows", "WindowsClient", "Windows"), ("macOS", "macOS", "mac") }
-        .Select(p => { var s = _views.Where(v => v.Asset.Platform == p.Item2).ToList(); return new Plat(p.Item1, p.Item3, s.Count, s.Count(v => v.Asset.IntuneChannel == "Mdm")); }).ToList();
+    private RenderFragment Control(string title, string detail, int n, int total, bool enabled) => __builder =>
+    {
+        var pct = total == 0 ? 0 : Math.Round(100.0 * n / total, 1);
+        <div class="ctrl"><div><b>@title</b><small>@detail</small></div>
+            @if (enabled && total > 0)
+            {
+                <div class="meter"><i class="@(pct >= 90 ? "ok" : pct >= 70 ? "warn" : "bad")" style="width:@(pct.ToString("0", System.Globalization.CultureInfo.InvariantCulture))%"></i><u style="left:90%"></u></div>
+                <b class="v">@pct.ToString("0")%</b>
+            }
+            else
+            {
+                <div class="meter"></div><b class="v"><span class="pill m">Aguardando</span></b>
+            }
+        </div>
+    };
 }

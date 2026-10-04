@@ -25,17 +25,86 @@ public sealed record OverviewReport(
     IReadOnlyList<KpiCard> Highlights, IReadOnlyList<KpiCard> Kpis, IReadOnlyList<GroupCard> Groups,
     IReadOnlyDictionary<string, int> States, IReadOnlyList<RuleCount> TopRules, int Total, int Active);
 
+public sealed record FailingPolicy(string Kind, string Name, int Failed, int Total);
+
+/// <summary>Intune in numbers, aggregated in the database: policy catalog, device states and MAM registrations.</summary>
+public sealed record IntuneSummary(IReadOnlyDictionary<string, int> PoliciesByKind, int PolicyStates, int FailedStates, int MamRegistrations, int MamUsers, IReadOnlyList<FailingPolicy> TopFailing)
+{
+    public static IntuneSummary Empty { get; } = new(new Dictionary<string, int>(), 0, 0, 0, 0, []);
+
+    public int Policies => PoliciesByKind.Values.Sum();
+}
+
 public sealed record JobSummary(string Name, string? Status, DateTimeOffset? LastSuccessAt, DateTimeOffset? NextRunAt, int? Records, string? Error);
 
-public sealed record InventorySnapshot(IReadOnlyList<AssetView> Views, IReadOnlyList<ReviewItem> Review, IReadOnlyList<JobSummary> Jobs, SourceAvailability Sources, DateTimeOffset LoadedAt)
+/// <summary>
+/// Immutable result of one reconciliation read. Everything the screens ask repeatedly (counts per group and rule, lookups, the overview)
+/// is computed once per snapshot, so a page render never walks the whole inventory more than once.
+/// </summary>
+public sealed class InventorySnapshot(IReadOnlyList<AssetView> views, IReadOnlyList<ReviewItem> review, IReadOnlyList<JobSummary> jobs, SourceAvailability sources, DateTimeOffset loadedAt, IntuneSummary? intune = null)
 {
+    private readonly Lazy<Dictionary<Guid, AssetView>> _byId = new(() => views.ToDictionary(v => v.Asset.Id));
+    private readonly Lazy<IssueIndex> _issues = new(() => IssueIndex.Build(views));
+
+    public IReadOnlyList<AssetView> Views { get; } = views;
+    public IReadOnlyList<ReviewItem> Review { get; } = review;
+    public IReadOnlyList<JobSummary> Jobs { get; } = jobs;
+    public SourceAvailability Sources { get; } = sources;
+    public DateTimeOffset LoadedAt { get; } = loadedAt;
+    public IntuneSummary Intune { get; } = intune ?? IntuneSummary.Empty;
+
     public static InventorySnapshot Empty { get; } = new([], [], [], new SourceAvailability(false, false, false, false), DateTimeOffset.MinValue);
 
     public bool HasData => Views.Count > 0;
 
-    public AssetView? Find(Guid id) => Views.FirstOrDefault(v => v.Asset.Id == id);
+    public IssueIndex Issues => _issues.Value;
 
-    public OverviewReport Overview() => OverviewBuilder.Build(this);
+    public AssetView? Find(Guid id) => _byId.Value.GetValueOrDefault(id);
+
+    public OverviewReport Overview() => _overviewCache ??= OverviewBuilder.Build(this);
+
+    private OverviewReport? _overviewCache;
+}
+
+/// <summary>Counts per group, per rule and per rule × group, from a single pass.</summary>
+public sealed class IssueIndex
+{
+    public IReadOnlyDictionary<string, int> Groups { get; private init; } = new Dictionary<string, int>();
+    public IReadOnlyDictionary<string, int> Rules { get; private init; } = new Dictionary<string, int>();
+    public IReadOnlyDictionary<(string Group, string Rule), int> RulesByGroup { get; private init; } = new Dictionary<(string, string), int>();
+    public int WithPending { get; private init; }
+
+    public int Group(string group) => Groups.GetValueOrDefault(group);
+
+    public int Rule(string rule) => Rules.GetValueOrDefault(rule);
+
+    public int RuleInGroup(string group, string rule) => RulesByGroup.GetValueOrDefault((group, rule));
+
+    public static IssueIndex Build(IReadOnlyList<AssetView> views)
+    {
+        var groups = new Dictionary<string, int>();
+        var rules = new Dictionary<string, int>();
+        var byGroup = new Dictionary<(string, string), int>();
+        var pending = 0;
+        foreach (var v in views)
+        {
+            groups[v.Group] = groups.GetValueOrDefault(v.Group) + 1;
+            var any = false;
+            foreach (var issue in v.Issues)
+            {
+                rules[issue] = rules.GetValueOrDefault(issue) + 1;
+                byGroup[(v.Group, issue)] = byGroup.GetValueOrDefault((v.Group, issue)) + 1;
+                any |= issue != "stale";
+            }
+
+            if (any)
+            {
+                pending++;
+            }
+        }
+
+        return new IssueIndex { Groups = groups, Rules = rules, RulesByGroup = byGroup, WithPending = pending };
+    }
 }
 
 public static class OverviewBuilder
@@ -63,14 +132,17 @@ public static class OverviewBuilder
         var mdm = active.Where(v => v.Asset.IntuneChannel == "Mdm").ToList();
         var byod = active.Where(v => v.Group is Groups.ByodMobile or Groups.ByodComputers).ToList();
         var anyMgmt = src.Sccm || src.Intune;
+        var winEncryptable = active.Where(v => v is { Group: Groups.Computers } && v.Asset is { Platform: "WindowsClient", IntuneChannel: "Mdm", IsEncrypted: not null }).ToList();
 
         var highlights = new List<KpiCard>
         {
             Make("gestao", "Cobertura de gestão", anyMgmt, corporate.Count(v => v.Management != Management.None), corporate.Count, 98, "corporativos ativos com alguma gestão", "SCCM ou Intune ainda sem coleta"),
             Make("conformidade", "Conformidade Intune", src.Intune, mdm.Count(v => string.Equals(v.Asset.ComplianceState, "compliant", StringComparison.OrdinalIgnoreCase)), mdm.Count, 95, "dispositivos MDM ativos conformes", "Intune ainda sem coleta"),
             Make("patch", "Patch em até 30 dias", false, 0, 0, 90, "", "Estado de atualizações ainda não é coletado"),
-            Make("cripto", "Criptografia e EDR", false, 0, 0, 98, "", "BitLocker e Defender ainda não são coletados"),
-            Make("byod", "BYOD protegido", false, 0, 0, 90, "", "Proteção de aplicativos (MAM) ainda não é coletada"),
+            Make("cripto", "Criptografia (BitLocker)", src.Intune && winEncryptable.Count > 0, winEncryptable.Count(v => v.Asset.IsEncrypted == true), winEncryptable.Count, 98,
+                "Windows MDM ativos com BitLocker ligado (EDR ainda não é coletado)", "Intune ainda sem estado de criptografia"),
+            Make("byod", "BYOD protegido", src.Intune && src.Mam, byod.Count(v => v.Asset.IntuneChannel == "Mdm" || v.Asset.HasMam), byod.Count, 90,
+                "BYOD ativos com MDM ou proteção de aplicativos (MAM)", "Proteção de aplicativos (MAM) ainda sem coleta"),
         };
 
         var cogestao = Make("cogestao", "Co-gestão Windows", src.Sccm && src.Intune, winClients.Count(v => v.Management == Management.CoManaged), winClients.Count, 95, "Windows ativos com SCCM e Intune MDM");
@@ -82,6 +154,7 @@ public static class OverviewBuilder
             healthy,
             new("semgestao", "Corporativos sem gestão", anyMgmt ? KpiState.Available : KpiState.NotEnabled, views.Count(v => v.Issues.Contains("nomgr")), views.Count, null, true, "no AD ou Entra, fora do SCCM e do Intune", "/inventario?pendencia=nomgr"),
             new("win10", "Windows 10 restantes", KpiState.Available, views.Count(v => v.Issues.Contains("eol")), views.Count, null, true, "fora de suporte desde out/2025", "/inventario?pendencia=eol"),
+            new("politicas", "Perfis ou políticas com falha", src.Policies ? KpiState.Available : KpiState.NotEnabled, views.Count(v => v.Asset.CompliancePoliciesFailed > 0 || v.Asset.ConfigProfilesFailed > 0), views.Count(v => v.Asset.PoliciesCollected), null, true, "dispositivos com política ou perfil em erro, conflito ou não conforme", "/inventario?pendencia=cfgfail"),
             new("altas", "Pendências críticas e altas", KpiState.Available, views.Count(v => v.State == States.Risk), views.Count, null, true, "dispositivos em risco", "/inventario?estado=Risco"),
         };
 
@@ -99,8 +172,9 @@ public static class OverviewBuilder
                 Management.All.ToDictionary(m => m, m => all.Count(v => v.Management == m)), States.All.ToDictionary(x => x, x => all.Count(v => v.State == x)));
         }).ToList();
 
-        var top = HealthModel.Rules.Where(r => r.Available && r.Id != "stale")
-            .Select(r => new RuleCount(r, views.Count(v => v.Issues.Contains(r.Id)), Groups.All.ToDictionary(g => g, g => views.Count(v => v.Group == g && v.Issues.Contains(r.Id)))))
+        var index = s.Issues;
+        var top = HealthModel.Rules.Where(r => r.IsAvailable(s.Sources) && r.Id != "stale")
+            .Select(r => new RuleCount(r, index.Rule(r.Id), Groups.All.ToDictionary(g => g, g => index.RuleInGroup(g, r.Id))))
             .Where(r => r.Devices > 0).OrderBy(r => r.Rule.Priority).ThenByDescending(r => r.Devices).Take(6).ToList();
 
         return new OverviewReport(active.Count == 0 ? null : Math.Round(active.Average(v => v.Score), 0), headline, below, atRiskPct, highlights, kpis, groups, states, top, views.Count, active.Count);
@@ -117,37 +191,69 @@ public static class InventorySnapshotLoader
         var review = await db.ReviewItems.AsNoTracking().OrderBy(r => r.Id).ToListAsync(cancellationToken);
         var jobs = (await db.Jobs.AsNoTracking().ToListAsync(cancellationToken))
             .Select(j => new JobSummary(j.Name, j.LastStatus, j.LastSuccessAt, j.NextRunAt, j.LastRecordCount, j.LastError)).OrderBy(j => j.Name).ToList();
-        return new InventorySnapshot(assets.Select(a => AssetView.From(a, sources)).ToList(), review, jobs, sources, clock.GetUtcNow());
+        var kinds = await db.IntunePolicies.AsNoTracking().GroupBy(p => p.Kind).Select(g => new { g.Key, Count = g.Count() }).ToListAsync(cancellationToken);
+        var states = await db.IntuneDevicePolicyStates.AsNoTracking().GroupBy(p => new { p.Kind, p.PolicyName, p.State }).Select(g => new { g.Key.Kind, g.Key.PolicyName, g.Key.State, Count = g.Count() }).ToListAsync(cancellationToken);
+        var failing = states.GroupBy(x => (x.Kind, x.PolicyName))
+            .Select(g => new FailingPolicy(g.Key.Kind, g.Key.PolicyName, g.Where(x => Reconciler.IsFailed(x.State)).Sum(x => x.Count), g.Sum(x => x.Count)))
+            .Where(f => f.Failed > 0).OrderByDescending(f => f.Failed).Take(5).ToList();
+        var mamCount = await db.MamRegistrations.CountAsync(cancellationToken);
+        var mamUsers = await db.MamRegistrations.Where(r => r.UserId != null).Select(r => r.UserId).Distinct().CountAsync(cancellationToken);
+        var intune = new IntuneSummary(kinds.ToDictionary(k => k.Key, k => k.Count), states.Sum(x => x.Count), states.Where(x => Reconciler.IsFailed(x.State)).Sum(x => x.Count), mamCount, mamUsers, failing);
+        return new InventorySnapshot(assets.Select(a => AssetView.From(a, sources)).ToList(), review, jobs, sources, clock.GetUtcNow(), intune);
     }
 }
 
-/// <summary>Caches the snapshot for a short time so every screen shares one query; collections run every 15 to 240 minutes.</summary>
+/// <summary>
+/// Serves the last snapshot immediately and refreshes it in the background once it is older than a minute (stale-while-revalidate),
+/// so no page waits for the database after the first load. Collections run every 15 to 240 minutes, so a minute of staleness is invisible.
+/// </summary>
 public sealed class InventorySnapshotService(INexusDbFactory dbFactory, TimeProvider clock)
 {
-    private static readonly TimeSpan Ttl = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan Ttl = TimeSpan.FromSeconds(60);
     private readonly SemaphoreSlim _lock = new(1, 1);
-    private InventorySnapshot _snapshot = InventorySnapshot.Empty;
+    private volatile InventorySnapshot _snapshot = InventorySnapshot.Empty;
+    private int _refreshing;
 
     public async Task<InventorySnapshot> GetAsync(CancellationToken cancellationToken = default)
     {
-        if (clock.GetUtcNow() - _snapshot.LoadedAt < Ttl)
+        var current = _snapshot;
+        if (current.LoadedAt == DateTimeOffset.MinValue)
         {
-            return _snapshot;
-        }
-
-        await _lock.WaitAsync(cancellationToken);
-        try
-        {
-            if (clock.GetUtcNow() - _snapshot.LoadedAt >= Ttl)
+            await _lock.WaitAsync(cancellationToken);
+            try
             {
-                _snapshot = await InventorySnapshotLoader.LoadAsync(dbFactory, clock, cancellationToken);
+                if (_snapshot.LoadedAt == DateTimeOffset.MinValue)
+                {
+                    _snapshot = await InventorySnapshotLoader.LoadAsync(dbFactory, clock, cancellationToken);
+                }
+            }
+            finally
+            {
+                _lock.Release();
             }
 
             return _snapshot;
         }
-        finally
+
+        if (clock.GetUtcNow() - current.LoadedAt > Ttl && Interlocked.CompareExchange(ref _refreshing, 1, 0) == 0)
         {
-            _lock.Release();
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    _snapshot = await InventorySnapshotLoader.LoadAsync(dbFactory, clock, CancellationToken.None);
+                }
+                catch (Exception)
+                {
+                    // Keep serving the last good snapshot; the next request tries again.
+                }
+                finally
+                {
+                    Volatile.Write(ref _refreshing, 0);
+                }
+            });
         }
+
+        return current;
     }
 }

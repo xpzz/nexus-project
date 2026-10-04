@@ -1,0 +1,130 @@
+@page "/intune/politica"
+@inject InventorySnapshotService Inventory
+@inject INexusDbFactory DbFactory
+
+<PageTitle>@(Nome ?? "Política") · Azul Nexus</PageTitle>
+
+@if (_policy is null && _total == 0 && _regTotal == 0)
+{
+    <div class="ph"><div><h1>@(Nome ?? "Política")</h1><p>Esta política não tem dispositivos no inventário coletado.</p></div></div>
+    <a class="button" href="/intune">Voltar ao Intune</a>
+}
+else
+{
+    <div class="ph">
+        <div><a href="/intune?aba=@(PolicyKinds.IsMam(Tipo ?? "") ? "mam" : Tipo == "compliance" ? "conformidade" : "configuracao")" class="hint">← Intune</a><h1>@Nome</h1>
+            <p>@PolicyKinds.Title(Tipo ?? "") @(_policy?.Platform is { } pl ? "· " + pl : "") @(_policy?.Version is { } ver ? "· versão " + ver : "")</p></div>
+        @if (_policy?.LastModifiedAt is { } mod) { <span class="asof">Modificada em @mod.ToLocalTime().ToString("dd/MM/yyyy")</span> }
+    </div>
+
+    <section class="card">
+        <dl class="kv" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px 24px">
+            <div><dt>Atribuição</dt><dd style="text-align:left;font-weight:500;white-space:normal">@(_policy?.Assignments ?? "—")</dd></div>
+            <div><dt>Atribuída a todos</dt><dd style="text-align:left;font-weight:500">@(_policy?.AssignedToAll == true ? "sim" : "não")</dd></div>
+            <div><dt>Alvos de atribuição</dt><dd style="text-align:left;font-weight:500">@(_policy?.AssignmentCount ?? 0)</dd></div>
+        </dl>
+    </section>
+
+    @if (!PolicyKinds.IsMam(Tipo ?? ""))
+    {
+        <section class="card">
+            <h3>Estado nos dispositivos</h3><p class="sub">Cada fatia filtra a lista abaixo.</p>
+            <Bar Label="Estado da política" Segments="@(_distribution.Select(d => new Seg(StateLabel(d.Key), d.Value, StateSeg(d.Key), Self(d.Key))).ToList())" />
+        </section>
+
+        <div class="ttl"><h2>Dispositivos</h2><span class="asof">@Fmt.Number(_total) @(Estado is null ? "" : "em " + StateLabel(Estado)) · @(Estado is null ? "" : "")<a href="@Self(null)" style="display:@(Estado is null ? "none" : "inline")">limpar filtro</a></span></div>
+        <div class="tw"><table><thead><tr><th>Dispositivo</th><th>Estado na política</th><th>Usuário</th><th>Sistema</th><th>Gestão</th><th>Último Intune</th><th>Último SCCM</th></tr></thead><tbody>
+            @foreach (var row in _rows)
+            {
+                var dev = row.View;
+                <tr>
+                    <td class="nm">@if (dev is not null) {<a href="/dispositivo/@dev.Asset.Id#politicas">@dev.Asset.Name</a><small>@dev.Asset.Model</small>} else {<span>Dispositivo fora do inventário</span>}</td>
+                    <td><span class="pill @StatePill(row.State.State)">@StateLabel(row.State.State)</span></td>
+                    <td>@(dev?.Asset.PrimaryUser ?? "—")</td>
+                    <td>@(dev?.Asset.OperatingSystem ?? "—")</td>
+                    <td>@(dev?.Management ?? "—")</td>
+                    <td class="num">@Fmt.Ago(dev?.Asset.IntuneLastSyncAt, _now)</td>
+                    <td class="num">@Fmt.Ago(dev?.Asset.SccmLastSeenAt, _now)</td>
+                </tr>
+            }
+        </tbody></table></div>
+        <div class="pager">
+            <span>@(_total == 0 ? 0 : Pagina * 25 + 1)–@Math.Min(_total, Pagina * 25 + 25) de @Fmt.Number(_total)</span>
+            @if (Pagina <= 0) { <span class="button" style="opacity:.5">Anterior</span> } else { <a class="button" href="@Self(Estado, Pagina - 1)">Anterior</a> }
+            @if ((Pagina + 1) * 25 >= _total) { <span class="button" style="opacity:.5">Próxima</span> } else { <a class="button" href="@Self(Estado, Pagina + 1)">Próxima</a> }
+        </div>
+    }
+    else
+    {
+        <div class="ttl"><h2>Registros com esta política</h2><span class="asof">@Fmt.Number(_regTotal) registros</span></div>
+        <div class="tw"><table style="min-width:760px"><thead><tr><th>Usuário</th><th>Dispositivo</th><th>Aplicativo</th><th>Última sincronização</th><th>Alertas</th></tr></thead><tbody>
+            @foreach (var r in _regs)
+            {
+                <tr><td class="nm">@(r.UserId is { } uid && _users.TryGetValue(uid, out var u) ? u.UserPrincipalName : r.UserId)</td><td>@(r.DeviceName ?? "—")</td><td>@(r.AppIdentifier ?? "—")</td><td class="num">@Fmt.Ago(r.LastSyncAt, _now)</td><td>@if (!string.IsNullOrEmpty(r.FlaggedReasons)) {<span class="pill w">@r.FlaggedReasons</span>} else {<span class="pill ok">nenhum</span>}</td></tr>
+            }
+        </tbody></table></div>
+    }
+}
+
+@code {
+    [SupplyParameterFromQuery] public string? Tipo { get; set; }
+    [SupplyParameterFromQuery] public string? Nome { get; set; }
+    [SupplyParameterFromQuery] public string? Estado { get; set; }
+    [SupplyParameterFromQuery] public int Pagina { get; set; }
+
+    private DateTimeOffset _now;
+    private IntunePolicyRecord? _policy;
+    private Dictionary<string, int> _distribution = [];
+    private record Row(IntuneDevicePolicyState State, AssetView? View);
+    private List<Row> _rows = [];
+    private int _total;
+    private List<MamRegistrationRecord> _regs = [];
+    private Dictionary<string, EntraUserRecord> _users = [];
+    private int _regTotal;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var snapshot = await Inventory.GetAsync();
+        _now = snapshot.LoadedAt;
+        if (string.IsNullOrEmpty(Tipo) || string.IsNullOrEmpty(Nome))
+        {
+            return;
+        }
+
+        await using var db = DbFactory.Create();
+        _policy = await db.IntunePolicies.AsNoTracking().FirstOrDefaultAsync(p => p.Kind == Tipo && p.Name == Nome);
+        if (PolicyKinds.IsMam(Tipo))
+        {
+            var all = await db.MamRegistrations.AsNoTracking().Where(r => r.AppliedPolicies != null && r.AppliedPolicies.Contains(Nome)).OrderBy(r => r.UserId).ToListAsync();
+            _regTotal = all.Count;
+            _regs = all.Skip(Math.Max(0, Pagina) * 25).Take(25).ToList();
+            var ids = _regs.Where(r => r.UserId != null).Select(r => r.UserId!).Distinct().ToList();
+            _users = await db.EntraUsers.AsNoTracking().Where(u => ids.Contains(u.Id)).ToDictionaryAsync(u => u.Id);
+            return;
+        }
+
+        _distribution = await db.IntuneDevicePolicyStates.AsNoTracking().Where(s => s.Kind == Tipo && s.PolicyName == Nome)
+            .GroupBy(s => s.State).Select(g => new { g.Key, Count = g.Count() }).ToDictionaryAsync(x => x.Key, x => x.Count);
+        _distribution = _distribution.OrderBy(d => Reconciler.IsFailed(d.Key) ? 0 : d.Key == "compliant" ? 2 : 1).ToDictionary(d => d.Key, d => d.Value);
+        var query = db.IntuneDevicePolicyStates.AsNoTracking().Where(s => s.Kind == Tipo && s.PolicyName == Nome);
+        if (!string.IsNullOrEmpty(Estado)) query = query.Where(s => s.State == Estado);
+        _total = await query.CountAsync();
+        var page = await query.OrderBy(s => s.State).ThenBy(s => s.IntuneDeviceId).Skip(Math.Max(0, Pagina) * 25).Take(25).ToListAsync();
+        var deviceIds = page.Select(s => s.IntuneDeviceId).ToList();
+        var links = await db.AssetLinks.AsNoTracking().Where(l => l.Source == "intune" && deviceIds.Contains(l.SourceKey)).ToListAsync();
+        var byDevice = links.GroupBy(l => l.SourceKey).ToDictionary(g => g.Key, g => g.First().AssetId);
+        _rows = page.Select(s => new Row(s, byDevice.TryGetValue(s.IntuneDeviceId, out var asset) ? snapshot.Find(asset) : null)).ToList();
+    }
+
+    private string Self(string? estado, int pagina = 0) =>
+        $"/intune/politica?tipo={Uri.EscapeDataString(Tipo ?? "")}&nome={Uri.EscapeDataString(Nome ?? "")}" + (string.IsNullOrEmpty(estado) ? "" : "&estado=" + Uri.EscapeDataString(estado)) + (pagina > 0 ? "&pagina=" + pagina : "");
+
+    private static string StatePill(string state) => state switch { "compliant" or "remediated" or "succeeded" => "ok", "nonCompliant" or "error" or "conflict" or "failed" => "b", "pending" => "w", _ => "m" };
+    private static string StateSeg(string state) => state switch { "compliant" or "remediated" or "succeeded" => "s-ok", "nonCompliant" or "error" or "conflict" or "failed" => "s-bad", "pending" => "s-warn", _ => "c-mute" };
+
+    private static string StateLabel(string state) => state switch
+    {
+        "compliant" => "Conforme", "remediated" => "Remediado", "succeeded" => "Aplicado", "nonCompliant" => "Não conforme", "error" => "Erro", "conflict" => "Conflito",
+        "pending" => "Pendente", "notApplicable" => "Não se aplica", "notAssigned" => "Sem atribuição", "failed" => "Falhou", _ => state,
+    };
+}

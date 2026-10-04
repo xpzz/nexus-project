@@ -20,6 +20,8 @@ public class TSqlSyntaxTests
         yield return ["Nexus DB grants", DatabaseScripts.SqlServerGrants("AzulNexus", [account, @"IIS APPPOOL\AzulNexus"])];
         yield return ["SCCM read query (base)", SqlSccmReader.BaseQuery];
         yield return ["SCCM read query (extended)", SqlSccmReader.ExtendedQuery];
+        yield return ["SCCM read query (hardware)", SqlSccmReader.HardwareQuery];
+        yield return ["SCCM software query", SqlSccmReader.SoftwareQuery];
         yield return ["SCCM simulator", SccmSimulatorScript.Create(new SyntheticEstate(20))];
     }
 

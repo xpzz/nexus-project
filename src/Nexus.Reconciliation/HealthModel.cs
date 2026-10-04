@@ -10,10 +10,40 @@ public enum Priority
     Low = 3,
 }
 
-/// <summary>A pending rule (SPEC v1 §6). Rules that need data the Nexus does not collect yet are listed as unavailable, never as zero.</summary>
-public sealed record Rule(string Id, string Title, Priority Priority, string Owner, string Action, string? MissingData = null)
+/// <summary>Data a rule depends on; a rule is evaluated only when its source has collected successfully.</summary>
+public enum Needs
 {
-    public bool Available => MissingData is null;
+    Nothing,
+    Intune,
+    Policies,
+    Mam,
+    Users,
+    /// <summary>Not collected by any job yet.</summary>
+    Uncollected,
+}
+
+/// <summary>A pending rule (SPEC v1 §6). Rules whose data is not collected are listed as unavailable, never as zero.</summary>
+public sealed record Rule(string Id, string Title, Priority Priority, string Owner, string Action, Needs Needs = Needs.Nothing, string? MissingData = null)
+{
+    public bool IsAvailable(SourceAvailability sources) => Needs switch
+    {
+        Needs.Nothing => true,
+        Needs.Intune => sources.Intune,
+        Needs.Policies => sources.Policies,
+        Needs.Mam => sources.Mam,
+        Needs.Users => sources.Users,
+        _ => false,
+    };
+
+    /// <summary>Why the rule is not evaluated; null when it is.</summary>
+    public string? WhyUnavailable(SourceAvailability sources) => IsAvailable(sources) ? null : Needs switch
+    {
+        Needs.Intune => "Intune ainda sem coleta",
+        Needs.Policies => "Políticas do Intune ainda sem coleta (job intune.policies)",
+        Needs.Mam => "Proteção de aplicativos (MAM) ainda sem coleta (job intune.mam)",
+        Needs.Users => "Usuários do Entra ID ainda sem coleta (job entra.users)",
+        _ => MissingData ?? "Dado ainda não coletado",
+    };
 
     public int Weight => Priority switch { Priority.Critical => 40, Priority.High => 20, Priority.Medium => 8, _ => 3 };
 }
@@ -75,20 +105,21 @@ public static class HealthModel
 {
     public static readonly IReadOnlyList<Rule> Rules =
     [
-        new("byodnoprot", "BYOD sem proteção comprovada (sem MDM nem MAM)", Priority.Critical, "Segurança", "Exigir proteção de apps no Acesso Condicional", "Proteção de aplicativos (MAM) ainda não é coletada"),
-        new("rooted", "Root ou jailbreak detectado", Priority.Critical, "Segurança", "Bloquear acesso e notificar o usuário", "Sinal de integridade do dispositivo ainda não é coletado"),
+        new("byodnoprot", "BYOD sem proteção comprovada (sem MDM nem MAM)", Priority.Critical, "Segurança", "Exigir proteção de apps no Acesso Condicional", Needs.Mam),
+        new("rooted", "Root ou jailbreak detectado", Priority.Critical, "Segurança", "Bloquear acesso e notificar o usuário", Needs.Intune),
         new("noclient", "Cliente SCCM ausente (Windows corporativo ativo)", Priority.High, "Operações de TI", "Reinstalar via client push"),
         new("nomdm", "Windows corporativo sem Intune MDM", Priority.High, "Endpoint", "Habilitar auto-enrollment da co-gestão"),
-        new("nobitlocker", "BitLocker desligado", Priority.High, "Segurança", "Aplicar perfil de criptografia", "Estado de criptografia ainda não é coletado"),
+        new("nobitlocker", "BitLocker desligado", Priority.High, "Segurança", "Aplicar perfil de criptografia", Needs.Intune),
         new("eol", "Windows 10 fora de suporte (desde out/2025)", Priority.High, "Endpoint", "Migrar para Windows 11 ou registrar ESU"),
         new("nomgr", "Corporativo sem gestão", Priority.High, "Operações de TI", "Reinserir na gestão ou dar baixa"),
         new("noncomp", "Não conforme no Intune", Priority.Medium, "Endpoint", "Revisar políticas falhando"),
-        new("cleval", "Falha na avaliação do cliente SCCM", Priority.Medium, "Operações de TI", "Executar reparo do cliente", "Avaliação do cliente SCCM ainda não é coletada"),
-        new("patch", "Atualizações atrasadas (> 60 dias)", Priority.Medium, "Endpoint", "Verificar anel e janela de manutenção", "Estado de atualizações ainda não é coletado"),
-        new("nopolicy", "Conforme sem política atribuída", Priority.Medium, "Endpoint", "Revisar atribuição de grupos", "Políticas atribuídas ainda não são coletadas"),
+        new("cfgfail", "Perfil de configuração com falha ou conflito", Priority.Medium, "Endpoint", "Abrir o perfil e corrigir as configurações em erro", Needs.Policies),
+        new("cleval", "Falha na avaliação do cliente SCCM", Priority.Medium, "Operações de TI", "Executar reparo do cliente", Needs.Uncollected, "Avaliação do cliente SCCM ainda não é coletada"),
+        new("patch", "Atualizações atrasadas (> 60 dias)", Priority.Medium, "Endpoint", "Verificar anel e janela de manutenção", Needs.Uncollected, "Estado de atualizações ainda não é coletado"),
+        new("nopolicy", "Conforme sem política atribuída", Priority.Medium, "Endpoint", "Revisar atribuição de grupos", Needs.Policies),
         new("stalecomm", "SCCM mudo, Intune ativo", Priority.Medium, "Operações de TI", "Investigar saúde do cliente"),
-        new("oslow", "Sistema abaixo do mínimo", Priority.Medium, "Endpoint", "Notificar o usuário para atualizar", "Versão mínima exigida ainda não é configurada"),
-        new("userdis", "Equipamento de usuário desabilitado", Priority.Medium, "RH + TI", "Validar devolução ou baixa", "Estado da conta do usuário ainda não é coletado"),
+        new("oslow", "Sistema abaixo do mínimo", Priority.Medium, "Endpoint", "Notificar o usuário para atualizar", Needs.Uncollected, "Versão mínima exigida ainda não é configurada"),
+        new("userdis", "Equipamento de usuário desabilitado", Priority.Medium, "RH + TI", "Validar devolução ou baixa", Needs.Users),
         new("review", "Reconciliação a revisar", Priority.Medium, "Operações de TI", "Revisar na fila"),
         new("stale", "Sem comunicação", Priority.Low, "Operações de TI", "Confirmar se o equipamento existe"),
     ];
@@ -122,6 +153,7 @@ public static class HealthModel
         "Both" => Management.CoManaged,
         "OnlySccm" => Management.OnlySccm,
         "OnlyIntune" => Management.OnlyIntune,
+        "OnlyMam" => Management.OnlyMam,
         _ => Management.None,
     };
 
@@ -187,6 +219,39 @@ public static class HealthModel
             && sync - sccmSeen > TimeSpan.FromDays(23))
         {
             issues.Add("stalecomm");
+        }
+
+        if (sources.Intune && a is { IsActive: true, JailBroken: true })
+        {
+            issues.Add("rooted");
+        }
+
+        if (sources.Intune && group == Groups.Computers && a is { IsActive: true, Platform: "WindowsClient", IntuneChannel: "Mdm", IsEncrypted: false })
+        {
+            issues.Add("nobitlocker");
+        }
+
+        if (sources.Policies && a is { IsActive: true, PoliciesCollected: true, IntuneChannel: "Mdm" })
+        {
+            if (string.Equals(a.ComplianceState, "compliant", StringComparison.OrdinalIgnoreCase) && a.CompliancePolicies == 0)
+            {
+                issues.Add("nopolicy");
+            }
+
+            if (a.ConfigProfilesFailed > 0)
+            {
+                issues.Add("cfgfail");
+            }
+        }
+
+        if (sources.Mam && group is Groups.ByodMobile or Groups.ByodComputers && a is { IsActive: true, HasMam: false } && a.IntuneChannel != "Mdm")
+        {
+            issues.Add("byodnoprot");
+        }
+
+        if (sources.Users && a is { IsActive: true, UserEnabled: false })
+        {
+            issues.Add("userdis");
         }
 
         if (a.NeedsReview)

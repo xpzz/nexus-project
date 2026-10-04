@@ -6,9 +6,12 @@ using System.Text.Json;
 namespace Nexus.Collectors.Graph;
 
 /// <summary>
-/// GET-only Microsoft Graph client: paging by @odata.nextLink, 429 with Retry-After, backoff on 5xx and
-/// timeouts, one token refresh after a 401. Read-only by construction (there is no write method).
+/// Read-only Microsoft Graph client: paging by @odata.nextLink, 429 with Retry-After, backoff on 5xx and
+/// timeouts, one token refresh after a 401. Read-only by construction: the only POST is the $batch envelope,
+/// and it is built here from GET sub-requests only.
 /// </summary>
+public sealed record BatchResponse(string Id, int Status, JsonElement? Body);
+
 public sealed class GraphHttpClient(HttpClient http, ITokenProvider tokens, Func<TimeSpan, CancellationToken, Task>? delay = null)
 {
     public const string BaseUrl = "https://graph.microsoft.com/v1.0";
@@ -34,16 +37,70 @@ public sealed class GraphHttpClient(HttpClient http, ITokenProvider tokens, Func
         }
     }
 
-    public async Task<JsonDocument> GetAsync(string relativeOrAbsoluteUrl, CancellationToken cancellationToken)
+    public Task<JsonDocument> GetAsync(string relativeOrAbsoluteUrl, CancellationToken cancellationToken) =>
+        SendAsync(HttpMethod.Get, relativeOrAbsoluteUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase) ? relativeOrAbsoluteUrl : BaseUrl + relativeOrAbsoluteUrl, null, cancellationToken);
+
+    public const int BatchSize = 20;
+
+    /// <summary>
+    /// Runs GET requests through the Graph $batch endpoint, 20 at a time. Throttled or unavailable sub-requests
+    /// (429, 503, 504) are retried on their own with the Retry-After they report; other statuses are returned as they are.
+    /// </summary>
+    public async Task<IReadOnlyList<BatchResponse>> BatchGetAsync(IReadOnlyList<(string Id, string Url)> requests, CancellationToken cancellationToken)
     {
-        var url = relativeOrAbsoluteUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase) ? relativeOrAbsoluteUrl : BaseUrl + relativeOrAbsoluteUrl;
+        var results = new List<BatchResponse>(requests.Count);
+        foreach (var chunk in requests.Chunk(BatchSize))
+        {
+            var pending = chunk.ToList();
+            for (var round = 1; pending.Count > 0; round++)
+            {
+                var body = JsonSerializer.Serialize(new { requests = pending.Select(r => new { id = r.Id, method = "GET", url = r.Url }) });
+                using var doc = await SendAsync(HttpMethod.Post, BaseUrl + "/$batch", body, cancellationToken);
+                var retry = new List<(string Id, string Url)>();
+                TimeSpan wait = TimeSpan.Zero;
+                foreach (var item in doc.RootElement.GetProperty("responses").EnumerateArray())
+                {
+                    var id = item.GetProperty("id").GetString() ?? "";
+                    var status = item.GetProperty("status").GetInt32();
+                    if (status is 429 or 503 or 504 && round < 6)
+                    {
+                        retry.Add(pending.First(p => p.Id == id));
+                        if (item.TryGetProperty("headers", out var h) && h.TryGetProperty("Retry-After", out var ra) && int.TryParse(ra.GetString(), out var seconds))
+                        {
+                            wait = TimeSpan.FromSeconds(Math.Max(wait.TotalSeconds, Math.Min(seconds, 120)));
+                        }
+
+                        continue;
+                    }
+
+                    results.Add(new BatchResponse(id, status, item.TryGetProperty("body", out var b) && b.ValueKind == JsonValueKind.Object ? b.Clone() : null));
+                }
+
+                pending = retry;
+                if (pending.Count > 0)
+                {
+                    await _delay(wait > TimeSpan.Zero ? wait : Backoff(round), cancellationToken);
+                }
+            }
+        }
+
+        return results;
+    }
+
+    private async Task<JsonDocument> SendAsync(HttpMethod method, string url, string? json, CancellationToken cancellationToken)
+    {
         var refreshed = false;
         for (var attempt = 1; ; attempt++)
         {
             HttpResponseMessage response;
             try
             {
-                using var request = new HttpRequestMessage(HttpMethod.Get, url);
+                using var request = new HttpRequestMessage(method, url);
+                if (json is not null)
+                {
+                    request.Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+                }
+
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", await tokens.GetTokenAsync(cancellationToken));
                 response = await http.SendAsync(request, cancellationToken);
             }

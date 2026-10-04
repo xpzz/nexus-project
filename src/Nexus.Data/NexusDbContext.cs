@@ -21,6 +21,12 @@ public abstract class NexusDbContext(DbContextOptions options) : DbContext(optio
     public DbSet<Asset> Assets => Set<Asset>();
     public DbSet<AssetLink> AssetLinks => Set<AssetLink>();
     public DbSet<ReviewItem> ReviewItems => Set<ReviewItem>();
+    public DbSet<EntraUserRecord> EntraUsers => Set<EntraUserRecord>();
+    public DbSet<IntunePolicyRecord> IntunePolicies => Set<IntunePolicyRecord>();
+    public DbSet<IntuneDevicePolicyState> IntuneDevicePolicyStates => Set<IntuneDevicePolicyState>();
+    public DbSet<MamRegistrationRecord> MamRegistrations => Set<MamRegistrationRecord>();
+    public DbSet<InstalledSoftwareRecord> InstalledSoftware => Set<InstalledSoftwareRecord>();
+    public DbSet<InventoryFetch> InventoryFetches => Set<InventoryFetch>();
 
     protected override void OnModelCreating(ModelBuilder model)
     {
@@ -80,6 +86,12 @@ public abstract class NexusDbContext(DbContextOptions options) : DbContext(optio
             e.Property(x => x.Serial).HasMaxLength(128);
             e.Property(x => x.Manufacturer).HasMaxLength(128);
             e.Property(x => x.Model).HasMaxLength(128);
+            e.Property(x => x.ClientVersion).HasMaxLength(32);
+            e.Property(x => x.LastLogonUser).HasMaxLength(256);
+            e.Property(x => x.AdSite).HasMaxLength(128);
+            e.Property(x => x.OsVersion).HasMaxLength(64);
+            e.Property(x => x.CpuName).HasMaxLength(256);
+            e.Property(x => x.BiosVersion).HasMaxLength(128);
         });
 
         model.Entity<IntuneDeviceRecord>(e =>
@@ -98,7 +110,85 @@ public abstract class NexusDbContext(DbContextOptions options) : DbContext(optio
             e.Property(x => x.OwnerType).HasMaxLength(32);
             e.Property(x => x.ComplianceState).HasMaxLength(32);
             e.Property(x => x.UserPrincipalName).HasMaxLength(256);
+            e.Property(x => x.UserId).HasMaxLength(64);
+            e.Property(x => x.JailBroken).HasMaxLength(16);
+            e.Property(x => x.DeviceRegistrationState).HasMaxLength(64);
             e.HasIndex(x => x.AzureAdDeviceId);
+            e.HasIndex(x => x.UserId);
+        });
+
+        model.Entity<EntraUserRecord>(e =>
+        {
+            e.ToTable("entra_users");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasMaxLength(64).ValueGeneratedNever();
+            e.Property(x => x.UserPrincipalName).HasMaxLength(256);
+            e.Property(x => x.DisplayName).HasMaxLength(256);
+            e.Property(x => x.Department).HasMaxLength(256);
+        });
+
+        model.Entity<IntunePolicyRecord>(e =>
+        {
+            e.ToTable("intune_policies");
+            e.HasKey(x => x.Key);
+            e.Property(x => x.Key).HasMaxLength(96).ValueGeneratedNever();
+            e.Property(x => x.Kind).HasMaxLength(24);
+            e.Property(x => x.PolicyId).HasMaxLength(64);
+            e.Property(x => x.Name).HasMaxLength(256);
+            e.Property(x => x.Description).HasMaxLength(1024);
+            e.Property(x => x.Platform).HasMaxLength(64);
+            e.Property(x => x.Assignments).HasMaxLength(2048);
+            e.HasIndex(x => x.Kind);
+        });
+
+        model.Entity<IntuneDevicePolicyState>(e =>
+        {
+            e.ToTable("intune_device_policy_states");
+            e.Property(x => x.IntuneDeviceId).HasMaxLength(64);
+            e.Property(x => x.Kind).HasMaxLength(24);
+            e.Property(x => x.PolicyId).HasMaxLength(64);
+            e.Property(x => x.PolicyName).HasMaxLength(256);
+            e.Property(x => x.State).HasMaxLength(32);
+            e.Property(x => x.Platform).HasMaxLength(64);
+            e.HasIndex(x => x.IntuneDeviceId);
+            e.HasIndex(x => new { x.Kind, x.PolicyName });
+        });
+
+        model.Entity<MamRegistrationRecord>(e =>
+        {
+            e.ToTable("mam_registrations");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasMaxLength(128).ValueGeneratedNever();
+            e.Property(x => x.UserId).HasMaxLength(64);
+            e.Property(x => x.DeviceName).HasMaxLength(256);
+            e.Property(x => x.DeviceTag).HasMaxLength(128);
+            e.Property(x => x.DeviceType).HasMaxLength(32);
+            e.Property(x => x.AppIdentifier).HasMaxLength(256);
+            e.Property(x => x.AppVersion).HasMaxLength(64);
+            e.Property(x => x.PlatformVersion).HasMaxLength(64);
+            e.Property(x => x.FlaggedReasons).HasMaxLength(512);
+            e.Property(x => x.AppliedPolicies).HasMaxLength(1024);
+            e.Property(x => x.IntendedPolicies).HasMaxLength(1024);
+            e.HasIndex(x => x.UserId);
+        });
+
+        model.Entity<InstalledSoftwareRecord>(e =>
+        {
+            e.ToTable("installed_software");
+            e.Property(x => x.Source).HasMaxLength(16);
+            e.Property(x => x.Name).HasMaxLength(512);
+            e.Property(x => x.Version).HasMaxLength(128);
+            e.Property(x => x.Publisher).HasMaxLength(256);
+            e.HasIndex(x => x.AssetId);
+        });
+
+        model.Entity<InventoryFetch>(e =>
+        {
+            e.ToTable("inventory_fetches");
+            e.HasKey(x => x.AssetId);
+            e.Property(x => x.AssetId).ValueGeneratedNever();
+            e.Property(x => x.Status).HasMaxLength(16);
+            e.Property(x => x.Message).HasMaxLength(1024);
         });
 
         model.Entity<EntraDeviceRecord>(e =>
@@ -134,6 +224,10 @@ public abstract class NexusDbContext(DbContextOptions options) : DbContext(optio
             e.Property(x => x.EntraTrustType).HasMaxLength(32);
             e.Property(x => x.Coverage).HasMaxLength(16);
             e.Property(x => x.Confidence).HasMaxLength(8);
+            e.Property(x => x.IntuneUserId).HasMaxLength(64);
+            e.Property(x => x.MamPolicies).HasMaxLength(1024);
+            e.Property(x => x.SccmClientVersion).HasMaxLength(32);
+            e.Property(x => x.CpuName).HasMaxLength(256);
             e.HasIndex(x => x.Coverage);
             e.HasIndex(x => x.Platform);
             e.HasIndex(x => x.Name);

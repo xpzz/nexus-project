@@ -25,8 +25,17 @@ public sealed class SwitchableSources(SyntheticEstate estate) : ISourceFactory
     public bool FailGraph { get; set; }
     public bool GraphEnabled { get; set; } = true;
 
-    public IGraphReader? CreateGraphReader(NexusSettings settings) =>
-        !GraphEnabled ? null : new FakeGraphReader(estate.IntuneDevices, estate.EntraDevices) { FailWithForbidden = FailGraph };
+    public IGraphReader? CreateGraphReader(NexusSettings settings)
+    {
+        if (!GraphEnabled)
+        {
+            return null;
+        }
+
+        var reader = (FakeGraphReader)estate.CreateGraphReader();
+        reader.FailWithForbidden = FailGraph;
+        return reader;
+    }
 
     public GraphConnection? CreateGraphConnection(NexusSettings settings) => null;
 

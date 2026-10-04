@@ -1,12 +1,12 @@
 namespace Nexus.Reconciliation;
 
 public sealed record InventoryFilter(string? Group = null, string? Management = null, string? State = null, string? Issue = null,
-    string? Ownership = null, string? Funnel = null, string? Query = null);
+    string? Ownership = null, string? Funnel = null, string? Query = null, string? Department = null);
 
 /// <summary>Filters and sorting behind the full inventory and every drilldown link.</summary>
 public static class InventoryQuery
 {
-    public static readonly string[] Sorts = ["indice", "nome", "grupo", "usuario", "so", "gestao", "estado", "contato"];
+    public static readonly string[] Sorts = ["indice", "nome", "grupo", "usuario", "so", "gestao", "estado", "contato", "sccm", "intune", "area"];
 
     public static readonly IReadOnlyDictionary<string, string> FunnelNames = new Dictionary<string, string>
     {
@@ -43,6 +43,11 @@ public static class InventoryQuery
         }
 
         if (f.Ownership is { Length: > 0 } o && OwnershipOf(v) != o)
+        {
+            return false;
+        }
+
+        if (f.Department is { Length: > 0 } dep && !string.Equals(a.Department, dep, StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
@@ -90,6 +95,9 @@ public static class InventoryQuery
             "usuario" => v => (v.Asset.PrimaryUser ?? "").ToLowerInvariant(),
             "so" => v => v.Asset.OperatingSystem ?? "",
             "gestao" => v => v.Management,
+            "sccm" => v => v.Asset.SccmLastSeenAt ?? DateTimeOffset.MinValue,
+            "intune" => v => v.Asset.IntuneLastSyncAt ?? DateTimeOffset.MinValue,
+            "area" => v => (v.Asset.Department ?? "").ToLowerInvariant(),
             "estado" => v => States.All.ToList().IndexOf(v.State),
             "contato" => v => v.Asset.LastActivityAt ?? DateTimeOffset.MinValue,
             _ => v => v.Score,

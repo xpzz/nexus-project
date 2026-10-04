@@ -1,5 +1,4 @@
 @page "/painel"
-@rendermode InteractiveServer
 @inject InventorySnapshotService Inventory
 @inject TimeProvider Clock
 
@@ -68,6 +67,34 @@ else
             </a>
         }
     </div>
+
+    <section class="card">
+        <div class="ttl"><h3>Intune em números</h3><a href="/intune">Abrir o Intune</a></div>
+        @if (!_snapshot.Sources.Policies && !_snapshot.Sources.Mam)
+        {
+            <p class="hint">Políticas, perfis e proteção de aplicativos ainda não foram coletados. Eles chegam nos jobs intune.policies e intune.mam.</p>
+        }
+        else
+        {
+            var im = _snapshot.Intune;
+            <div class="grid g4" style="margin-bottom:10px">
+                <a class="box" href="/intune?aba=conformidade"><div class="tt"><span>Políticas de conformidade</span></div><div class="n">@im.PoliciesByKind.GetValueOrDefault("compliance")</div></a>
+                <a class="box" href="/intune?aba=configuracao"><div class="tt"><span>Perfis de configuração</span></div><div class="n">@(im.PoliciesByKind.GetValueOrDefault("configuration") + im.PoliciesByKind.GetValueOrDefault("settings"))</div></a>
+                <a class="box" href="/intune?aba=mam"><div class="tt"><span>Políticas de proteção de apps</span></div><div class="n">@(im.PoliciesByKind.Where(k => k.Key.StartsWith("mam-")).Sum(k => k.Value))</div></a>
+                <a class="box" href="/intune?aba=registros"><div class="tt"><span>Apps protegidos (registros)</span></div><div class="n">@Fmt.Number(im.MamRegistrations)<em>@Fmt.Number(im.MamUsers) usuários</em></div></a>
+            </div>
+            @if (im.TopFailing.Count > 0)
+            {
+                <p class="sub">Políticas e perfis com mais dispositivos em falha</p>
+                <div class="list">
+                    @foreach (var f in im.TopFailing)
+                    {
+                        <div class="row"><div class="t"><b><a href="/intune/politica?tipo=@f.Kind&nome=@Uri.EscapeDataString(f.Name)&estado=nonCompliant" style="color:inherit">@f.Name</a></b><span>@PolicyKinds.Title(f.Kind)</span></div><div class="r"><strong>@Fmt.Number(f.Failed)</strong><span class="asof">de @Fmt.Number(f.Total)</span></div></div>
+                    }
+                </div>
+            }
+        }
+    </section>
 
     <section class="card">
         <div class="ttl"><h3>O que pede ação primeiro</h3><a href="/pendencias">Todas as pendências</a></div>
