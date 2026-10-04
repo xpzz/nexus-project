@@ -46,6 +46,26 @@ else
         <Bar ShowLegend="false" Label="Pool ativo" Segments="@(new List<Seg> { new("Confirmada", o.Pool.Confirmed, "s-ok"), new("Uma fonte", o.Pool.Single, "c-both"), new("Não confirmada", o.Pool.Unconfirmed, "s-warn"), new("Inativa", o.Pool.Inactive, "c-mute") })" />
     </a>
 
+    <section class="card" aria-label="Fontes lado a lado">
+        <div class="ttl"><h3>Fontes lado a lado</h3><a href="/comparativo">Comparar fontes</a></div>
+        <p class="sub">Quantos equipamentos cada ferramenta conhece e quantos reportaram em @o.Pool.WindowDays dias.</p>
+        <div class="srcgrid">
+            @foreach (var s in _comparison!.Sources)
+            {
+                <a class="srcbox @(s.Enabled ? "" : "off")" href="@(s.Enabled ? Fmt.Inv(funil: "fonte:" + s.Key) : "/saude")">
+                    <div class="tt"><span>@s.Label</span>@if (!s.Enabled){<span class="pill m">Aguardando coleta</span>}</div>
+                    @if (s.Enabled)
+                    {
+                        <div class="n">@Fmt.Number(s.Known)<em>@Fmt.Pct(Math.Round(100.0 * s.Known / Math.Max(1, _comparison.Total), 1)) do parque</em></div>
+                        <Bar ShowLegend="false" Label="@("Reports do " + s.Label)" Segments="@(new List<Seg> { new("Reportou", s.Reporting, "s-ok"), new("Sem reportar", s.Silent, "s-warn") })" />
+                        <small>@Fmt.Number(s.Reporting) reportaram · @(s.MedianAgeDays is { } d ? $"mediana há {d} dias" : "sem datas") · @Fmt.Number(s.OnlyHere) só aqui</small>
+                    }
+                </a>
+            }
+        </div>
+    </section>
+
+    <div class="ttl"><h2>Metas do parque</h2><span class="asof">Cada cartão mostra a meta e quanto falta</span></div>
     <div class="grid g3">
         @foreach (var k in o.Highlights)
         {
@@ -124,6 +144,7 @@ else
 @code {
     private InventorySnapshot? _snapshot;
     private OverviewReport? _overview;
+    private SourceComparisonReport? _comparison;
 
     protected override async Task OnInitializedAsync()
     {
@@ -131,6 +152,7 @@ else
         if (_snapshot.HasData)
         {
             _overview = _snapshot.Overview();
+            _comparison = _snapshot.Comparison();
         }
     }
 

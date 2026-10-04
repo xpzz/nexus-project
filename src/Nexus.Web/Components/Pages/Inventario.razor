@@ -145,6 +145,7 @@
         if (!string.IsNullOrEmpty(Propriedade)) yield return ($"Propriedade: {Propriedade}", Without("propriedade"));
         if (!string.IsNullOrEmpty(Pendencia) && HealthModel.Rules.Any(r => r.Id == Pendencia)) yield return ($"Pendência: {HealthModel.RuleOf(Pendencia).Title}", Without("pendencia"));
         if (!string.IsNullOrEmpty(Funil) && InventoryQuery.FunnelNames.TryGetValue(Funil, out var name)) yield return ($"Funil: {name}", Without("funil"));
+        else if (!string.IsNullOrEmpty(Funil) && SourceComparison.SpecLabel(Funil) is { } cmp) yield return ($"Fontes: {cmp}", Without("funil"));
     }
 
     private RenderFragment Header(string key, string label) => __builder =>

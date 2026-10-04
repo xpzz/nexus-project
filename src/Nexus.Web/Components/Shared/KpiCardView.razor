@@ -20,8 +20,8 @@ else
     var tone = Card.MeetsTarget ? "ok" : (Card.Percent >= Card.Target - 5 ? "warn" : "bad");
     var width = Math.Min(100, Card.Percent ?? 0).ToString("0.#", CultureInfo.InvariantCulture);
     var mark = (Card.Target ?? 0).ToString("0.#", CultureInfo.InvariantCulture);
-    <a class="card kcard" href="@(Card.Link ?? "#")">
-        <div class="l"><span>@Card.Label</span></div>
+    <a class="card kcard t-@tone" href="@(Card.Link ?? "#")">
+        <div class="l"><span>@Card.Label</span><span class="pill @(tone == "ok" ? "ok" : tone == "warn" ? "w" : "b")">@(tone == "ok" ? "Na meta" : tone == "warn" ? "Perto" : "Abaixo")</span></div>
         <div class="v">@Fmt.Pct(Card.Percent)</div>
         <div class="meter" role="img" aria-label="@Fmt.Pct(Card.Percent) com meta de @Fmt.Pct(Card.Target)"><i class="@tone" style="width:@width%"></i><u style="left:@mark%"></u></div>
         <div class="tg"><span>@Card.Numerator de @Card.Denominator</span><span>@(Card.MeetsTarget ? "meta atingida" : $"faltam {Card.MissingPoints?.ToString("0.#")} pp") · meta @Fmt.Pct(Card.Target)</span></div>

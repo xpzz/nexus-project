@@ -80,6 +80,11 @@ public static class InventoryQuery
     public static bool Funnel(AssetView v, string name, DateTimeOffset now)
     {
         var a = v.Asset;
+        if (name.Contains(':'))
+        {
+            return SourceComparison.Matches(a, name);
+        }
+
         var pcOrMobile = v.Group is Groups.Computers or Groups.CorpMobile;
         return name switch
         {
